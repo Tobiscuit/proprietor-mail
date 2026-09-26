@@ -45,25 +45,29 @@ Nobody merges; the maintainer does.
 - [x] S0c scaffold: workspaces, typed stubs for both packages, NOTICE,
   Apache-2.0 text
 
-## S1 — `packages/mail-crypto`  *(builder, parallel)*
+## S1 — `packages/mail-crypto`  *(builder, parallel)* — built, PR #3, audited 2026-09-26 (unmerged)
 
 **Inputs:** `contracts/envelope-v1.md`, the stub `packages/mail-crypto/src/index.ts`.
 **Contract:** the exported signatures in the stub; the byte formats in the
 contract. **Owns:** `packages/mail-crypto/**`,
 `contracts/envelope-v1.vectors.json`, its `NOTICE` lines (none expected).
 
-- [ ] S1a `newId`, `keyIdOf`, `fingerprint`
-- [ ] S1b `generateMailboxKey`, `sealMessage`, `openHeader`, `openBody` —
+- [x] S1a `newId`, `keyIdOf`, `fingerprint`
+- [x] S1b `generateMailboxKey`, `sealMessage`, `openHeader`, `openBody` —
   HPKE via `@hpke/core` (plus `@hpke/dhkem-x25519` wherever Web Crypto lacks
   X25519: decide from evidence which browsers need it, and say which)
-- [ ] S1c `sealDraft`, `openDraft`
-- [ ] S1d `prfInput`, `wrapPrivateKey`, `unwrapPrivateKey`,
+- [x] S1c `sealDraft`, `openDraft`
+- [x] S1d `prfInput`, `wrapPrivateKey`, `unwrapPrivateKey`,
   `publicKeyMatches`
-- [ ] S1e `newRecoveryKey`, `parseRecoveryKey` (Crockford base32 + 2-byte
+- [x] S1e `newRecoveryKey`, `parseRecoveryKey` (Crockford base32 + 2-byte
   checksum)
-- [ ] S1f `contracts/envelope-v1.vectors.json` and a test that opens every
+- [x] S1f `contracts/envelope-v1.vectors.json` and a test that opens every
   vector and refuses every negative case
-- [ ] S1g `IMPLEMENTED = true`
+- [x] S1g `IMPLEMENTED = true`
+- [x] S1h runs under the dashboard's strict CSP and Trusted Types: no `eval`,
+  no `new Function`, no WebAssembly, no DOM sink, no network, in the package
+  or any runtime dependency — with a test that scans the shipped JS
+  (`plan.md` §1); self-contained so the dashboard can vendor `src/` as is
 
 **Acceptance tests:**
 - round trips: seal → open returns the exact header and the exact raw bytes,
@@ -81,7 +85,7 @@ contract. **Owns:** `packages/mail-crypto/**`,
   of the same input differ);
 - runs in Node and imports cleanly in workerd (S2's tests will import it).
 
-## S2 — The Mail Worker  *(builder, parallel)*
+## S2 — The Mail Worker  *(builder, parallel)* — built, PR #4, audited 2026-09-26 (unmerged)
 
 **Inputs:** `plan.md` §3–§5 and §7, `domain-model.md` §3 (invariants M1–M10),
 `contracts/capability-v1.md`, the two package stubs.
@@ -91,25 +95,30 @@ envelope v1 via `sealMessage` only.
 `vitest.config.ts`, root `package.json` (and the lockfile),
 `contracts/capability-v1.vectors.json`, its `NOTICE` lines.
 
-- [ ] S2a harness: wrangler config (no routes, `workers_dev: false`,
+- [x] S2a harness: wrangler config (no routes, `workers_dev: false`,
   `preview_urls: false`), vitest with a workerd project (real D1 + DO + R2)
   and a Node project for the packages; `npm test` runs everything
-- [ ] S2b Directory: migration 0001, repository, provisioning script that
+- [x] S2b Directory: migration 0001, repository, provisioning script that
   prints SQL (never runs it against a remote)
-- [ ] S2c capability verification (jose, HS256 only) + the vectors file
-- [ ] S2d `Mailbox` Agent: schema, identity copy from the Directory, folders
+- [x] S2c capability verification (jose, HS256 only) + the vectors file:
+  `jti` required and logged with the method and outcome on every call; the
+  canonical vector in the contract's serialization order; conformance worded
+  as "verifies and decodes to these claims"
+- [x] S2d `Mailbox` Agent: schema, identity copy from the Directory, folders
   seeded, policy defaults, audit
-- [ ] S2e inbound: `email()` → `routeAgentEmail` with a Directory resolver →
+- [x] S2e inbound: `email()` → `routeAgentEmail` with a Directory resolver →
   `Mailbox.onEmail`, following `plan.md` §5 exactly, parsing with
   `postal-mime`, sealing through a `Sealer` port
-- [ ] S2f `MailService` entrypoint: every method in `plan.md` §4 except
+- [x] S2f `MailService` entrypoint: every method in `plan.md` §4 except
   `send`, with capability checks (M4) and role checks
-- [ ] S2g `send` through ports (`MimeBuilder`, `RawMailer`): M6, M7
+- [x] S2g `send` through ports (`MimeBuilder`, `RawMailer`): M6, M7
   (limits + idempotency), Sent copy sealed and stored
-- [ ] S2h trash purge after 30 days (M9); orphan R2 cleanup on failed insert
-- [ ] S2i `MailAdmin` entrypoint (suspend, resume, set delivery mode and
+- [x] S2h trash purge after 30 days (M9); orphan R2 cleanup on failed insert
+- [x] S2i′ `NewMailSignal` port shaped as the dashboard's future `MailSignals`
+  entrypoint, `unread({ tenantId, mailboxId, unread })`, no-op adapter now
+- [x] S2i `MailAdmin` entrypoint (suspend, resume, set delivery mode and
   forward target — M10), exported but bound to nothing
-- [ ] S2j wiring: the real `sealMessage`, `buildMime` and `sesRawMailer`
+- [x] S2j wiring: the real `sealMessage`, `buildMime` and `sesRawMailer`
   behind the ports; end-to-end tests that skip while a package's
   `IMPLEMENTED` is false
 
@@ -135,7 +144,7 @@ envelope v1 via `sealMessage` only.
 - with real S1 merged: a message sealed by the Worker opens with the test's
   private key to the exact raw bytes.
 
-## S3 — `packages/mail-outbound`  *(builder, parallel)*
+## S3 — `packages/mail-outbound`  *(builder, parallel)* — built, PR #2, audited 2026-09-26 (unmerged)
 
 **Inputs:** `plan.md` §6, the stub `packages/mail-outbound/src/index.ts`, the
 engine's `src/adapters/ses-mailer.ts` (read, do not edit: aws4fetch, an
@@ -144,19 +153,19 @@ injection handling, quoted display names).
 **Contract:** the exported signatures in the stub.
 **Owns:** `packages/mail-outbound/**`, its `NOTICE` lines.
 
-- [ ] S3a `buildMime`: RFC 5322 headers (From, To, Cc, Reply-To, Subject,
+- [x] S3a `buildMime`: RFC 5322 headers (From, To, Cc, Reply-To, Subject,
   Date, Message-ID, In-Reply-To, References, MIME-Version), RFC 2047
   encoded-words for non-ASCII names and subjects, text-only /
   multipart/alternative / multipart/mixed with attachments, base64 or
   quoted-printable bodies, CRLF, lines ≤ 998, no Bcc header; decide between a
   vetted library and a small builder from evidence, and say why
-- [ ] S3b header-injection refusal (`InvalidMessage` on CR/LF in any header
+- [x] S3b header-injection refusal (`InvalidMessage` on CR/LF in any header
   value), recipient and size limits (`LIMITS`), confirming SES's own maximum
-- [ ] S3c `sesRawMailer`: SES v2 `SendEmail` with `Content.Raw`,
+- [x] S3c `sesRawMailer`: SES v2 `SendEmail` with `Content.Raw`,
   `FromEmailAddress`, `Destination`, `ConfigurationSetName`, `TenantName`,
   signed with aws4fetch; `SendRejected` with `retryable` for throttling and
   5xx; a timeout
-- [ ] S3d `IMPLEMENTED = true`
+- [x] S3d `IMPLEMENTED = true`
 
 **Acceptance tests:**
 - golden files for each MIME shape; every produced message parses back with
@@ -171,10 +180,23 @@ injection handling, quoted display names).
   once if a Vault token is valid, with the credential read into the
   environment; otherwise say it was not run.
 
+## S1r — mail-crypto releases  *(after S1 merges)*
+
+- [ ] a workflow on tags `mail-crypto-vX.Y.Z` that computes `SHA256SUMS` over
+  `packages/mail-crypto/src/**` from the tagged tree and attaches it to a
+  GitHub release, so the dashboard's vendoring script checks against CI's
+  record rather than the copy; sign the tag if the maintainer has a signing key
+
 ## S4 — Integration  *(architect, after S1–S3 are audited)*
 
 - [ ] stack or rebase S1 and S3 under S2, regenerate the lockfile, run the
   whole suite with the end-to-end tests un-skipped, fix the seams, report
+
+## S2k — Housekeeping found in the S2 audit  *(small, after S4)*
+
+- [ ] prune `sends` (idempotency and rate-limit rows) after 30 days and the
+  audit table after one year, in the same daily alarm as the Trash purge;
+  today both grow without limit
 
 ## S5 — Deliverability feed  *[H: needs the §6 AWS resources]*
 
@@ -184,8 +206,14 @@ injection handling, quoted display names).
 
 ## S6 — The inbox screens  *[H: spec 007 step 0 (shell, session, module contract) and the theme-token contract]*
 
-- [H] `plan.md` §10, as a PR to the SEO-engine repo's route group, after the
-  seams in `plan.md` §1 "Seams this plan opens" are answered
+- [H] `plan.md` §10, as a PR to the SEO-engine repo's route group
+  (`apps/dashboard/app/(modules)/inbox/`), with the vendored mail-crypto at
+  `_vendor/mail-crypto/` and the GET-only streaming route handler (`plan.md`
+  §1). Works under the shell's CSP and Trusted Types: the frame's `srcdoc` is
+  set only through a named Trusted Types policy returning DOMPurify's
+  `TrustedHTML`; verify in a real browser (Playwright) that the `srcdoc`
+  document, which inherits the page's CSP, renders under it, and that the
+  inherited `frame-ancestors 'none'` does not block it
 
 ## S7 — The assistant  *[H: Decision D1]*
 
@@ -195,6 +223,12 @@ injection handling, quoted display names).
 
 - [H] verify what Email Routing does when the `email()` handler throws, on a
   throwaway address the maintainer approves, before routing a real one
+- [H] on that same throwaway deployment, read what Workers Logs and a Tail
+  Worker record for an email invocation. If it is more than spec §4 lists,
+  turn `observability` off for this Worker before any real address is routed.
+  (The Agents SDK's own email diagnostics channel, which publishes each
+  arriving message's from, to and subject, is already disabled in the
+  Mailbox, and a test fails if that changes on an SDK upgrade.)
 - [H] create the resources, deploy, route the address, the maintainer enrolls on his
   own devices, send from the simulator first
 

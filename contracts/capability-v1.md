@@ -37,7 +37,7 @@ Claims:
 | `role` | `"owner"` \| `"editor"` | the person's role in that tenant |
 | `iat` | NumericDate | when it was minted |
 | `exp` | NumericDate | `exp - iat` must be between 1 and 60 inclusive |
-| `jti` | string, optional | random; logged by Mail on rejection so both sides can find the same request |
+| `jti` | string, **required** | random, at least 16 bytes of entropy; both Workers log it with the method and the outcome, so one request can be traced across them |
 
 ## Verification rules (Mail)
 
@@ -48,7 +48,8 @@ Claims:
 4. `iss` and `aud` match exactly.
 5. `iat` is not more than 5 seconds in the future; `exp` has not passed, with
    5 seconds of tolerance; `exp - iat ≤ 60`.
-6. `tenant` and `sub` are non-empty strings; `role` is one of the two values.
+6. `tenant`, `sub` and `jti` are non-empty strings; `role` is one of the two
+   values.
 7. Then the mailbox rules: the Directory row for `mbx` exists, is not
    `closed`, and its `tenant_id` equals `tenant`. Any mismatch answers
    `NotFound`, exactly as for a mailbox that does not exist.
@@ -58,6 +59,17 @@ Claims:
 A refused capability raises `CapabilityRejected` with a reason of `invalid` or
 `expired` and nothing else. The dashboard re-mints and retries once on
 `expired`.
+
+Mail logs one line per call: the method, the `jti`, and the outcome (accepted,
+or rejected and why). Never an address, a subject or any other content.
+
+## Serialization
+
+Byte-identical tokens are **not** required: a minted token conforms when it
+verifies under the reference verifier with the vectors' fixed key and clock
+and decodes to exactly the expected claims. For readability and for the
+canonical vector, the order is fixed anyway: protected header `alg, typ, kid`;
+claims `iss, aud, sub, tenant, mbx, role, iat, exp, jti`; `exp = iat + 60`.
 
 ## Keys
 
@@ -80,7 +92,8 @@ fixed key, a fixed clock and:
 - one valid token with every claim, and the claims it decodes to;
 - refused tokens, each with the rule it breaks: `alg: none`; a wrong `aud`; a
   wrong `iss`; `exp - iat = 61`; expired by 6 seconds; `iat` 6 seconds in the
-  future; an unknown `kid`; one flipped payload byte; a missing `tenant`.
+  future; an unknown `kid`; one flipped payload byte; a missing `tenant`; a
+  missing `jti`.
 
 Both repositories run the same vectors: the dashboard proves it mints what Mail
 accepts, and Mail proves it refuses what it must.
