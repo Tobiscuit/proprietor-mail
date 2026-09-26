@@ -135,9 +135,11 @@ describe("capability v1: verification (contracts/capability-v1.md)", () => {
   });
 
   it("says only `invalid` or `expired`, never why in more detail", async () => {
-    const err = (await refusal(await signToken(canonicalHeader(TEST_KID), claims({ aud: "x" }), KEY))) as Error;
+    const err = (await refusal(await signToken(canonicalHeader(TEST_KID), claims({ aud: "x" }), KEY))) as Error & { error: unknown };
     expect(err.message).toBe("capability rejected: invalid");
-    expect(Object.keys(err).sort()).toEqual(["name", "reason"]);
+    expect(Object.keys(err).sort()).toEqual(["error", "name", "reason"]);
+    // The value MailService answers with: nothing about which rule failed.
+    expect(err.error).toEqual({ name: "CapabilityRejected", message: "capability rejected: invalid", reason: "invalid" });
   });
 });
 

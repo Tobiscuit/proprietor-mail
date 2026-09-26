@@ -84,7 +84,13 @@ cd /home/link/platform-mail-worktrees/s2-mail-worker && curl -s -X POST "http://
 cd /home/link/platform-mail-worktrees/s2-mail-worker && curl -s -X POST "http://localhost:8787/cdn-cgi/local/email?from=ana@example.com&to=hello@operator.test&format=json" --data-binary @test/local/sample.eml
 cd /home/link/platform-mail-worktrees/s2-mail-worker && curl -s "http://localhost:8788/list?tenant=tnt_local&mbx=$M"
 cd /home/link/platform-mail-worktrees/s2-mail-worker && curl -s "http://localhost:8788/open?tenant=tnt_local&mbx=$M"
+cd /home/link/platform-mail-worktrees/s2-mail-worker && curl -s "http://localhost:8788/refuse?tenant=tnt_local&mbx=$M"   # a refusal, across two processes, as a value
 ```
+
+The driver prints Mail's answers as the dashboard will branch on them: an ok
+answer's value, or `{"refused":{"name":…,"message":…}}` (status 409) for a
+refusal. A thrown error reaches it only if the binding itself fails
+(`{"bindingFailed":…}`, status 502).
 
 ### Observed, 2026-09-26
 

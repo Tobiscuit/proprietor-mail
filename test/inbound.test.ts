@@ -5,8 +5,9 @@ import { Directory } from "../src/directory/directory";
 import worker from "../src/index";
 import type { Mailbox } from "../src/mailbox/mailbox";
 import { type CapturedConsole, captureConsole } from "./support/console";
-import { crlf, incomingEmail, sampleMessage } from "./support/email";
-import { provisionMailbox, rejectionOf, type TestMailbox } from "./support/mailbox";
+import { crlf, incomingEmail, sampleMessage, thrownBy } from "./support/email";
+import { provisionMailbox, type TestMailbox } from "./support/mailbox";
+import { valueOf } from "./support/results";
 
 // plan.md §5, "Arrival, step by step, and what each failure does": one test per row.
 
@@ -26,7 +27,7 @@ async function stored(mb: TestMailbox) {
 
 async function setDelivery(mb: TestMailbox, delivery: "store" | "store-and-forward", forwardTo?: string) {
   const entry = (await new Directory(env.DIRECTORY).byId(mb.id))!;
-  await mb.stub.setDelivery(entry, "operator:test", forwardTo === undefined ? { delivery } : { delivery, forwardTo });
+  valueOf(await mb.stub.setDelivery(entry, "operator:test", forwardTo === undefined ? { delivery } : { delivery, forwardTo }));
 }
 
 /** Makes the live Mailbox's R2 binding fail on put, the way an R2 outage would. */
@@ -95,7 +96,7 @@ describe("arrival: the plan.md §5 table", () => {
     const mb = await provisionMailbox();
     await breakR2(mb);
     const email = incomingEmail(sampleMessage({ to: mb.address }), { to: mb.address });
-    const err = await rejectionOf(deliver(email.message));
+    const err = await thrownBy(deliver(email.message));
     expect(err.message).toMatch(/R2 is unavailable/);
     expect(await stored(mb)).toEqual({ rows: [], objects: [] });
   });
@@ -106,7 +107,7 @@ describe("arrival: the plan.md §5 table", () => {
     const realSeal = mb.ports.sealer.seal.bind(mb.ports.sealer);
     mb.ports.sealer.seal = async (...args) => ({ ...(await realSeal(...args)), keyEnvelope: null as unknown as string });
     const email = incomingEmail(sampleMessage({ to: mb.address }), { to: mb.address });
-    const err = await rejectionOf(deliver(email.message));
+    const err = await thrownBy(deliver(email.message));
     expect(err.message).toMatch(/NOT NULL/);
     expect(await stored(mb)).toEqual({ rows: [], objects: [] });
   });
@@ -115,7 +116,7 @@ describe("arrival: the plan.md §5 table", () => {
     const mb = await provisionMailbox();
     await setDelivery(mb, "store-and-forward", "owner@gmail.test");
     const email = incomingEmail(sampleMessage({ to: mb.address }), { to: mb.address, forwardFails: true }, mb.ports.trace);
-    await rejectionOf(deliver(email.message));
+    await thrownBy(deliver(email.message));
     expect(mb.ports.trace).toEqual(["forward"]);
     expect(await stored(mb)).toEqual({ rows: [], objects: [] });
   });

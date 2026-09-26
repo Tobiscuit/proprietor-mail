@@ -76,3 +76,18 @@ export function incomingEmail(
   };
   return { message: message as unknown as ForwardableEmailMessage, rejects, forwards };
 }
+
+/**
+ * What `email()` threw. Only for `email()`, called directly as the runtime
+ * would: it is the one handler that throws on purpose (plan.md §5), so that
+ * Email Routing does not count a message it could not deliver as delivered.
+ * Everything reached over RPC answers with a value instead (test/support/results.ts).
+ */
+export async function thrownBy(delivery: Promise<unknown>): Promise<Error> {
+  try {
+    await delivery;
+  } catch (err) {
+    return err as Error;
+  }
+  throw new Error("expected email() to throw");
+}
