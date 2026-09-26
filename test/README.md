@@ -16,7 +16,7 @@ One `vitest run`, three kinds of project (`vitest.config.ts`):
 |---|---|---|
 | `worker` | workerd (`@cloudflare/vitest-pool-workers` 0.22.0) | everything under `test/` except `test/node/`: a real D1 with `migrations/` applied, real SQLite-backed Durable Objects, a real R2 simulation |
 | `packages/*` | Node, with each package's **own** `vitest.config.ts` | S1's and S3's tests (none while they are stubs) |
-| `node` | Node | `test/node/`: the provisioning script and the `wrangler.jsonc` fitness checks |
+| `node` | Node | `test/node/`: the provisioning script, the `wrangler.jsonc` fitness checks, and the escape guard's own judgement |
 
 `npm run typecheck` runs TypeScript 7 over `src/` and `test/` (and each
 package's own typecheck).
@@ -31,28 +31,72 @@ package's own typecheck).
   ciphertext, and it keeps the plaintext it was handed (in test memory) so
   tests can check what the Worker built.
 - **MailService is called through real RPC** (`exports.MailService` from
-  `cloudflare:workers`), so error names and fields are checked as the
-  dashboard will receive them.
+  `cloudflare:workers`), so answers are checked as the dashboard will receive
+  them. Every answer is a value (`contracts/mail-service-v1.md`): read it with
+  `valueOf(answer)` or `refusalOf(answer)` (`test/support/results.ts`), or
+  compare the whole `{ ok, … }` object. A refused call resolves; if one
+  rejects, that is a bug, and the escape guard says so.
 - **Storage is isolated per test file**, not per test: every test makes fresh
   mailbox ids.
 - **End-to-end tests** (`test/e2e.test.ts`) put the real `@platform-mail/crypto`
   and `@platform-mail/outbound` behind the ports and skip on each package's
   `IMPLEMENTED` flag; they start running when S1 and S3 merge.
 
+### The escape guard: exceptions that escape an RPC hop fail the run
+
+When a Workers RPC method throws, workerd prints it and the caller's test
+never sees that line: `uncaught exception; source = Uncaught (in promise); …`
+on the side that threw, and, when it was an entrypoint, `uncaught exception;
+exception = … your Worker's code had hung and would never generate a
+response` as well. That is not harness noise. It is how workerd treats any
+RPC method that throws: the S2 audit reproduced it in this pool, through a
+real service binding, and under `wrangler dev` with two processes, so in
+production, before refusals became values, every refused call would have
+logged an uncaught exception and a cancelled invocation.
+
+`escapeGuard()` (`test/harness/escape-guard.ts`, wired in `vitest.config.ts`)
+reads those lines where the pool writes them, in the vitest process, and at
+the end of the run fails `npm test` (exit code 1, with a report naming each
+line) unless every one of them was declared by the test that caused it. It
+adds its own reporter, so `--reporter` cannot switch it off. Why there:
+nothing inside the isolate sees these lines (an `unhandledrejection` listener
+in a test stays silent for them), vitest's unhandled-error policy therefore
+never hears of them, and the pool (0.22.0) offers no hook for workerd's
+output (miniflare no longer has `handleRuntimeStdio`, and the pool sets
+`handleStructuredLogs` itself).
+
+**The one declaration there is.** Only `email()` throws on purpose: when a
+delivery fails, so that Email Routing does not count the message as delivered
+(`plan.md` §5: storing fails in `store` mode, or the forward fails in
+`store-and-forward`). The throw starts in the Mailbox, which the Agents SDK
+reaches over Durable Object RPC, so workerd prints it. A test that makes
+`email()` throw declares it with `expectEmailThrow` (`test/support/escapes.ts`),
+which delivers, returns what was thrown, and records the declaration in the
+test's `task.meta`:
+
+```ts
+it("row 5: store mode, R2 fails → throws, and nothing is stored", async ({ task }) => {
+  // …
+  const err = await expectEmailThrow(
+    task,
+    { reason: "store mode, the R2 put fails: email() throws so the message is not counted as delivered", error: "Error: R2 is unavailable", lines: 1 },
+    deliver(email.message),
+  );
+```
+
+`error` is text in the thrown error's first line and `lines` the number of
+escape lines workerd prints for it (one for each hop the throw crosses: the
+Mailbox's `_onEmail`, and the SDK's `EmailBridge.forward` too when a forward
+fails). The guard matches each line to a declaration by that text and wants
+the count exactly, so a declaration excuses nothing else, and a declared
+escape that stops printing fails the run as well: that is what shows the
+guard can still see workerd. A "hung" cancellation can never be declared.
+
 ### Harness quirks (vitest-pool-workers 0.22.0, workerd 1.20260815.1)
 
-- Assert RPC rejections with `rejectionOf(p)` (a plain `await`), never
-  `expect(p).rejects`: vitest reads properties off workerd's RPC promise, and
-  each property read on an RPC promise is a pipelined call that rejects too,
-  unhandled.
-- workerd prints `uncaught exception; source = Uncaught (in promise)` for every
-  Durable Object RPC method that rejects, and the pool prints
-  `…your Worker's code had hung…` once for every call through `exports` that
-  rejects. Both are noise from the harness; the error still reaches the caller
-  intact and the test result is right.
 - Capture console output with `captureConsole()` (`test/support/console.ts`),
   not `vi.spyOn`: a vitest spy called from another request context makes
-  workerd report that request as hung.
+  workerd report that request as hung, which the escape guard fails.
 
 ## Local end to end: `wrangler dev` and the local email endpoint
 

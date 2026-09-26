@@ -9,7 +9,8 @@ import type { Mailbox } from "../src/mailbox/mailbox";
 import type { MailboxPorts } from "../src/ports";
 import { productionPorts } from "../src/wiring";
 import { base64urlFromBytes, bytesFromBase64url } from "./support/capability-tokens";
-import { crlf, incomingEmail, sampleMessage, thrownBy } from "./support/email";
+import { crlf, incomingEmail, sampleMessage } from "./support/email";
+import { expectEmailThrow } from "./support/escapes";
 import { fakePorts } from "./support/fakes";
 import { capFor, injectPorts, provisionMailbox, type TestMailbox } from "./support/mailbox";
 import { valueOf } from "./support/results";
@@ -160,13 +161,21 @@ describe.skipIf(!CRYPTO || !OUTBOUND)("with the real @platform-mail/outbound (S3
 });
 
 describe.skipIf(CRYPTO)("until S1 lands", () => {
-  it("the production wiring is live: an arrival fails loudly with NotImplemented, never silently", async () => {
+  it("the production wiring is live: an arrival fails loudly with NotImplemented, never silently", async ({ task }) => {
     const mb = await provisionMailbox();
     await runInDurableObject(mb.stub, (instance: Mailbox) => {
       instance.ports = productionPorts(env);
     });
     const email = incomingEmail(sampleMessage({ to: mb.address }), { to: mb.address });
-    const err = await thrownBy(worker.email!(email.message, env, createExecutionContext()));
+    const err = await expectEmailThrow(
+      task,
+      {
+        reason: "store mode, storing fails (S1's stub cannot make a message id): email() throws so the message is not counted as delivered",
+        error: "NotImplemented: @platform-mail/crypto",
+        lines: 1,
+      },
+      worker.email!(email.message, env, createExecutionContext()),
+    );
     expect(err.name).toBe("NotImplemented");
     expect(email.rejects).toEqual([]);
   });
