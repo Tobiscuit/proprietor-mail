@@ -37,17 +37,22 @@ export function incomingEmail(
   const rejects: string[] = [];
   const forwards: { rcptTo: string }[] = [];
   let delivered = false;
-  const stream = new ReadableStream<Uint8Array>({
-    pull(controller) {
-      if (!delivered) {
-        trace?.push("read");
-        delivered = true;
-        controller.enqueue(raw);
-      } else {
-        controller.close();
-      }
+  // highWaterMark 0: pulled only when the Worker actually reads, so "read"
+  // lands in the trace at the moment it happens.
+  const stream = new ReadableStream<Uint8Array>(
+    {
+      pull(controller) {
+        if (!delivered) {
+          trace?.push("read");
+          delivered = true;
+          controller.enqueue(raw);
+        } else {
+          controller.close();
+        }
+      },
     },
-  });
+    { highWaterMark: 0 },
+  );
   const headers = new Headers(envelope.headers ?? [["subject", "(set by the test)"]]);
   const message = {
     from: envelope.from ?? "bounce@example.com",

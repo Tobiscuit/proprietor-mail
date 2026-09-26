@@ -168,19 +168,19 @@ export class Mailbox extends Agent<Env> {
 
     // M2: no key, no mail. Checked before anything is stored, identity included.
     if (entry === null || entry.status !== "active") {
-      email.setReject(NOT_ACCEPTING);
+      await this.reject(email, NOT_ACCEPTING);
       outcome("rejected", { reason: "not-active" });
       return;
     }
     if (email.rawSize > MAX_INBOUND_BYTES) {
-      email.setReject(TOO_LARGE);
+      await this.reject(email, TOO_LARGE);
       outcome("rejected", { reason: "too-large" });
       return;
     }
     await this.ensureIdentity(entry, "system:email");
     const key = this.activeKey();
     if (key === null) {
-      email.setReject(NOT_ACCEPTING);
+      await this.reject(email, NOT_ACCEPTING);
       logAlert("active-mailbox-without-key", { mailbox: mailboxId });
       outcome("rejected", { reason: "no-key" });
       return;
@@ -209,6 +209,17 @@ export class Mailbox extends Agent<Env> {
       logAlert("store-failed-after-forward", { mailbox: mailboxId, size: email.rawSize, error: errorName(err) });
       outcome("forwarded-not-stored", { error: errorName(err) });
     }
+  }
+
+  /**
+   * `AgentEmail.setReject` is typed `void`, but inside an Agent it is an RPC
+   * call back through the SDK's EmailBridge to the `email()` invocation, and
+   * returns a promise (agents 0.24.0, Agent._onEmail). Unawaited, the handler
+   * can finish before the rejection reaches Email Routing, and a refused
+   * message would count as delivered.
+   */
+  private async reject(email: AgentEmail, reason: string): Promise<void> {
+    await (email.setReject(reason) as unknown as Promise<void> | undefined);
   }
 
   private async storeArrival(email: AgentEmail, entry: DirectoryEntry, key: { keyId: string; publicKey: Uint8Array }): Promise<string> {
