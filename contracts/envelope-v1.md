@@ -2,7 +2,8 @@
 
 **Implemented once**, in `packages/mail-crypto`, and used by both sides: the
 Mail Worker seals arriving and sent mail; the owner's browser opens it, seals
-drafts and wraps the mailbox key. **Status:** proposed 2026-09-26. Any change
+drafts and wraps the mailbox key. **Status:** implemented by slice S1 (PR #3) and verified independently against
+its vectors, 2026-09-26. Any change
 to a byte below is a new version (`v2`), never an edit of `v1`: stored mail
 must stay readable.
 
@@ -15,11 +16,18 @@ without padding. Random bytes come from `crypto.getRandomValues`.
 `mbx_` mailbox, `msg_` message, `drf_` draft, `wrp_` key wrap. The Worker makes
 mailbox and message ids; the browser makes draft and wrap ids.
 
+Crockford base32 here, and in the recovery key below, reads the bytes as one
+big-endian number and zero-extends it: the pad bits are **leading** (the ULID
+and TypeID convention), so an id's first character is always 0–3. Ids never
+contain `|` (the associated-data separator); implementations refuse an empty id
+or one containing `|`.
+
 ## The mailbox key pair
 
 - X25519. The public key is its raw 32 bytes. The private key is serialized as
-  its raw 32 bytes (RFC 9180 §7.1.2), so that wraps are portable between the
-  Web Crypto implementation and the pure-JavaScript fallback.
+  its raw 32 bytes, clamped (RFC 9180 §7.1.2, RFC 7748), so that wraps are
+  portable between implementations; a reader clamps on import, so an
+  unclamped wrap written elsewhere still opens.
 - `keyId` = lowercase hex of the first 16 bytes of SHA-256(public key).
 - The **fingerprint** shown to people = `keyId` in groups of four, e.g.
   `3f9a 07c1 …`.
@@ -84,8 +92,15 @@ the bytes that were handed to SES. Replies thread on this id.
 
 Every key is always present. The serialized JSON is at most 64 KiB: if it
 would be larger, `references` keeps its last 20 entries and `snippet` is
-shortened. A reader ignores keys it does not know (forward compatibility
-inside v1).
+shortened. If it is still larger (thousands of recipients or attachments),
+the writer stores a **minimal header** instead: `v`, `direction`,
+`envelopeFrom`, `date`, `messageId` and `inReplyTo` kept; `from` kept when its
+JSON is under 1 KiB; `to`, `cc`, `bcc`, `replyTo`, `references` and
+`attachments` empty; `subject` cut to 200 characters; `snippet` empty. The
+full headers are always in the sealed body, so nothing is lost and the browser
+can re-read them from the raw message. A reader ignores keys it does not know
+(forward compatibility inside v1); a plaintext missing a v1 key is treated as
+a decryption failure.
 
 ## Draft (the plaintext inside a draft block)
 
