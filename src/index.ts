@@ -1,7 +1,9 @@
 import type { Env } from "./env";
 import { handleEmail } from "./inbound/email-handler";
 
+export { MailAdmin } from "./admin";
 export { Mailbox } from "./mailbox/mailbox";
+export { MailService } from "./service";
 
 export default {
   // No public HTTP surface (plan.md §3): 404 to everything.

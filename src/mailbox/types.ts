@@ -93,5 +93,6 @@ export interface AuditEntry {
   at: string;
   actor: string;
   action: string;
-  detail: Record<string, unknown>;
+  /** Ids, kinds, counts and outcomes: never message content. */
+  detail: Record<string, string | number | boolean | null>;
 }

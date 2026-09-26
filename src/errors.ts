@@ -99,3 +99,37 @@ export class AssistantUnavailable extends Error {
 export function isPublicError(err: unknown): err is Error {
   return err instanceof Error && ERROR_NAMES.has(err.name);
 }
+
+/**
+ * A fresh copy of a public error, carrying only its documented fields. An
+ * error that crossed a Durable Object RPC hop picks up runtime fields
+ * (`remote`, `durableObjectId`); rebuilding keeps MailService's answers exactly
+ * the documented shape, so a NotFound from a Mailbox cannot be told apart from
+ * a NotFound decided here (M4).
+ */
+export function publicError(err: Error): Error {
+  const fields = err as Error & { reason?: unknown; retryAfterSeconds?: unknown; retryable?: unknown };
+  switch (err.name as ErrorName) {
+    case "CapabilityRejected":
+      return new CapabilityRejected(fields.reason === "expired" ? "expired" : "invalid");
+    case "NotFound":
+      return new NotFound();
+    case "Forbidden":
+      return new Forbidden();
+    case "InvalidRequest": {
+      const copy = new InvalidRequest("");
+      copy.message = err.message;
+      return copy;
+    }
+    case "MailboxNotActive":
+      return new MailboxNotActive();
+    case "RateLimited":
+      return new RateLimited(typeof fields.retryAfterSeconds === "number" ? fields.retryAfterSeconds : 60);
+    case "SendFailed":
+      return new SendFailed(fields.retryable === true);
+    case "AssistantUnavailable":
+      return new AssistantUnavailable();
+    default:
+      return new Error("internal error");
+  }
+}

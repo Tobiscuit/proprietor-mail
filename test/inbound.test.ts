@@ -1,9 +1,10 @@
 import { createExecutionContext, runInDurableObject, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Directory } from "../src/directory/directory";
 import worker from "../src/index";
 import type { Mailbox } from "../src/mailbox/mailbox";
+import { type CapturedConsole, captureConsole } from "./support/console";
 import { crlf, incomingEmail, sampleMessage } from "./support/email";
 import { provisionMailbox, rejectionOf, type TestMailbox } from "./support/mailbox";
 
@@ -41,14 +42,13 @@ async function breakR2(mb: TestMailbox) {
   });
 }
 
+let captured: CapturedConsole;
 let errors: string[] = [];
 beforeEach(() => {
-  errors = [];
-  vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
-    errors.push(args.map(String).join(" "));
-  });
+  captured = captureConsole();
+  errors = captured.lines;
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => captured.restore());
 
 describe("arrival: the plan.md §5 table", () => {
   it("row 1: no Directory row for the envelope recipient → setReject('No such mailbox')", async () => {

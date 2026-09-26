@@ -530,7 +530,7 @@ export class Mailbox extends Agent<Env> {
       `SELECT id, at, actor, action, detail FROM audit ${before === undefined ? "" : "WHERE id < ?"} ORDER BY id DESC LIMIT 100`,
       ...(before === undefined ? [] : [before]),
     );
-    return rows.map((r) => ({ id: r.id, at: r.at, actor: r.actor, action: r.action, detail: JSON.parse(r.detail) as Record<string, unknown> }));
+    return rows.map((r) => ({ id: r.id, at: r.at, actor: r.actor, action: r.action, detail: JSON.parse(r.detail) as AuditEntry["detail"] }));
   }
 
   // ---- sending (M6, M7) -----------------------------------------------------------
