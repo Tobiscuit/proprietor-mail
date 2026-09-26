@@ -1,0 +1,117 @@
+# A tag mail-crypto-vX.Y.Z releases @platform-mail/crypto: a GitHub release
+# whose one asset, SHA256SUMS, lists packages/mail-crypto/src/ file by file.
+# The dashboard's vendoring script checks its copy against that file, so CI
+# computes it from the tagged tree; nobody writes it by hand.
+#
+# It refuses unless the tagged commit is already on main (never release
+# unreviewed code) and the tag's version is package.json's.
+#
+# Two jobs: `verify` installs and runs the package's tests with a read-only
+# token; only then does `release`, the one job that can write, recompute the
+# sums with Node built-ins alone and create the release. Nothing that npm
+# installs ever runs next to the write token.
+name: Release mail-crypto
+
+on:
+  push:
+    tags: ["mail-crypto-v*"]
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  verify:
+    name: verify the tagged tree
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # All branches and tags: the ancestry check needs origin/main.
+          fetch-depth: 0
+
+      - name: Refuse a tagged commit that is not on main
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          commit=$(git rev-parse --verify "refs/tags/$TAG^{commit}")
+          if [ "$commit" != "$(git rev-parse HEAD)" ]; then
+            echo "::error title=Refused::$TAG points at $commit, but the checkout is $(git rev-parse HEAD)."
+            exit 1
+          fi
+          status=0
+          git merge-base --is-ancestor "$commit" refs/remotes/origin/main || status=$?
+          case "$status" in
+            0) echo "$TAG is $commit, which is on main." ;;
+            1) echo "::error title=Refused::$TAG is $commit, which is not on main. Only reviewed code is released: merge first, then tag a commit on main."
+               exit 1 ;;
+            *) echo "::error title=Refused::git merge-base failed with status $status."
+               exit 1 ;;
+          esac
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          # No dependency cache on the release path: nothing restored, nothing to poison.
+          package-manager-cache: false
+
+      - name: Refuse a tag whose version is not package.json's
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          tagged="${TAG#mail-crypto-v}"
+          declared=$(node -p 'JSON.parse(require("node:fs").readFileSync("packages/mail-crypto/package.json", "utf8")).version')
+          if [ "$tagged" != "$declared" ]; then
+            echo "::error title=Refused::$TAG says version $tagged, but packages/mail-crypto/package.json says $declared."
+            exit 1
+          fi
+          echo "Version $declared matches the tag."
+
+      - run: npm ci
+
+      - name: The package's tests
+        run: npm test --workspace packages/mail-crypto
+
+      - name: SHA256SUMS, checked by sha256sum
+        run: |
+          node packages/mail-crypto/scripts/sha256sums.mjs > SHA256SUMS
+          (cd packages/mail-crypto && sha256sum --check --strict ../../SHA256SUMS)
+
+  release:
+    name: create the release
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
+      - name: SHA256SUMS, checked by sha256sum
+        run: |
+          node packages/mail-crypto/scripts/sha256sums.mjs > SHA256SUMS
+          (cd packages/mail-crypto && sha256sum --check --strict ../../SHA256SUMS)
+          cat SHA256SUMS
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          notes="SHA256SUMS lists packages/mail-crypto/src/ at $(git rev-parse HEAD), computed by CI from the tagged tree ($run_url). Check a vendored copy from the directory that holds its src/: sha256sum --check --strict SHA256SUMS"
+          gh release create "$TAG" SHA256SUMS --verify-tag --title "$TAG" --notes "$notes"

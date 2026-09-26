@@ -180,3 +180,14 @@ or loader option. Its only bare imports are the two pinned dependencies above.
 A test checks this, and that `src/` compiles without Node types. The package's
 whole browser footprint, bundled and minified with esbuild, is about 41 KB
 (12 KB gzipped).
+
+### Releases: the SHA256SUMS a vendored copy is checked against
+
+A release is a tag `mail-crypto-vX.Y.Z` on a commit that is already on `main`,
+where X.Y.Z is this `package.json`'s `version`.
+`.github/workflows/release-mail-crypto.yml` refuses any other tag. It runs the
+tests, then attaches `SHA256SUMS` to a GitHub release: one line per file under
+`src/`, computed by `scripts/sha256sums.mjs` from the tagged tree, in
+sha256sum's format with paths relative to this directory. From the directory
+that holds a vendored `src/`, `sha256sum --check --strict SHA256SUMS` checks the
+copy.
