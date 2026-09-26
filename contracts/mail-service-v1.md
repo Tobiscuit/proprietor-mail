@@ -56,6 +56,14 @@ entrypoint: expected refusals cross that hop as values too.
 
 ## Exceptions that remain deliberate
 
-The `email()` handler still throws in one case. In `store` delivery mode, when
-storing fails, it throws so that Email Routing does not treat the message as
-delivered (`plan.md` §5). That is a real failure, and it should be loud.
+The `email()` handler (not an RPC method) still throws in two cases, both from
+`plan.md` §5 and both real failures that should be loud:
+
+- in `store` delivery mode, when storing fails, so that Email Routing does not
+  treat the message as delivered;
+- in `store-and-forward` mode, when the forward fails, before anything is
+  stored, so that the sender's server retries and no half-delivery exists.
+
+The test suite fails on any other uncaught exception or "hung" cancellation
+that workerd prints. A test that exercises one of these two throws declares it
+by name.
