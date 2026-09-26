@@ -256,20 +256,25 @@ size and the outcome.
     "Statement": [{
       "Sid": "SendOnlyAsClientMailboxes",
       "Effect": "Allow",
-      "Action": ["ses:SendEmail", "ses:SendRawEmail"],
+      "Action": ["ses:SendEmail"],
       "Resource": [
         "arn:aws:ses:us-east-1:123456789012:identity/operator.example",
-        "arn:aws:ses:us-east-1:123456789012:configuration-set/send-operator-mail",
-        "arn:aws:ses:us-east-1:123456789012:tenant/*"
+        "arn:aws:ses:us-east-1:123456789012:configuration-set/send-operator-mail"
       ],
       "Condition": { "StringEquals": { "ses:FromAddress": ["hello@operator.example"] } }
     }]
   }
   ```
 
-  (the tenant ARN form is to be confirmed against the SES authorization
-  reference at apply time). And the notification principal `ses-send-app`
-  gains `ses:FromAddress = notify@operator.example`.
+  Corrected after S3 read the SES v2 service authorization reference and the
+  SendEmail model: a v2 raw send is authorized as `ses:SendEmail` alone
+  (`ses:SendRawEmail` is the v1/SMTP permission), and a tenant is not a
+  resource type of `SendEmail`, so a `tenant/*` ARN in `Resource` would do
+  nothing. Pin the tenant with a condition on the tenant name instead, once
+  sends carry `TenantName` (confirm the condition key's exact name in the
+  reference). Check the whole policy in the IAM policy simulator before it is
+  attached. The notification principal `ses-send-app` gains
+  `ses:FromAddress = notify@operator.example`.
 
 **Vault** (secrets reach Workers through the process environment only):
 

@@ -76,6 +76,12 @@ JSON of a Draft.
 }
 ```
 
+For a sent copy (`direction: "out"`), `messageId` is the id recipients see.
+SES replaces the `Message-ID` and `Date` headers of the raw message it is
+given, so this is `<SES MessageId>@email.amazonses.com` (us-east-1; the
+domain for other regions is unverified), while the sealed body keeps exactly
+the bytes that were handed to SES. Replies thread on this id.
+
 Every key is always present. The serialized JSON is at most 64 KiB: if it
 would be larger, `references` keeps its last 20 entries and `snippet` is
 shortened. A reader ignores keys it does not know (forward compatibility
