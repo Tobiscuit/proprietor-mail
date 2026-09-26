@@ -3,6 +3,7 @@ import {
   type Declaration,
   EMAIL_THROW,
   type Escape,
+  EscapeGuardReporter,
   escapesIn,
   failed,
   readDeclarations,
@@ -120,5 +121,21 @@ describe("escape guard: declarations", () => {
     // Indented, so the report itself never reads as an escape.
     expect(escapesIn(text)).toEqual([]);
     expect(report(verdict(lines(R2_DOWN), [declaration()]))).toMatch(/^escape guard: 1 escaped exception line\(s\) from workerd, 1 declared by 1 test\(s\)/);
+  });
+});
+
+describe("escape guard: the reporter", () => {
+  it("collects escape lines from what is written, and starts each run afresh", () => {
+    const guard = new EscapeGuardReporter();
+    guard.observe(new TextEncoder().encode(R2_DOWN));
+    guard.observe(`vitest's own output\n${HUNG}`);
+    guard.observe(42);
+    expect(guard.escapes.map((e) => e.line.slice(0, 40))).toEqual([
+      "uncaught exception; source = Uncaught (i",
+      "uncaught exception; exception = workerd/",
+    ]);
+    guard.onTestRunStart();
+    expect(guard.escapes).toEqual([]);
+    expect(guard.declarations).toEqual([]);
   });
 });

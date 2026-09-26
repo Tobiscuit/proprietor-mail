@@ -178,8 +178,15 @@ export function report(v: Verdict): string {
  */
 export class EscapeGuardReporter implements Reporter {
   readonly escapes: Escape[] = [];
-  private readonly declarations: Declaration[] = [];
-  private readonly invalid: Verdict["invalid"] = [];
+  readonly declarations: Declaration[] = [];
+  readonly invalid: Verdict["invalid"] = [];
+
+  /** Each run is judged on its own lines (watch mode reruns). */
+  onTestRunStart(): void {
+    this.escapes.length = 0;
+    this.declarations.length = 0;
+    this.invalid.length = 0;
+  }
 
   observe(chunk: unknown): void {
     const text = typeof chunk === "string" ? chunk : chunk instanceof Uint8Array ? new TextDecoder().decode(chunk) : "";
@@ -216,7 +223,11 @@ export function escapeGuard(): Plugin {
   return {
     name: "platform-mail:escape-guard",
     configureVitest({ vitest }) {
-      if (installed !== undefined) return;
+      // A config restart (watch mode) builds new reporters: add the same guard again; the streams stay wrapped once.
+      if (installed !== undefined) {
+        vitest.config.reporters.push(installed);
+        return;
+      }
       const guard = new EscapeGuardReporter();
       installed = guard;
       for (const stream of [process.stdout, process.stderr]) {
