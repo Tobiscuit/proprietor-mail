@@ -88,7 +88,7 @@ unless the shell adds a `worker-src` for it.
 platform-mail/
   specs/001-inbox-module/        architect
   contracts/                     architect (the .vectors.json files: S1 and S2)
-  NOTICE, LICENSES/              architect; every slice appends its adapted files to NOTICE
+  NOTICE, LICENSE                architect; every slice appends its adapted files to NOTICE
   packages/mail-crypto/          S1
   packages/mail-outbound/        S3
   src/  test/  migrations/       S2
