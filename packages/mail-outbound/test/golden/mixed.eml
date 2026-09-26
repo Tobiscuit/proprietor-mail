@@ -1,0 +1,54 @@
+Date: Sat, 26 Sep 2026 15:04:05 +0000
+From: hello@operator.example
+To: "Ana" <ana@example.com>
+Subject: Invoice 2026-041
+Message-ID: <000102030405060708090a0b0c0d0e0f@operator.example>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_101112131415161718191a1b"
+
+--=_101112131415161718191a1b
+Content-Type: multipart/alternative; boundary="=_1c1d1e1f2021222324252627"
+
+--=_1c1d1e1f2021222324252627
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+Your invoice is attached.
+
+--=_1c1d1e1f2021222324252627
+Content-Type: multipart/related; type="text/html";
+ boundary="=_28292a2b2c2d2e2f30313233"
+
+--=_28292a2b2c2d2e2f30313233
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+<p>Your invoice is attached.</p><img src=3D"cid:logo.0001@operator.example" alt=
+=3D"Operator">
+
+--=_28292a2b2c2d2e2f30313233
+Content-Type: image/png; name="logo.png"
+Content-Transfer-Encoding: base64
+Content-Disposition: inline; filename="logo.png"
+Content-ID: <logo.0001@operator.example>
+
+iVBORw0KGgo=
+--=_28292a2b2c2d2e2f30313233--
+--=_1c1d1e1f2021222324252627--
+--=_101112131415161718191a1b
+Content-Type: application/pdf;
+ name*0*=UTF-8''Factura%20se%C3%B1or%20P%C3%A9rez%20%E2%80%94%20septiembre;
+ name*1*=%202026.pdf
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment;
+ filename*0*=UTF-8''Factura%20se%C3%B1or%20P%C3%A9rez%20%E2%80%94%20septiem;
+ filename*1*=bre%202026.pdf
+
+JVBERi0xLjcKJeLjz9MKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyA+PgplbmRvYmoK
+--=_101112131415161718191a1b
+Content-Type: text/plain; name="notes.txt"
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="notes.txt"
+
+cGxhaW4gdGV4dCBhdHRhY2htZW50Cg==
+--=_101112131415161718191a1b--

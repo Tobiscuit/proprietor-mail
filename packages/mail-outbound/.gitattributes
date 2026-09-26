@@ -1,0 +1,3 @@
+# The golden messages are CRLF byte for byte: no end-of-line conversion,
+# but still shown as text in diffs.
+test/golden/*.eml -text
