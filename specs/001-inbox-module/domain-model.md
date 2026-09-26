@@ -50,7 +50,8 @@ not as migrations. It found eleven; they come first.
 
    Cloudflare Email Routing ──▶ Inbound Delivery        conformist (ForwardableEmailMessage)
    Outbound Sending ──▶ Amazon SES                      anti-corruption layer (a port + one adapter)
-   Mail Storage ──▶ Presence                            one event: { tenantId, mailboxId, unread }
+   Mail Storage ──▶ Presence                            one call, the dashboard's MailSignals entrypoint:
+                                                        unread({ tenantId, mailboxId, unread })
    Business Catalogue ··▶ dashboard                     has.email decides whether the module shows;
                                                         Mail never reads manifests
 ```
