@@ -132,9 +132,20 @@ D5 the same day.** He is weighing a separate domain for the whole platform
 (dashboard, inbox, anything clients log into or receive mail from), with
 operator.example staying his business website. Until he picks, nothing may enroll a
 passkey or bake a platform host in anywhere; `app.operator.example` is on hold, not
-decided. D2's publication step (making this repository public under D10's
-Apache-2.0) still gets his explicit go at the moment it happens, because making
-a repository public cannot be taken back.
+decided. **Publication: from the start (the maintainer, 2026-09-26).** He chose to publish the
+mail module (this repository: the Mail Worker, mail-crypto, mail-outbound) as
+open source under Apache-2.0 as soon as it is scrubbed, not just before
+Alex's mailbox. It is never the SEO engine, the dashboard, the client sites
+or the generator. Apache-2.0 does not require publishing anything; the reason
+is that "we can't read your mail" is only checkable if the code that handles
+the key is public. The flip itself happens on his go, after he has seen the
+scrub report, because it cannot be taken back.
+
+**From now on, write everything in this repository for a public audience.**
+That covers commit messages, PR titles and bodies, comments and specs:
+- no client names, addresses or domains (use `example.com`, RFC 2606);
+- no infrastructure identifiers (AWS account IDs, Cloudflare account or
+  resource IDs, Vault paths, internal hostnames).
 
 | # | Decision | Recommendation |
 |---|---|---|
