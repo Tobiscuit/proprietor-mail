@@ -32,9 +32,9 @@ async function sendsRows(mb: TestMailbox) {
 describe("M6: only the owner sends, and always as the mailbox", () => {
   it("builds From from the mailbox's address and display name, and SES authorizes on that address", async () => {
     const mb = await provisionMailbox();
-    valueOf(await mail().setPolicy(await capFor(mb), { displayName: "Operator" }));
+    valueOf(await mail().setPolicy(await capFor(mb), { displayName: "Example" }));
     valueOf(await mail().send(await capFor(mb), request()));
-    expect(mb.ports.mime.built[0]!.msg.from).toEqual({ name: "Operator", address: mb.address });
+    expect(mb.ports.mime.built[0]!.msg.from).toEqual({ name: "Example", address: mb.address });
     expect(mb.ports.mailer.sent[0]!.fromAddress).toBe(mb.address);
   });
 

@@ -17,18 +17,18 @@ export function counterRandom(start = 0): (length: number) => Uint8Array {
 }
 
 export function goldenOptions(): BuildOptions {
-  return { messageIdDomain: "operator.example", now: NOW, random: counterRandom() };
+  return { messageIdDomain: "example.com", now: NOW, random: counterRandom() };
 }
 
 export const utf8 = (s: string): Uint8Array => new TextEncoder().encode(s);
 
 /** Shape 1: text only. Non-ASCII names and subject, threading headers, a Bcc. */
 export const TEXT_ONLY: ComposedMessage = {
-  from: { name: "Juan Ramírez", address: "hello@operator.example" },
+  from: { name: "Renée Durand", address: "hello@example.com" },
   to: [{ name: "Ana Pérez", address: "ana@example.com" }, { address: "bo@example.org" }],
   cc: [{ name: "O'Brien, Pat", address: "pat@example.net" }],
   bcc: [{ name: "Hidden Person", address: "hidden-bcc@example.com" }],
-  replyTo: [{ name: "Juan Ramírez", address: "hello@operator.example" }],
+  replyTo: [{ name: "Renée Durand", address: "hello@example.com" }],
   subject: "Your bathroom quote — tile options, grout colours and prices",
   text: "Hi Ana,\n\nThe tile options are below = pick one.\nPrice: 1 200 €, trailing space here \n",
   inReplyTo: "CAF=abc123@mail.example.com",
@@ -37,7 +37,7 @@ export const TEXT_ONLY: ComposedMessage = {
 
 /** Shape 2: multipart/alternative. A long ASCII subject that folds, an HTML line that needs soft breaks. */
 export const ALTERNATIVE: ComposedMessage = {
-  from: { name: "Operator", address: "hello@operator.example" },
+  from: { name: "Example", address: "hello@example.com" },
   to: [{ address: "ana@example.com" }],
   subject: "Your appointment on Monday, 28 September 2026 at 09:30 has been confirmed by our team",
   text: "Your appointment is confirmed.\n",
@@ -55,13 +55,13 @@ export const TINY_PDF = new Uint8Array([
 
 /** Shape 3: multipart/mixed with an inline image (Content-ID, multipart/related) and two attachments. */
 export const MIXED: ComposedMessage = {
-  from: { address: "hello@operator.example" },
+  from: { address: "hello@example.com" },
   to: [{ name: "Ana", address: "ana@example.com" }],
   subject: "Invoice 2026-041",
   text: "Your invoice is attached.\n",
-  html: '<p>Your invoice is attached.</p><img src="cid:logo.0001@operator.example" alt="Operator">\n',
+  html: '<p>Your invoice is attached.</p><img src="cid:logo.0001@example.com" alt="Example">\n',
   attachments: [
-    { filename: "logo.png", mimeType: "image/png", content: PNG_SIGNATURE, inline: true, contentId: "logo.0001@operator.example" },
+    { filename: "logo.png", mimeType: "image/png", content: PNG_SIGNATURE, inline: true, contentId: "logo.0001@example.com" },
     { filename: "Factura señor Pérez — septiembre 2026.pdf", mimeType: "application/pdf", content: TINY_PDF },
     { filename: "notes.txt", mimeType: "text/plain", content: utf8("plain text attachment\n") },
   ],

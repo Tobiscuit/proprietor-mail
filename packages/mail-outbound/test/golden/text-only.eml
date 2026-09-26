@@ -1,11 +1,11 @@
 Date: Sat, 26 Sep 2026 15:04:05 +0000
-From: =?UTF-8?B?SnVhbiBSYW3DrXJleg==?= <hello@operator.example>
+From: =?UTF-8?B?UmVuw6llIER1cmFuZA==?= <hello@example.com>
 To: =?UTF-8?B?QW5hIFDDqXJleg==?= <ana@example.com>, bo@example.org
 Cc: "O'Brien, Pat" <pat@example.net>
-Reply-To: =?UTF-8?B?SnVhbiBSYW3DrXJleg==?= <hello@operator.example>
+Reply-To: =?UTF-8?B?UmVuw6llIER1cmFuZA==?= <hello@example.com>
 Subject: =?UTF-8?B?WW91ciBiYXRocm9vbSBxdW90ZSDigJQgdGlsZSBvcHRpb25zLCBn?=
  =?UTF-8?B?cm91dCBjb2xvdXJzIGFuZCBwcmljZXM=?=
-Message-ID: <000102030405060708090a0b0c0d0e0f@operator.example>
+Message-ID: <000102030405060708090a0b0c0d0e0f@example.com>
 In-Reply-To: <CAF=abc123@mail.example.com>
 References: <root.1@mail.example.com> <CAF=abc123@mail.example.com>
 MIME-Version: 1.0

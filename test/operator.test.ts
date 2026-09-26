@@ -113,13 +113,13 @@ describe("S2k: the same daily housekeeping prunes sends after 30 days and the au
 describe("M10: forwarding is visible and audited (MailAdmin, bound to nothing)", () => {
   it("sets store-and-forward with a target; mailbox() shows it; the audit names who and when", async () => {
     const mb = await provisionMailbox();
-    const policy = valueOf(await admin().setDelivery({ mailboxId: mb.id, operator: "maintainer", delivery: "store-and-forward", forwardTo: "Owner@Gmail.test" }));
-    expect(policy).toMatchObject({ delivery: "store-and-forward", forwardTo: "owner@gmail.test", updatedBy: "operator:maintainer" });
+    const policy = valueOf(await admin().setDelivery({ mailboxId: mb.id, operator: "ops", delivery: "store-and-forward", forwardTo: "Owner@Gmail.test" }));
+    expect(policy).toMatchObject({ delivery: "store-and-forward", forwardTo: "owner@gmail.test", updatedBy: "operator:ops" });
     const view = valueOf(await mail().mailbox(await capFor(mb)));
     expect(view.policy).toMatchObject({ delivery: "store-and-forward", forwardTo: "owner@gmail.test" });
     const [entry] = valueOf(await mail().audit(await capFor(mb), {}));
     expect(entry).toMatchObject({
-      actor: "operator:maintainer",
+      actor: "operator:ops",
       action: "delivery-changed",
       at: mb.ports.clock.now().toISOString(),
       detail: { delivery: "store-and-forward", forwardTo: "owner@gmail.test" },
@@ -128,8 +128,8 @@ describe("M10: forwarding is visible and audited (MailAdmin, bound to nothing)",
 
   it("goes back to store, clearing the target, and audits that too", async () => {
     const mb = await provisionMailbox();
-    valueOf(await admin().setDelivery({ mailboxId: mb.id, operator: "maintainer", delivery: "store-and-forward", forwardTo: "owner@gmail.test" }));
-    valueOf(await admin().setDelivery({ mailboxId: mb.id, operator: "maintainer", delivery: "store" }));
+    valueOf(await admin().setDelivery({ mailboxId: mb.id, operator: "ops", delivery: "store-and-forward", forwardTo: "owner@gmail.test" }));
+    valueOf(await admin().setDelivery({ mailboxId: mb.id, operator: "ops", delivery: "store" }));
     expect(valueOf(await mail().mailbox(await capFor(mb))).policy).toMatchObject({ delivery: "store", forwardTo: null });
     expect(valueOf(await mail().audit(await capFor(mb), {})).map((a) => a.action).slice(0, 2)).toEqual(["delivery-changed", "delivery-changed"]);
   });
@@ -137,10 +137,10 @@ describe("M10: forwarding is visible and audited (MailAdmin, bound to nothing)",
   it("refuses store-and-forward without a target, a target for store, and an anonymous operator", async () => {
     const mb = await provisionMailbox();
     for (const input of [
-      { mailboxId: mb.id, operator: "maintainer", delivery: "store-and-forward" },
-      { mailboxId: mb.id, operator: "maintainer", delivery: "store", forwardTo: "x@y.test" },
+      { mailboxId: mb.id, operator: "ops", delivery: "store-and-forward" },
+      { mailboxId: mb.id, operator: "ops", delivery: "store", forwardTo: "x@y.test" },
       { mailboxId: mb.id, operator: "", delivery: "store" },
-      { mailboxId: mb.id, operator: "maintainer", delivery: "forward-only" },
+      { mailboxId: mb.id, operator: "ops", delivery: "forward-only" },
     ]) {
       expect(refusalOf(await admin().setDelivery(input))).toMatchObject({ name: "InvalidRequest" });
     }
@@ -148,29 +148,29 @@ describe("M10: forwarding is visible and audited (MailAdmin, bound to nothing)",
 
   it("suspends (arrivals are then refused, M2) and resumes, each audited", async () => {
     const mb = await provisionMailbox();
-    expect(await admin().suspend({ mailboxId: mb.id, operator: "maintainer" })).toEqual({ ok: true, value: { status: "suspended" } });
+    expect(await admin().suspend({ mailboxId: mb.id, operator: "ops" })).toEqual({ ok: true, value: { status: "suspended" } });
     expect((await directoryRow(mb.id))?.status).toBe("suspended");
     const refused = incomingEmail(sampleMessage({ to: mb.address }), { to: mb.address });
     await worker.email!(refused.message, env, createExecutionContext());
     expect(refused.rejects).toEqual(["This mailbox is not accepting mail"]);
 
-    expect(await admin().suspend({ mailboxId: mb.id, operator: "maintainer" })).toEqual({
+    expect(await admin().suspend({ mailboxId: mb.id, operator: "ops" })).toEqual({
       ok: false,
       error: { name: "InvalidRequest", message: "invalid request: only an active mailbox can be suspended" },
     });
-    expect(await admin().resume({ mailboxId: mb.id, operator: "maintainer" })).toEqual({ ok: true, value: { status: "active" } });
+    expect(await admin().resume({ mailboxId: mb.id, operator: "ops" })).toEqual({ ok: true, value: { status: "active" } });
     expect((await directoryRow(mb.id))?.status).toBe("active");
     const actions = valueOf(await mail().audit(await capFor(mb), {})).map((a) => [a.actor, a.action]);
     expect(actions.slice(0, 2)).toEqual([
-      ["operator:maintainer", "mailbox-resumed"],
-      ["operator:maintainer", "mailbox-suspended"],
+      ["operator:ops", "mailbox-resumed"],
+      ["operator:ops", "mailbox-suspended"],
     ]);
   });
 
   it("answers NotFound for an unknown or closed mailbox", async () => {
     const closed = await provisionMailbox({ status: "closed" });
     const notFound = { ok: false, error: { name: "NotFound", message: "not found" } };
-    expect(await admin().suspend({ mailboxId: closed.id, operator: "maintainer" })).toEqual(notFound);
-    expect(await admin().resume({ mailboxId: "mbx_missing", operator: "maintainer" })).toEqual(notFound);
+    expect(await admin().suspend({ mailboxId: closed.id, operator: "ops" })).toEqual(notFound);
+    expect(await admin().resume({ mailboxId: "mbx_missing", operator: "ops" })).toEqual(notFound);
   });
 });

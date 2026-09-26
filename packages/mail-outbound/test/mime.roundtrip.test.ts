@@ -70,7 +70,7 @@ function expectRoundTrip(msg: ComposedMessage, built: BuiltMessage, parsed: Emai
 }
 
 async function roundTrip(msg: ComposedMessage, now = NOW) {
-  const built = buildMime(msg, { messageIdDomain: "operator.example", now, random: counterRandom() });
+  const built = buildMime(msg, { messageIdDomain: "example.com", now, random: counterRandom() });
   const parsed = await PostalMime.parse(built.raw);
   expectRoundTrip(msg, built, parsed, now);
   return { built, parsed };
@@ -89,36 +89,36 @@ describe("round trip through postal-mime", () => {
     const { parsed } = await roundTrip(MIXED);
     const logo = parsed.attachments.find((a) => a.filename === "logo.png");
     expect(logo?.related).toBe(true);
-    expect(logo?.contentId).toBe("<logo.0001@operator.example>");
+    expect(logo?.contentId).toBe("<logo.0001@example.com>");
   });
 
   it("handles the awkward cases one by one", async () => {
     const cases: ComposedMessage[] = [
       // bcc only: no To header in the recipient list, an empty group instead
-      { from: { address: "hello@operator.example" }, to: [], bcc: [{ address: "x@example.com" }], subject: "b", text: "" },
+      { from: { address: "hello@example.com" }, to: [], bcc: [{ address: "x@example.com" }], subject: "b", text: "" },
       // names that must not be sent as quoted strings
       {
-        from: { name: 'Say "hi" \\ =?x?= (c)', address: "hello@operator.example" },
+        from: { name: 'Say "hi" \\ =?x?= (c)', address: "hello@example.com" },
         to: [{ name: "A".repeat(300), address: "a@example.com" }, { name: "Nguyễn Văn Anh", address: "b@example.com" }],
         subject: "=?utf-8?q?not_an_encoded_word?=",
         text: "x",
       },
       // a subject that is one 1000-character word, and one with runs of spaces
-      { from: { address: "hello@operator.example" }, to: [{ address: "a@example.com" }], subject: "y".repeat(1000), text: "" },
-      { from: { address: "hello@operator.example" }, to: [{ address: "a@example.com" }], subject: "a  b   c\td", text: "" },
+      { from: { address: "hello@example.com" }, to: [{ address: "a@example.com" }], subject: "y".repeat(1000), text: "" },
+      { from: { address: "hello@example.com" }, to: [{ address: "a@example.com" }], subject: "a  b   c\td", text: "" },
       // bodies: long lines, trailing whitespace, dots, "From ", no final newline, CRLF input
       {
-        from: { address: "hello@operator.example" },
+        from: { address: "hello@example.com" },
         to: [{ address: "a@example.com" }],
         subject: "body",
         text: `${"long ".repeat(400)}\n.\nFrom here \t\n=\r\nend without newline`,
         html: `<p>${"é".repeat(2000)}</p>`,
       },
       // mostly non-ASCII text goes out as base64 and still round-trips
-      { from: { address: "hello@operator.example" }, to: [{ address: "a@example.com" }], subject: "中文", text: "中文内容".repeat(200) },
+      { from: { address: "hello@example.com" }, to: [{ address: "a@example.com" }], subject: "中文", text: "中文内容".repeat(200) },
       // attachments: every byte value, a long non-ASCII name, a quoted name, an inline image without html
       {
-        from: { address: "hello@operator.example" },
+        from: { address: "hello@example.com" },
         to: [{ address: "a@example.com" }],
         subject: "files",
         text: "see attached",
@@ -126,7 +126,7 @@ describe("round trip through postal-mime", () => {
           { filename: "bytes.bin", mimeType: "application/octet-stream", content: new Uint8Array(256).map((_, i) => i) },
           { filename: `${"ünïcödé ".repeat(20)}.pdf`, mimeType: "Application/PDF", content: utf8("pdf") },
           { filename: 'quote " and ; semicolon.txt', mimeType: "text/plain", content: utf8("t") },
-          { filename: "pixel.gif", mimeType: "image/gif", content: utf8("GIF89a"), inline: true, contentId: "px@operator.example" },
+          { filename: "pixel.gif", mimeType: "image/gif", content: utf8("GIF89a"), inline: true, contentId: "px@example.com" },
           { filename: "", mimeType: "application/octet-stream", content: new Uint8Array(0) },
         ],
       },
@@ -220,7 +220,7 @@ function randomMessage(rng: () => number): ComposedMessage {
       const content = new Uint8Array(int(rng, 3000)).map(() => int(rng, 255));
       const base = `${k}-${randomText(rng, 4, false).replace(/[\t]/g, " ").trim() || "file"}`;
       return inline
-        ? { filename: `${base}.png`, mimeType: "image/png", content, inline: true, contentId: `img${k}.${int(rng, 1e6)}@operator.example` }
+        ? { filename: `${base}.png`, mimeType: "image/png", content, inline: true, contentId: `img${k}.${int(rng, 1e6)}@example.com` }
         : { filename: `${base}.bin`, mimeType: pick(rng, ["application/pdf", "application/octet-stream", "image/jpeg"]), content };
     });
   }

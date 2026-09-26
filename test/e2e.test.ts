@@ -105,7 +105,7 @@ describe.skipIf(!CRYPTO || !OUTBOUND)("with the real @platform-mail/outbound (S3
   it("sends real MIME (to a fake SES) and the Sent copy opens to exactly the bytes SES was handed", async () => {
     const ports = { ...realCryptoPorts(), mime: productionPorts(env).mime };
     const { mb, privateKey } = await enrolledWithRealKey(ports);
-    valueOf(await mail().setPolicy(await capFor(mb), { displayName: "Operator" }));
+    valueOf(await mail().setPolicy(await capFor(mb), { displayName: "Example" }));
     const sent = await mail().send(await capFor(mb), {
       idempotencyKey: "e2e-send",
       to: [{ name: "Ana Ruiz", address: "ana@example.com" }],
@@ -120,7 +120,7 @@ describe.skipIf(!CRYPTO || !OUTBOUND)("with the real @platform-mail/outbound (S3
     expect(handed.recipients.sort()).toEqual(["ana@example.com", "archive@example.net"]);
 
     const parsed = await PostalMime.parse(handed.raw);
-    expect(parsed.from).toMatchObject({ name: "Operator", address: mb.address });
+    expect(parsed.from).toMatchObject({ name: "Example", address: mb.address });
     expect(parsed.subject).toBe("Your quote — Zürich");
     expect(new TextDecoder().decode(handed.raw)).not.toMatch(/^bcc:/im);
 

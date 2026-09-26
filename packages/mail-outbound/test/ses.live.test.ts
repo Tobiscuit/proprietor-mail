@@ -8,15 +8,15 @@ import { ALTERNATIVE, MIXED, TEXT_ONLY } from "./fixtures";
  * Skipped unless SES_TEST_ACCESS_KEY_ID, SES_TEST_SECRET_ACCESS_KEY,
  * SES_TEST_FROM and SES_TEST_CONFIGURATION_SET are set. Optional:
  * SES_TEST_SESSION_TOKEN, SES_TEST_REGION (default us-east-1), SES_TEST_TENANT.
- * Read the client-mail principal's credential from Vault into the environment
- * of this one command; never into a file:
+ * Put the client-mail principal's credential into the environment of this one
+ * command, straight from your secret store; never into a file or onto argv:
  *
  *   SES_TEST_ACCESS_KEY_ID=… SES_TEST_SECRET_ACCESS_KEY=… \
- *   SES_TEST_FROM=hello@operator.example SES_TEST_CONFIGURATION_SET=send-operator-mail \
+ *   SES_TEST_FROM=hello@example.com SES_TEST_CONFIGURATION_SET=send-example-mail \
  *   npm test -w @platform-mail/outbound -- test/ses.live.test.ts
  *
- * Do not run it with the SEO engine's notification credential: that
- * principal's events feed the engine's production database.
+ * Use a principal that sends client mail only. A credential whose SES events
+ * feed another application's data would put these test sends into it.
  */
 
 const env = process.env;

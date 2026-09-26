@@ -70,7 +70,7 @@ JSON of a Draft.
   "direction": "in",                 // "in" | "out"
   "envelopeFrom": "bounce@x.example", // SMTP MAIL FROM; null for sent mail
   "from": { "name": "Ana Ruiz", "address": "ana@example.com" },   // or null
-  "to": [{ "name": "", "address": "hello@operator.example" }],
+  "to": [{ "name": "", "address": "hello@example.com" }],
   "cc": [],
   "bcc": [],                         // sent copies only
   "replyTo": [],

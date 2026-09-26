@@ -54,10 +54,10 @@ function request(overrides: Partial<RawSendRequest> = {}): RawSendRequest {
   const built = buildMime(MIXED, goldenOptions());
   return {
     raw: built.raw,
-    fromAddress: "hello@operator.example",
+    fromAddress: "hello@example.com",
     recipients: [...built.recipients, "bcc-only@example.com"],
-    configurationSet: "send-operator-mail",
-    tenantName: "client-operator",
+    configurationSet: "send-example-mail",
+    tenantName: "client-example",
     ...overrides,
   };
 }
@@ -103,13 +103,13 @@ describe("sesRawMailer: the signed request", () => {
     expect(init?.signal).toBeInstanceOf(AbortSignal);
 
     expect(JSON.parse(body)).toEqual({
-      FromEmailAddress: "hello@operator.example",
+      FromEmailAddress: "hello@example.com",
       // with raw content the Destination is the SMTP envelope only; SES takes
       // the headers from the message (see the README for why BccAddresses)
       Destination: { BccAddresses: req.recipients },
       Content: { Raw: { Data: Buffer.from(req.raw).toString("base64") } },
-      ConfigurationSetName: "send-operator-mail",
-      TenantName: "client-operator",
+      ConfigurationSetName: "send-example-mail",
+      TenantName: "client-example",
     });
 
     const amzDate = sent.headers.get("x-amz-date")!;
@@ -205,13 +205,13 @@ describe("sesRawMailer: failures", () => {
     const err = await rejection(() =>
       sesAnswer(
         400,
-        { message: "Email address is not verified. The following identities failed the check in region US-EAST-1: ana@example.com, Hello@Operator.dev" },
+        { message: "Email address is not verified. The following identities failed the check in region US-EAST-1: ana@example.com, Hello@Example.com" },
         { "x-amzn-errortype": "MessageRejected" },
       ),
     );
     expect(err.message).toContain("MessageRejected");
     expect(err.message).toContain("Email address is not verified.");
-    expect(err.message).not.toMatch(/ana@example\.com|operator\.dev/i);
+    expect(err.message).not.toMatch(/ana@example\.com|hello@example\.com/i);
   });
 
   it("treats a 200 without a MessageId as a failure nobody should retry", async () => {
@@ -248,11 +248,11 @@ describe("sesRawMailer: refuses before calling SES", () => {
     ["no recipients", { recipients: [] }],
     ["too many recipients", { recipients: many(LIMITS.maxRecipients + 1) }],
     ["an invalid recipient", { recipients: ["ana@example.com\r\nX: y"] }],
-    ["an invalid from address", { fromAddress: "Mailbox <hello@operator.example>" }],
+    ["an invalid from address", { fromAddress: "Mailbox <hello@example.com>" }],
     ["an empty message", { raw: new Uint8Array(0) }],
     ["an oversized message", { raw: new Uint8Array(LIMITS.maxRawBytes + 1) }],
     ["no configuration set", { configurationSet: "" }],
-    ["an invalid tenant name", { tenantName: "client operator" }],
+    ["an invalid tenant name", { tenantName: "client example" }],
   ] as const)("%s", async (_what, overrides) => {
     const { impl, calls } = fakeFetch(() => sesAnswer(200, { MessageId: "m" }));
     await expect(sesRawMailer(CREDS, { fetch: impl }).send(request(overrides as Partial<RawSendRequest>))).rejects.toBeInstanceOf(

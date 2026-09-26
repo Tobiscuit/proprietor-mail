@@ -102,8 +102,8 @@ describe("provisioning SQL (printed for the operator, never executed by the scri
       id,
       tenantId,
       address: `Hello.${id.slice(4, 10)}@Example.TEST`,
-      sesTenant: "client-operator",
-      sesConfigurationSet: "send-operator-mail",
+      sesTenant: "client-example",
+      sesConfigurationSet: "send-example-mail",
       now: AT,
     });
     await env.DIRECTORY.exec(sql.replace(/\n/g, " "));
@@ -112,8 +112,8 @@ describe("provisioning SQL (printed for the operator, never executed by the scri
       tenantId,
       address: `hello.${id.slice(4, 10)}@example.test`,
       status: "provisioned",
-      sesTenant: "client-operator",
-      sesConfigurationSet: "send-operator-mail",
+      sesTenant: "client-example",
+      sesConfigurationSet: "send-example-mail",
       createdAt: AT.toISOString(),
     });
   });
