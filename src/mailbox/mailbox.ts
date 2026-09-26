@@ -45,9 +45,19 @@ export type { CallContext } from "./types";
 
 /** Email Routing's own ceiling for an inbound message (spec §8). */
 export const MAX_INBOUND_BYTES = 25 * 1024 * 1024;
-/** Once a day at 03:17 UTC: the Trash purge (M9). */
-export const PURGE_CRON = "17 3 * * *";
+/** Once a day at 03:17 UTC: the Trash purge (M9) and the pruning of sends and audit (tasks.md S2k). */
+export const HOUSEKEEPING_CRON = "17 3 * * *";
 export const TRASH_DAYS = 30;
+/**
+ * `sends` rows (idempotency keys and the rate-limit count) are kept 30 days.
+ * The rate limit looks back one day, and a dashboard repeats a key within
+ * seconds; past 30 days a repeated key sends again, including one whose SES
+ * outcome was never known.
+ */
+export const SENDS_KEPT_DAYS = 30;
+/** Audit rows are kept one year. */
+export const AUDIT_KEPT_DAYS = 365;
+const DAY_MS = 24 * 60 * 60 * 1000;
 /** agentic-inbox's limits, domain-model M7. */
 export const SENDS_PER_HOUR = 20;
 export const SENDS_PER_DAY = 100;
@@ -160,7 +170,7 @@ export class Mailbox extends Agent<Env> {
 
   override async onStart(): Promise<void> {
     // Heals a lost schedule on every wake; cron schedules are idempotent.
-    if (this.identityRow() !== null) await this.schedule(PURGE_CRON, "purgeExpiredTrash");
+    if (this.identityRow() !== null) await this.schedule(HOUSEKEEPING_CRON, "dailyHousekeeping");
   }
 
   // ---- inbound (plan.md §5) --------------------------------------------------
@@ -788,11 +798,27 @@ export class Mailbox extends Agent<Env> {
     });
   }
 
-  // ---- housekeeping (M9) ---------------------------------------------------------------
+  // ---- housekeeping (M9, tasks.md S2k) --------------------------------------------------
 
-  /** Deletes every message that has been in Trash for 30 days: the R2 object, then the row. Scheduled daily. */
-  async purgeExpiredTrash(): Promise<number> {
-    const cutoff = new Date(this.ports.clock.now().getTime() - TRASH_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  /**
+   * The daily alarm (HOUSEKEEPING_CRON): empties Trash of messages 30 days in
+   * it (M9), then deletes `sends` rows more than 30 days old and audit rows
+   * more than a year old. A row exactly at its limit stays. Not reached over
+   * RPC by MailService; a failure throws into the Agents SDK's scheduler
+   * (agents 0.24.0), which retries the job and runs the cron again next day.
+   */
+  async dailyHousekeeping(): Promise<{ trash: number; sends: number; audit: number }> {
+    const trash = await this.purgeExpiredTrash();
+    const now = this.ports.clock.now().getTime();
+    const sends = this.deleteOlderThan("sends", "created_at", new Date(now - SENDS_KEPT_DAYS * DAY_MS));
+    const audit = this.deleteOlderThan("audit", "at", new Date(now - AUDIT_KEPT_DAYS * DAY_MS));
+    logEvent("housekeeping", { mailbox: this.safeName(), trash, sends, audit });
+    return { trash, sends, audit };
+  }
+
+  /** Deletes every message that has been in Trash for 30 days: the R2 object, then the row. */
+  private async purgeExpiredTrash(): Promise<number> {
+    const cutoff = new Date(this.ports.clock.now().getTime() - TRASH_DAYS * DAY_MS).toISOString();
     const expired = this.rows<MessageRow>(
       "SELECT * FROM messages WHERE folder_id = ? AND trashed_at IS NOT NULL AND trashed_at <= ?",
       Folders.TRASH,
@@ -800,8 +826,12 @@ export class Mailbox extends Agent<Env> {
     );
     for (const row of expired) await this.deleteMessage(row);
     if (expired.length > 0) this.audit("system:housekeeping", "trash-emptied", { count: expired.length });
-    logEvent("trash-purge", { mailbox: this.safeName(), count: expired.length });
     return expired.length;
+  }
+
+  /** Rows whose ISO timestamp is before `cutoff`; the table and column are this file's constants, never input. */
+  private deleteOlderThan(table: "sends" | "audit", column: "created_at" | "at", cutoff: Date): number {
+    return this.rows(`DELETE FROM ${table} WHERE ${column} < ? RETURNING 1`, cutoff.toISOString()).length;
   }
 
   // ---- internals ------------------------------------------------------------------------
@@ -854,7 +884,7 @@ export class Mailbox extends Agent<Env> {
       this.ctx.storage.sql.exec("INSERT INTO policy (only, updated_at, updated_by) VALUES (1, ?, ?)", at, actor);
       this.audit(actor, "mailbox-initialized", {});
     });
-    await this.schedule(PURGE_CRON, "purgeExpiredTrash");
+    await this.schedule(HOUSEKEEPING_CRON, "dailyHousekeeping");
   }
 
   private requireRole(ctx: CallContext, need: "open" | "send" | "owner"): void {

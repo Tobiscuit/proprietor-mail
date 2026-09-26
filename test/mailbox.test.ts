@@ -84,11 +84,10 @@ describe("the Mailbox Agent: schema, identity, folders, policy, audit (tasks.md 
     expect(rows[0]?.at).toBe(mb.ports.clock.now().toISOString());
   });
 
-  it("schedules the daily trash purge on first contact (M9)", async () => {
+  it("schedules the daily housekeeping (the Trash purge, M9, and pruning, S2k) on first contact", async () => {
     const mb = await provisionMailbox({ status: "provisioned", enroll: false });
     valueOf(await mb.stub.describe(callContext(mb, { status: "provisioned" })));
     const schedules = await runInDurableObject(mb.stub, (instance: Mailbox) => instance.getSchedules());
-    expect(schedules.map((s) => s.callback)).toContain("purgeExpiredTrash");
-    expect(schedules.find((s) => s.callback === "purgeExpiredTrash")?.type).toBe("cron");
+    expect(schedules.filter((s) => s.callback === "dailyHousekeeping").map((s) => [s.type, (s as { cron?: string }).cron])).toEqual([["cron", "17 3 * * *"]]);
   });
 });
