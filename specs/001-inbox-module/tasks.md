@@ -194,6 +194,24 @@ injection handling, quoted display names).
   intended), typecheck clean. The one seam found (mail-crypto did not
   typecheck under workers-types) went back to S1 and was fixed in `4a81d60`.
 
+## S2r — Refusals as values, and a suite that fails on escapes  *(builder, 2026-09-26)*
+
+- [ ] `MailService` and the `Mailbox` answer with `MailResult` values
+  (`contracts/mail-service-v1.md`); no expected refusal is thrown across either
+  RPC hop
+- [ ] a harness guard: `npm test` fails when workerd logs an uncaught exception
+  or a "hung" cancellation, except where a test declares the one deliberate
+  throw (`email()` in `store` mode when storing fails)
+- [ ] a floating-promise audit of `src/` (type-aware lint if it runs under
+  TypeScript 7, otherwise a reviewed list), with each finding fixed
+
+## CI and S1r  *(builder, 2026-09-26)*
+
+- [ ] `.github/workflows/ci.yml`: `npm ci`, `npm run typecheck`, `npm test` on
+  every pull request and on push to `main`; read-only token, actions pinned to
+  full commit SHAs
+- [ ] S1r (below) on the S1 branch
+
 ## S2k — Housekeeping found in the S2 audit  *(small, after S4)*
 
 - [ ] prune `sends` (idempotency and rate-limit rows) after 30 days and the
