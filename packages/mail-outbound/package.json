@@ -1,0 +1,16 @@
+{
+  "name": "@platform-mail/outbound",
+  "version": "0.0.0",
+  "private": true,
+  "description": "MIME builder and Amazon SES v2 raw sender for platform-mail. No bindings; runs in Workers and Node.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

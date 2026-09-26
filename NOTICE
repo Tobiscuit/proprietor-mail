@@ -1,0 +1,15 @@
+platform-mail
+Copyright (c) 2026 Operator
+
+This repository adapts parts of Agentic Inbox:
+  https://github.com/cloudflare/agentic-inbox (commit 48039bb)
+  Copyright (c) 2026 Cloudflare, Inc.
+  Licensed under the Apache License, Version 2.0 (LICENSES/Apache-2.0.txt).
+
+Every file that adapts Agentic Inbox code keeps Cloudflare's copyright header
+and adds a line stating that it was modified, when, and what changed. The list
+of adapted files is maintained below; a file not listed contains no Agentic
+Inbox code.
+
+Adapted files:
+  (none yet - each builder slice adds its own entries)
