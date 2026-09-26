@@ -11,6 +11,11 @@
   },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
+    "write-vectors": "WRITE_VECTORS=1 vitest run test/vectors.write.test.ts"
+  },
+  "dependencies": {
+    "@hpke/common": "1.10.1",
+    "@hpke/core": "1.9.0"
   }
 }

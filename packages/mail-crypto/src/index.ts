@@ -14,33 +14,16 @@
  *     mailbox private key.
  */
 
+import { randomBytes, toHex } from "./bytes";
+import { crockfordEncode } from "./crockford";
+import { NotImplemented } from "./errors";
+
 /** False until S1 replaces the stubs. Tests that need real crypto skip on it. */
 export const IMPLEMENTED: boolean = false;
 
 export const ENVELOPE_VERSION = 1 as const;
 
-export class NotImplemented extends Error {
-  constructor(what: string) {
-    super(`@platform-mail/crypto: ${what} is not implemented yet (slice S1)`);
-    this.name = "NotImplemented";
-  }
-}
-
-/** An authentication tag did not verify, or a blob is malformed. Never an empty result. */
-export class DecryptionFailed extends Error {
-  constructor(message = "this could not be decrypted") {
-    super(message);
-    this.name = "DecryptionFailed";
-  }
-}
-
-/** A recovery key whose checksum does not match: a typo, caught before any decryption. */
-export class RecoveryKeyTypo extends Error {
-  constructor(message = "that recovery key has a typo") {
-    super(message);
-    this.name = "RecoveryKeyTypo";
-  }
-}
+export { DecryptionFailed, NotImplemented, RecoveryKeyTypo } from "./errors";
 
 // ---- Plaintext shapes (contracts/envelope-v1.md) ----------------------------
 
@@ -111,6 +94,9 @@ export interface MailboxPrivateKey {
 
 export type IdPrefix = "mbx" | "msg" | "drf" | "wrp";
 
+const ID_PREFIXES: readonly string[] = ["mbx", "msg", "drf", "wrp"];
+const KEY_ID = /^[0-9a-f]{32}$/;
+
 export type WrapKind = "passkey-prf" | "recovery";
 
 export interface KeyWrap {
@@ -144,18 +130,22 @@ export interface SealedDraft {
 
 /** `<prefix>_<26 lowercase Crockford base32 chars of 16 random bytes>`. */
 export function newId(prefix: IdPrefix): string {
-  throw new NotImplemented(`newId(${prefix})`);
+  if (!ID_PREFIXES.includes(prefix)) throw new TypeError(`unknown id prefix: ${String(prefix)}`);
+  return `${prefix}_${crockfordEncode(randomBytes(16), "lower")}`;
 }
 
 export async function keyIdOf(publicKey: Uint8Array): Promise<string> {
-  void publicKey;
-  throw new NotImplemented("keyIdOf");
+  if (!(publicKey instanceof Uint8Array) || publicKey.length !== 32) {
+    throw new TypeError("an X25519 public key is exactly 32 bytes");
+  }
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(publicKey)));
+  return toHex(digest.subarray(0, 16));
 }
 
 /** keyId in groups of four, for people to compare. */
 export function fingerprint(keyId: string): string {
-  void keyId;
-  throw new NotImplemented("fingerprint");
+  if (typeof keyId !== "string" || !KEY_ID.test(keyId)) throw new TypeError("not a keyId (32 lowercase hex digits)");
+  return keyId.match(/.{4}/g)!.join(" ");
 }
 
 // ---- API: the Worker (seal only) --------------------------------------------
