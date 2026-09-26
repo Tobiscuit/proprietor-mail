@@ -123,6 +123,8 @@ export function buildMime(msg: ComposedMessage, opts: BuildOptions): BuiltMessag
   bcc.forEach((a, i) => checkMailbox(a, `bcc[${i}]`));
   replyTo.forEach((a, i) => checkMailbox(a, `replyTo[${i}]`));
   checkHeaderValue(msg.subject, "subject");
+  if (typeof msg.text !== "string") throw new InvalidMessage("text is not a string");
+  if (msg.html !== undefined && typeof msg.html !== "string") throw new InvalidMessage("html is not a string");
   if (msg.inReplyTo !== undefined) checkId(msg.inReplyTo, "inReplyTo");
   (msg.references ?? []).forEach((r, i) => checkId(r, `references[${i}]`));
   const attachments = msg.attachments ?? [];

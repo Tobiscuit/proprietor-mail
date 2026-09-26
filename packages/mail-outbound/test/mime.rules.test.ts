@@ -255,6 +255,11 @@ describe("buildMime: header injection and malformed input", () => {
     expectInvalid(base, { ...goldenOptions(), messageIdDomain });
   });
 
+  it("refuses a body that is not a string (input from RPC is not trusted to match the types)", () => {
+    expectInvalid({ ...base, text: undefined as unknown as string });
+    expectInvalid({ ...base, html: 42 as unknown as string });
+  });
+
   it("refuses an invalid clock", () => {
     expectInvalid(base, { ...goldenOptions(), now: new Date(Number.NaN) });
   });
