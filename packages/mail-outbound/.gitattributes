@@ -1,0 +1,2 @@
+# The golden messages are CRLF byte for byte; never let git convert them.
+test/golden/*.eml binary
