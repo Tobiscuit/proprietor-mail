@@ -6,21 +6,23 @@ sends it through Amazon SES API v2 `SendEmail` as raw content
 `TextEncoder` only, so the same code runs in a Worker and in Node.
 
 ```ts
-const built = buildMime(msg, { messageIdDomain: "operator.example" });
+const built = buildMime(msg, { messageIdDomain: "example.com" });
 // built.raw: the exact bytes SES receives and the Sent copy seals
 // built.recipients: to + cc + bcc, lower-cased, de-duplicated (the envelope)
 const mailer = sesRawMailer({ accessKeyId, secretAccessKey, region: "us-east-1" });
 const { providerMessageId } = await mailer.send({
   raw: built.raw,
-  fromAddress: "hello@operator.example",
+  fromAddress: "hello@example.com",
   recipients: built.recipients,
-  configurationSet: "send-operator-mail",
-  tenantName: "client-operator", // omit until the tenant exists
+  configurationSet: "send-example-mail",
+  tenantName: "client-example", // omit until the tenant exists
 });
 ```
 
+From the repository root:
+
 ```
-cd /home/link/platform-mail-worktrees/s3-mail-outbound && npm install && npm test -w @platform-mail/outbound && npm run typecheck -w @platform-mail/outbound
+npm ci && npm test -w @platform-mail/outbound && npm run typecheck -w @platform-mail/outbound
 ```
 
 ## What the message looks like
@@ -91,13 +93,13 @@ Two consequences for the policy sketched in `plan.md` §6:
     "Effect": "Allow",
     "Action": "ses:SendEmail",
     "Resource": [
-      "arn:aws:ses:us-east-1:123456789012:identity/operator.example",
-      "arn:aws:ses:us-east-1:123456789012:configuration-set/send-operator-mail"
+      "arn:aws:ses:us-east-1:123456789012:identity/example.com",
+      "arn:aws:ses:us-east-1:123456789012:configuration-set/send-example-mail"
     ],
     "Condition": {
       "StringEquals": {
-        "ses:FromAddress": "hello@operator.example",
-        "ses:TenantName": "client-operator",
+        "ses:FromAddress": "hello@example.com",
+        "ses:TenantName": "client-example",
         "ses:ApiVersion": "2"
       }
     }
@@ -120,9 +122,9 @@ address.
 - **No automatic retries, and no fallback without the configuration set.**
   aws4fetch's `fetch` retries 5xx and 429 up to 10 times; this package signs
   with it and sends once. A retry after a 5xx or a timeout can deliver twice,
-  and the caller holds the idempotency key (M7). The portfolio's
-  `sendWithFallback` drops the configuration set on failure so a visitor's
-  enquiry is not lost; here the configuration set carries the tenant's
+  and the caller holds the idempotency key (M7). A contact form's sender
+  may drop the configuration set on failure so that a visitor's enquiry is
+  not lost; here the configuration set carries the tenant's
   suppression list and Mail's own event feed, and the sender is a person who
   sees the error, so a failure stays a failure.
 - **`retryable` is true only for throttling and 5xx.** A timeout
@@ -164,7 +166,7 @@ message each to the bounce and complaint simulators, and refuses in code any
 recipient outside `@simulator.amazonses.com`. It needs
 `SES_TEST_ACCESS_KEY_ID`, `SES_TEST_SECRET_ACCESS_KEY`, `SES_TEST_FROM` and
 `SES_TEST_CONFIGURATION_SET` (optional: `SES_TEST_SESSION_TOKEN`,
-`SES_TEST_REGION`, `SES_TEST_TENANT`), read from Vault into the environment
-of the one command. Run it only with the client-mail principal
-(`secret/aws/ses-send-mail`), never with the SEO engine's notification key,
-whose events feed the engine's production database.
+`SES_TEST_REGION`, `SES_TEST_TENANT`), put into the environment of the one
+command from your secret store. Run it only with a principal that sends
+client mail, never with a credential whose SES events feed another
+application's data.

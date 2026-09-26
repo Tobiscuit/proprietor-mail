@@ -1,10 +1,10 @@
 # Contract: Mail capability, version 1
 
-**Minted by** the dashboard shell (spec 007, SEO-engine repo).
-**Verified by** `platform-mail`'s `MailService` entrypoint before any read or
-write. **Status:** proposed 2026-09-26 from the SEO-engine session's answer
-(b); the minting side is theirs to implement against this document and its
-test vectors.
+**Minted by** the dashboard shell (a separate application, not in this
+repository). **Verified by** `platform-mail`'s `MailService` entrypoint before
+any read or write. **Status:** agreed 2026-09-26 with the dashboard's
+maintainers (answer (b) in `specs/001-inbox-module/plan.md` §1); the minting
+side is theirs to implement against this document and its test vectors.
 
 ## Why it exists
 
@@ -77,8 +77,8 @@ claims `iss, aud, sub, tenant, mbx, role, iat, exp, jti`; `exp = iat + 60`.
   to base64url-encoded 32-byte random keys, e.g.
   `{"2026-09-a": "<43 chars>"}`.
 - The dashboard also has `MAIL_CAPABILITY_KID`, the id it signs with.
-- Source of truth: Vault `secret/platform-mail/capability`, fields `keys` and
-  `current_kid`. Loaded into each Worker as secrets through the process
+- Source of truth: one entry in the operator's secret store, holding `keys`
+  and `current_kid`. Loaded into each Worker as secrets through the process
   environment (`wrangler secret put` reading stdin), never through argv or a
   kept file.
 - Rotation: add the new key to both Workers → switch `MAIL_CAPABILITY_KID` →

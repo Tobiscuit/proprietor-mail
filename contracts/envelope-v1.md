@@ -2,10 +2,10 @@
 
 **Implemented once**, in `packages/mail-crypto`, and used by both sides: the
 Mail Worker seals arriving and sent mail; the owner's browser opens it, seals
-drafts and wraps the mailbox key. **Status:** implemented by slice S1 (PR #3) and verified independently against
-its vectors, 2026-09-26. Any change
-to a byte below is a new version (`v2`), never an edit of `v1`: stored mail
-must stay readable.
+drafts and wraps the mailbox key. **Status:** implemented by slice S1 and
+verified independently against its vectors, 2026-09-26. Any change to a byte
+below is a new version (`v2`), never an edit of `v1`: stored mail must stay
+readable.
 
 All strings are UTF-8. `||` is byte concatenation. "base64url" is RFC 4648 §5
 without padding. Random bytes come from `crypto.getRandomValues`.

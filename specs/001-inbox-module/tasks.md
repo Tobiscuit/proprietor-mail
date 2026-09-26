@@ -6,10 +6,10 @@ Slices that run in parallel never own the same file.
 
 Legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[H]` held (the reason is given)
 
-Branching: `main` holds only GitHub's bootstrap README. PR #1 is branch
-`spec/001-inbox-module` (spec + scaffold). Slice branches start from it and
-open their PRs against it; GitHub retargets them to `main` when PR #1 merges.
-Nobody merges; the maintainer does.
+Branching, during the build: the spec branch `spec/001-inbox-module` held the
+spec and the scaffold; each slice branch started from it and opened its pull
+request against it, and an integration branch merged the slices. Only the
+maintainer merges.
 
 ## Rules for every builder
 
@@ -28,13 +28,13 @@ Nobody merges; the maintainer does.
   in `NOTICE`.
 - No real mail to or from anyone. No deploys, no `wrangler d1 create`, no DNS,
   no Email Routing, no Access, no AWS resources.
-- Secrets only from Vault (`VAULT_ADDR=https://vault.operator.example`), only
-  through the process environment; never argv, never a kept file, never a
-  message. The global pre-commit secret scanner stays on; never
-  `--no-verify`.
-- Commit at every green step; push your branch; open a PR against
-  `spec/001-inbox-module`. Commit messages end with the two trailer lines
-  given in your brief; PR descriptions end with the two lines given there.
+- Secrets only from the operator's secret store, only through the process
+  environment; never argv, never a kept file, never a message. A pre-commit
+  secret scanner stays on; never `--no-verify`.
+- Commit at every green step; push your branch; open a pull request. Commit
+  messages, pull requests and comments are written for a public audience
+  (`spec.md` §3): `example.com` for addresses, no client names, no
+  infrastructure identifiers.
 
 ---
 
@@ -45,7 +45,7 @@ Nobody merges; the maintainer does.
 - [x] S0c scaffold: workspaces, typed stubs for both packages, NOTICE,
   Apache-2.0 text
 
-## S1 — `packages/mail-crypto`  *(builder, parallel)* — built, PR #3, audited 2026-09-26 (unmerged)
+## S1 — `packages/mail-crypto`  *(builder, parallel)* — built and audited 2026-09-26
 
 **Inputs:** `contracts/envelope-v1.md`, the stub `packages/mail-crypto/src/index.ts`.
 **Contract:** the exported signatures in the stub; the byte formats in the
@@ -85,7 +85,7 @@ contract. **Owns:** `packages/mail-crypto/**`,
   of the same input differ);
 - runs in Node and imports cleanly in workerd (S2's tests will import it).
 
-## S2 — The Mail Worker  *(builder, parallel)* — built, PR #4, audited 2026-09-26 (unmerged)
+## S2 — The Mail Worker  *(builder, parallel)* — built and audited 2026-09-26
 
 **Inputs:** `plan.md` §3–§5 and §7, `domain-model.md` §3 (invariants M1–M10),
 `contracts/capability-v1.md`, the two package stubs.
@@ -144,12 +144,12 @@ envelope v1 via `sealMessage` only.
 - with real S1 merged: a message sealed by the Worker opens with the test's
   private key to the exact raw bytes.
 
-## S3 — `packages/mail-outbound`  *(builder, parallel)* — built, PR #2, audited 2026-09-26 (unmerged)
+## S3 — `packages/mail-outbound`  *(builder, parallel)* — built and audited 2026-09-26
 
-**Inputs:** `plan.md` §6, the stub `packages/mail-outbound/src/index.ts`, the
-engine's `src/adapters/ses-mailer.ts` (read, do not edit: aws4fetch, an
-injectable fetch) and the portfolio's `app/lib/ses/contact.ts` (header
-injection handling, quoted display names).
+**Inputs:** `plan.md` §6, the stub `packages/mail-outbound/src/index.ts`, and
+two senders in the platform's other, private codebases, read only: the
+existing SES adapter (aws4fetch, an injectable fetch) and a contact-form
+sender (header-injection handling, quoted display names).
 **Contract:** the exported signatures in the stub.
 **Owns:** `packages/mail-outbound/**`, its `NOTICE` lines.
 
@@ -177,24 +177,34 @@ injection handling, quoted display names).
   `SES_TEST_SECRET_ACCESS_KEY` and `SES_TEST_FROM` are set, that sends each
   MIME shape only to `success@simulator.amazonses.com` (and one each to the
   bounce and complaint simulator addresses) and asserts a message id. Run it
-  once if a Vault token is valid, with the credential read into the
-  environment; otherwise say it was not run.
+  once if a client-mail credential is available, read into the environment;
+  otherwise say it was not run.
 
-## S1r — mail-crypto releases  *(built on PR #3; first real release after S1 merges)*
+## S1r — mail-crypto releases  *(written; first real release after publication)*
 
 - [x] a workflow on tags `mail-crypto-vX.Y.Z` that computes `SHA256SUMS` over
   `packages/mail-crypto/src/**` from the tagged tree and attaches it to a
   GitHub release, so the dashboard's vendoring script checks against CI's
-  record rather than the copy; sign the tag if the maintainer has a signing key
+  record rather than the copy; sign the tag if the maintainer has a signing
+  key
+- [x] the same workflow packs `@platform-mail/crypto` once, attests the
+  tarball and `SHA256SUMS` with GitHub artifact attestations, and stages the
+  tarball on npm with trusted publishing (OIDC, no token; provenance). A
+  maintainer approves the staged version with 2FA before it goes live. The
+  GitHub release carries the same tarball, so npm, the release and
+  `SHA256SUMS` describe one set of bytes
+- [ ] the first run, after publication: the npm package and its trusted
+  publisher exist (the package must exist before a trusted publisher can be
+  added; `README.md` › Releases)
 
-## S4 — Integration  *(architect, after S1–S3 are audited)* — PR #5, 2026-09-26 (unmerged)
+## S4 — Integration  *(architect, after S1–S3 are audited)* — 2026-09-26
 
 - [x] S1, S2 and S3 merged on `feat/s4-integration`, the lockfile regenerated
   (`npm ci` works), NOTICE lists the adapted files; 409 passed, 8 skipped (all
   intended), typecheck clean. The one seam found (mail-crypto did not
-  typecheck under workers-types) went back to S1 and was fixed in `4a81d60`.
+  typecheck under workers-types) went back to S1 and was fixed there.
 
-## S2r — Refusals as values, and a suite that fails on escapes  *(builder, 2026-09-26)* — done on PR #4, audited
+## S2r — Refusals as values, and a suite that fails on escapes  *(builder, 2026-09-26)* — done, audited
 
 - [x] `MailService` and the `Mailbox` answer with `MailResult` values
   (`contracts/mail-service-v1.md`); no expected refusal is thrown across either
@@ -205,14 +215,14 @@ injection handling, quoted display names).
 - [x] a floating-promise audit of `src/` (type-aware lint if it runs under
   TypeScript 7, otherwise a reviewed list), with each finding fixed
 
-## CI and S1r  *(builder, 2026-09-26)* — done: CI on PRs #1–#5, S1r on PR #3, audited
+## CI and S1r  *(builder, 2026-09-26)* — done, audited
 
 - [x] `.github/workflows/ci.yml`: `npm ci`, `npm run typecheck`, `npm test` on
   every pull request and on push to `main`; read-only token, actions pinned to
   full commit SHAs
 - [x] S1r (below) on the S1 branch
 
-## S2k — Housekeeping found in the S2 audit — done on PR #4, audited
+## S2k — Housekeeping found in the S2 audit — done, audited
 
 - [x] prune `sends` (idempotency and rate-limit rows) after 30 days and the
   audit table after one year, in the same daily alarm as the Trash purge;
@@ -224,10 +234,10 @@ injection handling, quoted display names).
   suppression checked before `send`; events kept 90 days with only the
   recipient address, the event type and the time (D8)
 
-## S6 — The inbox screens  *[H: spec 007 step 0 (shell, session, module contract) and the theme-token contract]*
+## S6 — The inbox screens  *[H: the dashboard's first step (shell, session, module contract) and the theme-token contract]*
 
-- [H] `plan.md` §10, as a PR to the SEO-engine repo's route group
-  (`apps/dashboard/app/(modules)/inbox/`), with the vendored mail-crypto at
+- [H] `plan.md` §10, as a change to the dashboard's inbox route group (a
+  separate application), with the vendored mail-crypto at
   `_vendor/mail-crypto/` and the GET-only streaming route handler (`plan.md`
   §1). Works under the shell's CSP and Trusted Types: the frame's `srcdoc` is
   set only through a named Trusted Types policy returning DOMPurify's
@@ -239,19 +249,33 @@ injection handling, quoted display names).
 
 - [H] `plan.md` §9
 
-## S8 — Activation for hello@operator.example  *[H: D4, D5, D7, the §6 resources]*
+## S8 — Activation of the operator's own mailbox  *[H: D4, D5, D7, the §6 resources]*
 
 - [H] verify what Email Routing does when the `email()` handler throws, on a
-  throwaway address the maintainer approves, before routing a real one
+  throwaway address the operator approves, before routing a real one
 - [H] on that same throwaway deployment, read what Workers Logs and a Tail
   Worker record for an email invocation. If it is more than spec §4 lists,
   turn `observability` off for this Worker before any real address is routed.
   (The Agents SDK's own email diagnostics channel, which publishes each
   arriving message's from, to and subject, is already disabled in the
   Mailbox, and a test fails if that changes on an SDK upgrade.)
-- [H] create the resources, deploy, route the address, the maintainer enrolls on his
-  own devices, send from the simulator first
+- [H] create the resources, deploy, route the address, the operator enrolls
+  on their own devices, send from the simulator first
 
-## S9 — Alex  *[H: `plan.md` §8 prerequisites]*
+## S9 — The first client mailbox  *[H: `plan.md` §8 prerequisites]*
 
-- [H] the reversible dual-delivery plan in `plan.md` §8
+- [H] the reversible move to dual delivery in `plan.md` §8, run from the
+  operator's private runbook for that client
+
+## P — Publication  *(2026-09-26)*
+
+- [x] everything written for a public audience; example values in every
+  fixture; operator-specific values moved out (`plan.md` §6)
+- [x] `LICENSE` (Apache-2.0), `NOTICE` per §4(d), modification notices per
+  §4(b) kept, `SECURITY.md`, `CONTRIBUTING.md`, `CODEOWNERS`
+- [x] CI for a public repository: least-privilege tokens, actions pinned by
+  commit SHA, no `pull_request_target`, CodeQL, dependency review,
+  Dependabot, OpenSSF Scorecard
+- [ ] the repository settings that only exist once it is public (secret
+  scanning and push protection, private vulnerability reporting, rulesets),
+  applied by the maintainer

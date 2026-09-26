@@ -6,8 +6,10 @@ SES is a fake, or a `fetch` that never leaves the isolate.
 
 ## `npm test`
 
+From the repository root:
+
 ```sh
-cd /home/link/platform-mail-worktrees/s2-mail-worker && npm test
+npm test
 ```
 
 One `vitest run`, three kinds of project (`vitest.config.ts`):
@@ -40,7 +42,7 @@ package's own typecheck).
   mailbox ids.
 - **End-to-end tests** (`test/e2e.test.ts`) put the real `@platform-mail/crypto`
   and `@platform-mail/outbound` behind the ports and skip on each package's
-  `IMPLEMENTED` flag; they start running when S1 and S3 merge.
+  `IMPLEMENTED` flag, so they ran as soon as S1 and S3 were merged.
 
 ### The escape guard: exceptions that escape an RPC hop fail the run
 
@@ -111,24 +113,24 @@ reaches the primary worker of a session), and `test/local/driver.ts` on
 :8788, a stand-in for the dashboard that mints capabilities with the public
 TEST key and calls `MailService` over a real service binding; the local dev
 registry connects the two (`env.MAIL (platform-mail#MailService) … [connected]`).
-Everything is `--local`; nothing touches an account.
+Everything is `--local`; nothing touches an account. From the repository root:
 
 ```sh
-cd /home/link/platform-mail-worktrees/s2-mail-worker && npx wrangler d1 migrations apply platform-mail --local
-cd /home/link/platform-mail-worktrees/s2-mail-worker && node scripts/provision-mailbox.ts --tenant tnt_local --address hello@operator.test > /tmp/provision.sql   # add --id mbx_… until S1 lands
-cd /home/link/platform-mail-worktrees/s2-mail-worker && npx wrangler d1 execute platform-mail --local --file /tmp/provision.sql
+npx wrangler d1 migrations apply platform-mail --local
+node scripts/provision-mailbox.ts --tenant tnt_local --address hello@example.test > /tmp/provision.sql
+npx wrangler d1 execute platform-mail --local --file /tmp/provision.sql
 
 # The capability key is the public TEST key from contracts/capability-v1.vectors.json, not a secret.
-cd /home/link/platform-mail-worktrees/s2-mail-worker && printf '%s\n' "MAIL_CAPABILITY_KEYS='{\"test-2026-09\":\"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\"}'" > /tmp/mail-local.env  # pragma: allowlist secret (public test key)
-cd /home/link/platform-mail-worktrees/s2-mail-worker && npx wrangler dev --local --port 8787 --inspector-port 9231 --env-file /tmp/mail-local.env
-cd /home/link/platform-mail-worktrees/s2-mail-worker && npx wrangler dev --local -c test/local/driver.wrangler.jsonc --port 8788 --inspector-port 9232   # a second terminal
+printf '%s\n' "MAIL_CAPABILITY_KEYS='{\"test-2026-09\":\"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\"}'" > /tmp/mail-local.env  # pragma: allowlist secret (public test key)
+npx wrangler dev --local --port 8787 --inspector-port 9231 --env-file /tmp/mail-local.env
+npx wrangler dev --local -c test/local/driver.wrangler.jsonc --port 8788 --inspector-port 9232   # a second terminal
 
 M=<the mbx_ id from /tmp/provision.sql>
-cd /home/link/platform-mail-worktrees/s2-mail-worker && curl -s -X POST "http://localhost:8788/enroll?tenant=tnt_local&mbx=$M"
-cd /home/link/platform-mail-worktrees/s2-mail-worker && curl -s -X POST "http://localhost:8787/cdn-cgi/local/email?from=ana@example.com&to=hello@operator.test&format=json" --data-binary @test/local/sample.eml
-cd /home/link/platform-mail-worktrees/s2-mail-worker && curl -s "http://localhost:8788/list?tenant=tnt_local&mbx=$M"
-cd /home/link/platform-mail-worktrees/s2-mail-worker && curl -s "http://localhost:8788/open?tenant=tnt_local&mbx=$M"
-cd /home/link/platform-mail-worktrees/s2-mail-worker && curl -s "http://localhost:8788/refuse?tenant=tnt_local&mbx=$M"   # a refusal, across two processes, as a value
+curl -s -X POST "http://localhost:8788/enroll?tenant=tnt_local&mbx=$M"
+curl -s -X POST "http://localhost:8787/cdn-cgi/local/email?from=ana@example.com&to=hello@example.test&format=json" --data-binary @test/local/sample.eml
+curl -s "http://localhost:8788/list?tenant=tnt_local&mbx=$M"
+curl -s "http://localhost:8788/open?tenant=tnt_local&mbx=$M"
+curl -s "http://localhost:8788/refuse?tenant=tnt_local&mbx=$M"   # a refusal, across two processes, as a value
 ```
 
 The driver prints Mail's answers as the dashboard will branch on them: an ok
@@ -140,9 +142,8 @@ loses it when it reloads.
 
 ### Observed, 2026-09-26 (after refusals became values)
 
-**With S1 and S3 merged** (a throwaway detached checkout of
-`feat/s4-integration` with this branch merged in; ports 8797/8798 because
-other sessions held 8787):
+**With S1 and S3 merged** (a throwaway checkout of the integration branch;
+ports 8797/8798 because 8787 was already in use):
 
 ```text
 unknown address  → {"outcome":"ok","rejectReason":"No such mailbox",…}
@@ -176,8 +177,8 @@ it holds none of the subject, the sender's name or address, or the body.
 (The earlier run, before this change, also grepped the whole `.wrangler/state`
 directory for them and found nothing; the R2 object starts with `PMB1`.)
 
-**On this branch alone** (the packages are still stubs; not re-run after
-this change): the Mailbox recomputes the keyId with S1's `keyIdOf`, a stub
+**Before S1 and S3 were merged** (the packages were still stubs; not re-run
+after this change): the Mailbox recomputes the keyId with S1's `keyIdOf`, a stub
 that throws, so `/enroll` answers
 `{"refused":{"name":"InternalError","message":"internal error"}}`, the
 Mailbox logs a `mailbox-error` naming `NotImplemented`, and MailService an

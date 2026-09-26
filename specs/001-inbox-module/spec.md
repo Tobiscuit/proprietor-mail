@@ -1,24 +1,29 @@
 # 001 — The Inbox module
 
 Status: written 2026-09-26. Spec only; nothing is deployed and no live
-infrastructure was changed. The six seams with the SEO-engine session were
-answered the same day and are recorded in `plan.md` §1.
+infrastructure was changed. The six seams with the dashboard were answered by
+its maintainers the same day and are recorded in `plan.md` §1.
 
 Companion documents: `domain-model.md` (the DDD pass and the gaps it found),
-`plan.md` (architecture, contracts, infrastructure, the Alex migration),
-`tasks.md` (the builder slices), `../../contracts/` (the two contracts other
-repositories implement).
+`plan.md` (architecture, contracts, infrastructure, moving a forwarded address
+to the inbox), `tasks.md` (the build slices), `../../contracts/` (the
+contracts other repositories implement).
 
-## 1. What the maintainer asked for
+In this repository **the operator** is the person or business that runs the
+platform: they own the Cloudflare and AWS accounts and deploy the code. **The
+dashboard** is the platform's separate web application, where business owners
+sign in; it is not published here.
+
+## 1. Requirements
 
 - **One mailbox per business**, isolated per tenant, read inside the ONE
   dashboard (a route group in the dashboard app, in the dashboard's design
   system, themed from each client's own website). No full-page mail app, no
   iframes for composition, no module federation.
-- **Client mail is zero-access.** the maintainer must not be able to read a client's
-  mail. His words: "I run the wall of not being trusted."
-- **Nothing client-facing depends on the operator's node** at runtime. The node is
-  the operator's workbench (Vault, seo-admin) and nothing more.
+- **Client mail is zero-access.** The operator must not be able to read a
+  client's mail.
+- **Nothing client-facing depends on the operator's own server** at runtime.
+  That server is the operator's workbench and nothing more.
 - **Inbound** through Cloudflare Email Routing to a Worker, handed to a
   per-mailbox agent (Agents SDK `onEmail` / `routeAgentEmail`).
   **Outbound** through Amazon SES, not through Cloudflare's own sending.
@@ -27,14 +32,14 @@ repositories implement).
 - **The AI agent** from cloudflare/agentic-inbox keeps its tools, reconciled
   with zero-access. The safe default is built: the assistant is OFF for every
   mailbox, on only by an explicit opt-in.
-- **The first mailbox is the maintainer's own operator mailbox.** Alex's comes
-  later, through a safe, reversible migration that this spec plans and nobody
-  executes yet.
+- **The first mailbox is the operator's own.** The first client's mailbox
+  comes later, through a safe, reversible move from forwarding that this spec
+  plans (`plan.md` §8) and nobody executes yet.
 
 ## 2. The promise — and why its wording is the top decision
 
-"the maintainer can't read your mail" can mean two different things, and a client is
-owed the one that is true.
+"The operator can't read your mail" can mean two different things, and a
+client is owed the one that is true.
 
 **A structural guarantee.** The servers never hold the key that opens stored
 mail. Whoever has the database, the backups or the operator's account still
@@ -45,8 +50,8 @@ the client's own devices gives.
 such as an AI assistant, can read the mail), and a rule says nobody uses it
 except for that feature. This can be audited and logged, but the operator who
 owns the Cloudflare account and deploys the code is always *able* to read the
-mail. The SEO-engine session put it exactly: it can be kept from him by policy
-and audit, but not made impossible.
+mail. In short: it can be kept from the operator by policy and audit, but not
+made impossible.
 
 A server-side AI assistant needs the plaintext on the server. So the two goals
 "the operator can't read it" and "an AI on the operator's infrastructure reads
@@ -80,20 +85,21 @@ client's data.
 
 ### The promise, worded for each option
 
-These are the texts the owner is shown. Whichever option the maintainer picks, the
+These are the texts the owner is shown. Whichever option is chosen, the
 wording ships with it; the dashboard never shows a stronger claim than the
-option supports.
+option supports. `{operator}` stands for the name of the business that runs
+the platform; the dashboard fills it in.
 
 **Option A — encrypted with your key (structural).**
 > Mail in your inbox is stored encrypted with a key that only your own devices
-> hold. Operator's servers never have that key, so the stored mail is
-> unreadable without it — to Operator, to anyone who obtains a copy of the
-> database, and to anyone who asks Operator for it.
+> hold. {operator}'s servers never have that key, so the stored mail is
+> unreadable without it — to {operator}, to anyone who obtains a copy of the
+> database, and to anyone who asks {operator} for it.
 > Two honest limits: like every email service, the platform's software handles
 > each message in readable form for the moment it arrives and the moment you
 > send one, and does not keep it that way. And the inbox runs in your browser
-> from code Operator serves, so a changed version of that code could read what
-> you read.
+> from code {operator} serves, so a changed version of that code could read
+> what you read.
 
 When Decision 2's publication step exists, one sentence is added: "Every
 version of that code is published, so a change like that would be on the
@@ -101,9 +107,9 @@ public record." Until then it is not said.
 
 **Option B — encrypted, with the key on our servers (policy).**
 > Your mail is stored encrypted, and the platform holds the key so that
-> features like the assistant can work. Operator's policy is never to open
+> features like the assistant can work. {operator}'s policy is never to open
 > your mail, and every time the platform's software decrypts it, the access is
-> recorded in a log you can see. Operator is technically able to read your
+> recorded in a log you can see. {operator} is technically able to read your
 > mail: this is a promise about how we behave, not a technical barrier.
 
 The word "can't" never appears in Option B's wording, anywhere.
@@ -121,52 +127,51 @@ been readable by the platform."
 A narrower form of C needs no standing key at all: **ask about one message.**
 The owner presses "Ask the assistant" on a single email; the browser sends
 that one message's key to the assistant for that one request, and the
-confirmation says so: "To answer, this message will be decrypted on Operator's
-servers for the assistant. While it is there, Operator could technically read
-it."
+confirmation says so: "To answer, this message will be decrypted on
+{operator}'s servers for the assistant. While it is there, {operator} could
+technically read it."
 
-## 3. Decisions for the maintainer
+## 3. Decisions
 
-**Decided 2026-09-26: the maintainer approved all ten as recommended — then REOPENED
-D5 the same day.** He is weighing a separate domain for the whole platform
-(dashboard, inbox, anything clients log into or receive mail from), with
-operator.example staying his business website. Until he picks, nothing may enroll a
-passkey or bake a platform host in anywhere; `app.operator.example` is on hold, not
-decided. **Publication: from the start (the maintainer, 2026-09-26).** He chose to publish the
-mail module (this repository: the Mail Worker, mail-crypto, mail-outbound) as
-open source under Apache-2.0 as soon as it is scrubbed, not just before
-Alex's mailbox. It is never the SEO engine, the dashboard, the client sites
-or the generator. Apache-2.0 does not require publishing anything; the reason
-is that "we can't read your mail" is only checkable if the code that handles
-the key is public. The flip itself happens on his go, after he has seen the
-scrub report, because it cannot be taken back.
+**Decided 2026-09-26: all ten as recommended, then D5 reopened the same day.**
+The operator is weighing a separate domain for the whole platform (dashboard,
+inbox, anything clients log into or receive mail from), apart from the
+operator's business website. Until that is chosen, nothing may enroll a
+passkey or build a platform hostname in anywhere.
 
-**From now on, write everything in this repository for a public audience.**
-That covers commit messages, PR titles and bodies, comments and specs:
-- no client names, addresses or domains (use `example.com`, RFC 2606);
-- no infrastructure identifiers (AWS account IDs, Cloudflare account or
-  resource IDs, Vault paths, internal hostnames).
+**Publication: from the start (2026-09-26).** This repository (the Mail
+Worker, mail-crypto and mail-outbound) is published as open source under
+Apache-2.0 as soon as it has been reviewed for publication, rather than just
+before the first client mailbox. The platform's other applications are not
+published. Apache-2.0 does not require publishing anything; the reason is that
+"we can't read your mail" is only checkable if the code that handles the key
+is public. Making the repository public is the operator's deliberate step,
+taken after that review, because it cannot be taken back.
+
+**Everything in this repository is written for a public audience**: commit
+messages, pull request titles and bodies, comments and specs.
+- No client names, addresses or domains (use `example.com`, RFC 2606).
+- No infrastructure identifiers: AWS account IDs, Cloudflare account or
+  resource IDs, secret-store paths, internal hostnames. Operator-specific
+  values live in the operator's private deployment notes.
 
 | # | Decision | Recommendation |
 |---|---|---|
-| **D1** | **Which zero-access option — A, B or C — and therefore what the assistant can be.** | **C, with A as every mailbox's default.** Build A now (it is the design already on record for client mail: encrypt on arrival with the client's public key, private key only on the client's devices, recovery key shown once, decrypt in the browser). Offer "ask about one message" as the first AI feature, because it discloses one message rather than the whole mailbox. Build the standing opt-in (key escrow) only after the maintainer approves Option B's wording as the text an owner sees when turning it on. Never offer Option B as a platform-wide default. |
-| **D2** | **The browser trust boundary.** With the no-iframes rule, the key lives in the same page as the whole dashboard, so every dashboard deploy is inside the mail trust boundary. | **For v1, accept it and disclose it** (Option A's second limit says so), and shrink what can go wrong inside it: the SEO-engine session has committed the shell, from spec 007 step 0, to a strict nonce CSP, enforced Trusted Types, zero third-party scripts, and loading the inbox code on inbox routes only, each with a test. Before Alex's mailbox exists: open-source `platform-mail` (the Mail Worker and `mail-crypto`) under Apache-2.0 and publish a SHA-256 manifest of the dashboard's client bundle for every deploy, so the claim "published" becomes true; serve a WAICT integrity manifest as well, knowing that only Firefox Nightly checks it today. If a client ever needs more, the stronger design is a separate-origin key vault page, which needs an explicit exception to the no-iframes rule — not recommended for v1. |
-| **D3** | **A sandboxed frame for message bodies.** Email HTML is hostile input. Rendering it in the dashboard page means one sanitizer bypass runs script in the page that holds the key. agentic-inbox renders it in a `srcdoc` iframe with a sandbox and a strict CSP. | **Allow it as a security control, not as composition.** One `srcdoc` frame with `sandbox` and neither `allow-scripts` nor `allow-same-origin` (so it can neither run script nor share the page's origin), set through a Trusted Types policy, remote images blocked until the owner clicks "show images", fixed to the reading pane with its own scrolling (it cannot report its height without script). This is the only frame the module uses. The SEO-engine session agreed to exactly this on 2026-09-26. |
-| **D4** | **The first mailbox's address.** Today operator.example has no MX record and receives no mail; `cloudflare-infra/mail.tf` records a 2026-09-06 partition that says so ("operator.example keeps its SES sending identity only") and assigns the maintainer's own mail to @personal.example, which currently forwards through Namecheap's registrar forwarding. | **`hello@operator.example`**, with Email Routing enabled on operator.example (MX + SPF at the apex; the SES MAIL FROM subdomain is unaffected). This changes the 2026-09-06 note for operator.example only. It dogfoods exactly what clients will get, on the brand the platform is sold under. |
-| **D5** | **The dashboard's final hostname, before anyone enrolls a mail key.** Passkeys are bound to a domain (the WebAuthn RP ID); the dashboard is being renamed from review.operator.example. | **REOPENED 2026-09-26 (see above).** **Choose the final host first and use exactly that host as the RP ID.** Do not use the parent `operator.example`: any operator.example subdomain, including the Vercel-hosted www site, could then ask the same passkey for the same secret. If the host ever changes again, owners re-enroll with their recovery key. The SEO-engine session agrees and is telling the maintainer the rename is now on the critical path. |
-| **D6** | **Lost keys mean lost mail.** The recovery key is shown once and never stored by the platform. If an owner loses every device passkey and the recovery key, nobody — the maintainer included — can open the stored mail. | **Accept it, and say it at setup.** Enrollment requires saving the recovery key (a printable sheet) before the mailbox activates. Support's answer to "I lost everything" is: your old mail cannot be recovered; new mail will arrive once you set up a new key. |
-| **D7** | **SES isolation for client mail** (the SEO-engine session's answer (d) plus a newer SES feature). | **One SES tenant per client business** (SES "tenants": `TenantName` on `SendEmail`, a reputation policy and a pause switch per tenant, tenant-level suppression — AWS docs, checked 2026-09-26), a shared `send-clients` configuration set with its own event destination, and a client-mail IAM principal whose policy names only client identities, that configuration set and `ses:FromAddress` values that are mailbox addresses. Client-mail events go to Mail's own SNS/SQS feed, never the engine's, so client recipients and subjects never reach the engine's `mail_events`. Also tighten the notification principal `ses-send-app` to `ses:FromAddress = notify@operator.example`, so neither key can send as the other. The SEO-engine session agreed on 2026-09-26. Infrastructure only; specified in `plan.md` §6, not applied. |
+| **D1** | **Which zero-access option — A, B or C — and therefore what the assistant can be.** | **C, with A as every mailbox's default.** Build A now (it is the design already on record for client mail: encrypt on arrival with the client's public key, private key only on the client's devices, recovery key shown once, decrypt in the browser). Offer "ask about one message" as the first AI feature, because it discloses one message rather than the whole mailbox. Build the standing opt-in (key escrow) only after the operator approves Option B's wording as the text an owner sees when turning it on. Never offer Option B as a platform-wide default. |
+| **D2** | **The browser trust boundary.** With the no-iframes rule, the key lives in the same page as the whole dashboard, so every dashboard deploy is inside the mail trust boundary. | **For v1, accept it and disclose it** (Option A's second limit says so), and shrink what can go wrong inside it: the dashboard's maintainers have committed its shell, from its first step, to a strict nonce CSP, enforced Trusted Types, zero third-party scripts, and loading the inbox code on inbox routes only, each with a test. Before the first client mailbox exists: open-source `platform-mail` (the Mail Worker and `mail-crypto`) under Apache-2.0 and publish a SHA-256 manifest of the dashboard's client bundle for every deploy, so the claim "published" becomes true; serve a WAICT integrity manifest as well, knowing that only Firefox Nightly checks it today. If a client ever needs more, the stronger design is a separate-origin key vault page, which needs an explicit exception to the no-iframes rule — not recommended for v1. |
+| **D3** | **A sandboxed frame for message bodies.** Email HTML is hostile input. Rendering it in the dashboard page means one sanitizer bypass runs script in the page that holds the key. agentic-inbox renders it in a `srcdoc` iframe with a sandbox and a strict CSP. | **Allow it as a security control, not as composition.** One `srcdoc` frame with `sandbox` and neither `allow-scripts` nor `allow-same-origin` (so it can neither run script nor share the page's origin), set through a Trusted Types policy, remote images blocked until the owner clicks "show images", fixed to the reading pane with its own scrolling (it cannot report its height without script). This is the only frame the module uses. The dashboard's maintainers agreed to exactly this on 2026-09-26. |
+| **D4** | **The first mailbox's address.** Today the operator's business domain has no MX record and receives no mail: an earlier decision kept it for sending only, and the operator's own mail goes to another domain. | **`hello@` on the operator's business domain**, with Email Routing enabled on that domain (MX + SPF at the apex; the SES MAIL FROM subdomain is unaffected). This changes the earlier decision for that one domain. It dogfoods exactly what clients will get, on the brand the platform is sold under. |
+| **D5** | **The dashboard's final hostname, before anyone enrolls a mail key.** Passkeys are bound to a domain (the WebAuthn RP ID), and the dashboard is moving to a new hostname. | **REOPENED 2026-09-26 (see above).** **Choose the final host first and use exactly that host as the RP ID.** Do not use a parent domain: every subdomain of it, including a marketing site hosted elsewhere, could then ask the same passkey for the same secret. If the host ever changes again, owners re-enroll with their recovery key. The dashboard's maintainers agree, which puts the hostname on the critical path. |
+| **D6** | **Lost keys mean lost mail.** The recovery key is shown once and never stored by the platform. If an owner loses every device passkey and the recovery key, nobody — the operator included — can open the stored mail. | **Accept it, and say it at setup.** Enrollment requires saving the recovery key (a printable sheet) before the mailbox activates. Support's answer to "I lost everything" is: your old mail cannot be recovered; new mail will arrive once you set up a new key. |
+| **D7** | **SES isolation for client mail** (the dashboard maintainers' answer (d) plus a newer SES feature). | **One SES tenant per client business** (SES "tenants": `TenantName` on `SendEmail`, a reputation policy and a pause switch per tenant, tenant-level suppression — AWS docs, checked 2026-09-26), a client-mail configuration set with its own event destination (one per sending domain, `plan.md` §6), and a client-mail IAM principal whose policy names only client identities, that configuration set and `ses:FromAddress` values that are mailbox addresses. Client-mail events go to Mail's own SNS/SQS feed, never to the feed of the platform's notification mail, so client recipients and subjects never reach another application's database. Also restrict the platform's existing notification sender to its own `ses:FromAddress`, so neither key can send as the other. Agreed with the dashboard's maintainers on 2026-09-26. Infrastructure only; specified in `plan.md` §6, not applied. |
 | **D8** | **Metadata the platform can see**, even under Option A (§4). | **Accept and publish the list** in the owner-facing "How your mail is protected" page. Minimize: the Mail Worker never logs addresses or subjects, and the bounce/complaint consumer keeps only the recipient address and the result. |
-| **D9** | **Who may open a mailbox.** the maintainer is an accepted editor member of client tenants in the engine (so he can open their dashboards). Tenant membership must not mean mail access. | **Only owners open a mailbox by default** (`openRoles: ["owner"]`), and the key ceremony runs on the owner's own device. the maintainer never enrolls a key for a client, never sees a client's recovery key, and never sets a client's mailbox up "to save them time". |
+| **D9** | **Who may open a mailbox.** The operator is an editor member of client tenants (so they can support clients in the dashboard). Tenant membership must not mean mail access. | **Only owners open a mailbox by default** (`openRoles: ["owner"]`), and the key ceremony runs on the owner's own device. The operator never enrolls a key for a client, never sees a client's recovery key, and never sets a client's mailbox up "to save them time". |
 | **D10** | **The repository's license, when opened.** | **Apache-2.0**, matching the upstream the adapted code comes from, and allowing anyone to verify builds. |
-
-Track B (operator.example intake) has its own decisions in
-`~/portfolio/specs/001-platform-intake/spec.md`.
 
 ## 4. What the platform can see, even under Option A
 
-This is the list D8 asks the maintainer to accept and publish. "Can see" means the
-operator could read it from systems he controls.
+This is the list D8 accepts and publishes. "Can see" means the operator could
+read it from systems they control.
 
 | What | Where it is visible | Why it exists |
 |---|---|---|
@@ -203,7 +208,7 @@ browser.
   └────────────────────────────▲───────────────────────────────────────────┘
                                │ service binding (RPC); ciphertext out,
                                │ plaintext in only for send
-  ┌──────────── dashboard Worker (spec 007, SEO-engine repo) ──────────────┐
+  ┌──────────── dashboard Worker (separate application) ───────────────────┐
   │ shell: Access JWT → session → memberships → tenant chooser             │
   │ app/(modules)/inbox/…  server actions → MailService                    │
   └────────────────────────────▲───────────────────────────────────────────┘
@@ -244,7 +249,7 @@ key it controls).
 **The owner sends.** The browser sends the composed message through a server
 action to `MailService.send`. The Mail Worker builds the MIME message (From is
 always the mailbox address, never taken from the request), sends it through
-SES with the client's SES tenant and the `send-clients` configuration set,
+SES with the client's SES tenant and client-mail configuration set,
 then encrypts the Sent copy exactly like an arriving message and stores it.
 Drafts are encrypted in the browser before they are saved; the server never
 sees a draft in the clear.
@@ -305,18 +310,18 @@ for this spec and are listed as future work, not as a plan.
 | WebAuthn PRF: Chrome/Edge, Firefox 148+, Safari 18+ with iCloud Keychain, Windows Hello since the February 2026 update, Google Password Manager on Android; iOS does not pass PRF to external security keys | Corbado's 2026 overview (secondary source) — the UI builder re-checks against chromestatus and MDN |
 | WAICT: proposed October 2025, prototype in Firefox Nightly only | waict.dev, Cloudflare blog |
 | agentic-inbox stores bodies in plaintext in the mailbox Durable Object's SQLite and attachments in R2, searches with SQL, drafts on every arrival, and exposes an MCP server with no per-mailbox authorization | its source at commit 48039bb (read, not assumed) |
-| operator.example has no MX and no DMARC record; its DNS is on Cloudflare; the site is on Vercel | `dig @1.1.1.1`, `curl -I` |
+| The operator's business domain has no MX and no DMARC record, and its DNS is on Cloudflare | `dig @1.1.1.1` |
 
 **Not verified**, and where it gets checked:
 
 - Whether an exception thrown from the `email()` handler makes Email Routing
   answer with a temporary failure (the sender retries) or a bounce. The design
   never relies on it silently: permanent problems use `setReject`, and the
-  Alex migration forwards before it stores. Checked before any address is
-  routed to the Worker (`tasks.md` S8).
+  move from forwarding (`plan.md` §8) forwards before it stores. Checked
+  before any address is routed to the Worker (`tasks.md` S8).
 - Which fields Email Routing's activity log shows the account owner.
 - Whether Terraform's AWS provider has SES tenant resources yet (otherwise the
-  AWS CLI through `cloudflare-infra/tf-aws`).
+  AWS CLI).
 - Browser support for X25519 in Web Crypto. `mail-crypto` uses `@hpke/core`
   and carries its pure-JavaScript X25519 fallback until the builder confirms
   the browsers that matter support it natively.
