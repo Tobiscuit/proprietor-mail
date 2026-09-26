@@ -12,4 +12,18 @@ of adapted files is maintained below; a file not listed contains no Agentic
 Inbox code.
 
 Adapted files:
-  (none yet - each builder slice adds its own entries)
+  src/mailbox/folders.ts   from shared/folders.ts
+                           (drafts folder id is `drafts`; six fixed system
+                           folders; display helpers and tool descriptions
+                           removed)
+  src/mailbox/schema.ts    the migration runner, from
+                           workers/durableObject/migrations.ts
+                           (tracking table renamed mailbox_migrations; every
+                           migration inside transactionSync; BEGIN/COMMIT
+                           stripping removed)
+  src/mail/html-text.ts    stripHtmlToText, from workers/lib/email-helpers.ts
+                           (also decodes common HTML entities; used only for
+                           the snippet sealed inside a message header)
+
+packages/mail-crypto and packages/mail-outbound contain no Agentic Inbox
+code.
