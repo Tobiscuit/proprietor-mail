@@ -37,6 +37,7 @@ import {
   publicKeyMatches as materialMatches,
 } from "./keys";
 import { parseDraft, parseHeader, serializeDraft, serializeHeader } from "./plaintext";
+import { newRecoveryKey as newRecovery, parseRecoveryKey as parseRecovery } from "./recovery";
 import { prfInput as prfInputFor, unwrapPrivateKey as unwrapWithSecret, wrapPrivateKey as wrapWithSecret } from "./wrap";
 
 /** False until S1 replaces the stubs. Tests that need real crypto skip on it. */
@@ -294,13 +295,12 @@ export async function unwrapPrivateKey(
 
 /** A new 32-byte recovery secret and the 55-character display form (11 groups of 5). */
 export function newRecoveryKey(): { secret: Uint8Array; display: string } {
-  throw new NotImplemented("newRecoveryKey");
+  return newRecovery();
 }
 
 /** The 32-byte secret from its display form; throws RecoveryKeyTypo on a checksum mismatch. */
 export function parseRecoveryKey(display: string): Uint8Array {
-  void display;
-  throw new NotImplemented("parseRecoveryKey");
+  return parseRecovery(display);
 }
 
 // ---- Internals ---------------------------------------------------------------
