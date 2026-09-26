@@ -187,10 +187,12 @@ injection handling, quoted display names).
   GitHub release, so the dashboard's vendoring script checks against CI's
   record rather than the copy; sign the tag if the maintainer has a signing key
 
-## S4 — Integration  *(architect, after S1–S3 are audited)*
+## S4 — Integration  *(architect, after S1–S3 are audited)* — PR #5, 2026-09-26 (unmerged)
 
-- [ ] stack or rebase S1 and S3 under S2, regenerate the lockfile, run the
-  whole suite with the end-to-end tests un-skipped, fix the seams, report
+- [x] S1, S2 and S3 merged on `feat/s4-integration`, the lockfile regenerated
+  (`npm ci` works), NOTICE lists the adapted files; 409 passed, 8 skipped (all
+  intended), typecheck clean. The one seam found (mail-crypto did not
+  typecheck under workers-types) went back to S1 and was fixed in `4a81d60`.
 
 ## S2k — Housekeeping found in the S2 audit  *(small, after S4)*
 
