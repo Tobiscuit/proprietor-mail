@@ -6,3 +6,9 @@ declare namespace Cloudflare {
     durableNamespaces: "Mailbox";
   }
 }
+
+// Vite's `?raw` imports (the committed vectors file, read as text).
+declare module "*?raw" {
+  const text: string;
+  export default text;
+}
