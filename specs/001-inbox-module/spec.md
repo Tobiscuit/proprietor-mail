@@ -179,7 +179,7 @@ read it from systems they control.
 | Folder, read and starred flags | Mailbox storage | Set by the owner's own actions |
 | Envelope sender and recipient of arriving mail | Cloudflare's Email Routing, in transit (whether its activity log shows them is unverified) | That is how SMTP delivery works |
 | The full message, in transit, for the moment of arrival | Mail Worker memory | Encryption happens there, immediately |
-| Recipients and subject of mail the owner sends, and the full message for the moment of sending | Mail Worker memory; SES delivery events include `commonHeaders` with the subject (AWS event-publishing examples, checked 2026-09-26) | SES needs the message to send it; SES reports what it delivered |
+| Recipients and subject of mail the owner sends, and the full message for the moment of sending | Mail Worker memory, and the dashboard Worker's memory (its server action passes the composed message on); SES delivery events include `commonHeaders` with the subject (AWS event-publishing examples, checked 2026-09-26) | SES needs the message to send it; SES reports what it delivered |
 | That a new message arrived (a count, never content) | The per-business dashboard Agent, for Web Push | So the phone can buzz |
 | Which devices and recovery keys exist (labels and times, not the secrets) | Mailbox key ring | So the owner can manage devices |
 
