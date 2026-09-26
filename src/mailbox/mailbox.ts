@@ -1,5 +1,951 @@
 import { Agent } from "agents";
+import type { AgentEmail } from "agents/email";
+import { LIMITS } from "@platform-mail/outbound";
+import type { Role } from "../capability";
+import { Directory, type DirectoryEntry } from "../directory/directory";
 import type { Env } from "../env";
+import {
+  AssistantUnavailable,
+  Forbidden,
+  InvalidRequest,
+  MailboxNotActive,
+  NotFound,
+  RateLimited,
+  SendFailed,
+} from "../errors";
+import { type LogValue, logAlert, logEvent } from "../log";
+import { inboundHeader, outboundHeader, parseMessage } from "../mail/header";
+import type { MailboxPorts } from "../ports";
+import { productionPorts } from "../wiring";
+import { type FolderId, Folders } from "./folders";
+import { applyMigrations, mailboxMigrations } from "./schema";
+import type {
+  AuditEntry,
+  CallContext,
+  DraftRecord,
+  KeyView,
+  ListPage,
+  MailboxView,
+  MessageItem,
+  PolicyView,
+  SendResult,
+  WrapView,
+} from "./types";
+import * as v from "./validate";
 
-/** One mailbox: an Agents SDK Agent, which is a SQLite-backed Durable Object. */
-export class Mailbox extends Agent<Env> {}
+export type { CallContext } from "./types";
+
+/** Email Routing's own ceiling for an inbound message (spec §8). */
+export const MAX_INBOUND_BYTES = 25 * 1024 * 1024;
+/** Once a day at 03:17 UTC: the Trash purge (M9). */
+export const PURGE_CRON = "17 3 * * *";
+export const TRASH_DAYS = 30;
+/** agentic-inbox's limits, domain-model M7. */
+export const SENDS_PER_HOUR = 20;
+export const SENDS_PER_DAY = 100;
+/** A send reserved this long ago and never finished is treated as abandoned. */
+const ABANDONED_SEND_MS = 2 * 60 * 1000;
+
+const NOT_ACCEPTING = "This mailbox is not accepting mail";
+const TOO_LARGE = "Message too large";
+
+interface IdentityRow {
+  mailbox_id: string;
+  tenant_id: string;
+  address: string;
+  display_name: string;
+}
+
+interface PolicyRow {
+  open_roles: string;
+  send_roles: string;
+  assistant: "off" | "on";
+  delivery: "store" | "store-and-forward";
+  forward_to: string | null;
+  updated_at: string;
+  updated_by: string;
+}
+
+interface MessageRow {
+  id: string;
+  folder_id: FolderId;
+  direction: "in" | "out";
+  received_at: string;
+  size: number;
+  key_id: string;
+  key_envelope: string;
+  header: string;
+  body_key: string;
+  seen: number;
+  flagged: number;
+  trashed_at: string | null;
+}
+
+interface SendRow {
+  idempotency_key: string;
+  message_id: string | null;
+  provider_message_id: string | null;
+  created_at: string;
+}
+
+const bodyKeyOf = (mailboxId: string, messageId: string) => `mbx/${mailboxId}/msg/${messageId}`;
+
+function toItem(row: MessageRow): MessageItem {
+  return {
+    id: row.id,
+    folder: row.folder_id,
+    direction: row.direction,
+    receivedAt: row.received_at,
+    size: row.size,
+    seen: row.seen === 1,
+    flagged: row.flagged === 1,
+    keyId: row.key_id,
+    keyEnvelope: row.key_envelope,
+    header: row.header,
+  };
+}
+
+const errorName = (err: unknown) => (err instanceof Error ? err.name : typeof err);
+
+/**
+ * One mailbox (domain-model §3, the aggregate root): an Agents SDK Agent, so a
+ * SQLite-backed Durable Object named by the mailbox id. It holds the sealed
+ * messages' index, the key ring (public keys and wrapped private keys only),
+ * drafts, sends, policy and the audit log. Sealed bodies live in R2.
+ *
+ * Every method but `onEmail` and the housekeeping is reached through
+ * MailService (capability and Directory checked, M4) or MailAdmin; each takes
+ * the Directory row and the actor, and applies the rest here: its identity,
+ * its policy and its invariants.
+ */
+export class Mailbox extends Agent<Env> {
+  /**
+   * The outside world, as ports. Production: the real packages. Tests replace
+   * this on the live object. An own instance property, so it is not reachable
+   * over RPC.
+   */
+  ports: MailboxPorts;
+
+  /**
+   * The Agents SDK's default observability publishes every arriving email's
+   * `from`, `to` and SUBJECT to the `agents:email` diagnostics channel, which
+   * Tail Workers receive (agents 0.24.0, Agent._onEmail). That is a log of
+   * message content, so this mailbox publishes nothing (domain-model M1).
+   */
+  override observability = undefined;
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    // Synchronous and first, so no request can see a half-built schema.
+    applyMigrations(ctx.storage, mailboxMigrations);
+    this.ports = productionPorts(env);
+  }
+
+  /** The base class logs the whole error; this logs its name only. Errors never carry content here, but a library's might. */
+  override onError(connectionOrError: unknown, error?: unknown): void {
+    const err = error ?? connectionOrError;
+    console.error(JSON.stringify({ event: "mailbox-error", mailbox: this.safeName(), error: errorName(err) }));
+    throw err;
+  }
+
+  override async onStart(): Promise<void> {
+    // Heals a lost schedule on every wake; cron schedules are idempotent.
+    if (this.identityRow() !== null) await this.schedule(PURGE_CRON, "purgeExpiredTrash");
+  }
+
+  // ---- inbound (plan.md §5) --------------------------------------------------
+
+  /**
+   * Order: status → size → (forward, in store-and-forward) → read raw → parse →
+   * seal → R2 put → SQLite insert (a failed insert deletes the R2 object) →
+   * new-mail count. Nothing from the message is logged.
+   */
+  async onEmail(email: AgentEmail): Promise<void> {
+    const mailboxId = this.name;
+    const entry = await new Directory(this.env.DIRECTORY).byId(mailboxId);
+    const outcome = (result: string, fields: Record<string, LogValue> = {}) =>
+      logEvent("arrival", { mailbox: mailboxId, size: email.rawSize, outcome: result, ...fields });
+
+    // M2: no key, no mail. Checked before anything is stored, identity included.
+    if (entry === null || entry.status !== "active") {
+      email.setReject(NOT_ACCEPTING);
+      outcome("rejected", { reason: "not-active" });
+      return;
+    }
+    if (email.rawSize > MAX_INBOUND_BYTES) {
+      email.setReject(TOO_LARGE);
+      outcome("rejected", { reason: "too-large" });
+      return;
+    }
+    await this.ensureIdentity(entry, "system:email");
+    const key = this.activeKey();
+    if (key === null) {
+      email.setReject(NOT_ACCEPTING);
+      logAlert("active-mailbox-without-key", { mailbox: mailboxId });
+      outcome("rejected", { reason: "no-key" });
+      return;
+    }
+
+    const policy = this.policyRow();
+    let forwarded = false;
+    if (policy.delivery === "store-and-forward" && policy.forward_to !== null) {
+      // Forward FIRST (domain-model G11). A failure here throws before anything
+      // is stored, so the sender's server retries and no half-delivery exists.
+      await email.forward(policy.forward_to);
+      forwarded = true;
+    }
+
+    try {
+      const messageId = await this.storeArrival(email, entry, key);
+      outcome("stored", { message: messageId, forwarded });
+    } catch (err) {
+      if (!forwarded) {
+        outcome("failed", { error: errorName(err) });
+        throw err;
+      }
+      // The forward succeeded: the copy is safe elsewhere. Never throw now, or
+      // Email Routing could retry and forward it twice.
+      this.audit("system:email", "store-failed-after-forward", { size: email.rawSize, error: errorName(err) });
+      logAlert("store-failed-after-forward", { mailbox: mailboxId, size: email.rawSize, error: errorName(err) });
+      outcome("forwarded-not-stored", { error: errorName(err) });
+    }
+  }
+
+  private async storeArrival(email: AgentEmail, entry: DirectoryEntry, key: { keyId: string; publicKey: Uint8Array }): Promise<string> {
+    const raw = await email.getRaw();
+    // A message the parser cannot read is still stored, with an empty header.
+    const header = inboundHeader(await parseMessage(raw), email.from);
+    const messageId = this.ports.ids.messageId();
+    const sealed = await this.ports.sealer.seal(key, { mailboxId: entry.id, messageId }, header, raw);
+    await this.storeSealed({
+      messageId,
+      folder: Folders.INBOX,
+      direction: "in",
+      size: raw.byteLength,
+      sealed,
+      seen: false,
+    });
+    await this.signalUnread(entry);
+    return messageId;
+  }
+
+  /** R2 first, then SQLite; an insert that fails deletes the object it just wrote (tasks.md S2h). */
+  private async storeSealed(m: {
+    messageId: string;
+    folder: FolderId;
+    direction: "in" | "out";
+    size: number;
+    sealed: { keyId: string; keyEnvelope: string; header: string; body: Uint8Array };
+    seen: boolean;
+  }): Promise<void> {
+    const mailboxId = this.name;
+    const bodyKey = bodyKeyOf(mailboxId, m.messageId);
+    await this.env.MAIL.put(bodyKey, m.sealed.body);
+    try {
+      this.ctx.storage.sql.exec(
+        `INSERT INTO messages (id, folder_id, direction, received_at, size, key_id, key_envelope, header, body_key, seen)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        m.messageId,
+        m.folder,
+        m.direction,
+        this.now(),
+        m.size,
+        m.sealed.keyId,
+        m.sealed.keyEnvelope,
+        m.sealed.header,
+        bodyKey,
+        m.seen ? 1 : 0,
+      );
+    } catch (err) {
+      try {
+        await this.env.MAIL.delete(bodyKey);
+      } catch (cleanupErr) {
+        logAlert("orphan-body-not-deleted", { mailbox: mailboxId, message: m.messageId, error: errorName(cleanupErr) });
+      }
+      throw err;
+    }
+  }
+
+  private async signalUnread(entry: DirectoryEntry): Promise<void> {
+    try {
+      await this.ports.signal.unread({ tenantId: entry.tenantId, mailboxId: entry.id, unread: this.inboxUnread() });
+    } catch (err) {
+      // A count that did not reach the dashboard is not worth failing mail for.
+      logEvent("new-mail-signal", { mailbox: entry.id, outcome: "failed", error: errorName(err) });
+    }
+  }
+
+  // ---- reading (MailService) --------------------------------------------------
+
+  async describe(ctx: CallContext): Promise<MailboxView> {
+    await this.enter(ctx);
+    this.requireRole(ctx, "open");
+    const identity = this.identityRow()!;
+    return {
+      id: identity.mailbox_id,
+      address: identity.address,
+      status: ctx.mailbox.status,
+      displayName: identity.display_name,
+      keys: this.rows<{ key_id: string; public_key: ArrayBuffer; created_at: string; created_by: string; retired_at: string | null }>(
+        "SELECT key_id, public_key, created_at, created_by, retired_at FROM keys ORDER BY created_at",
+      ).map(
+        (k): KeyView => ({
+          keyId: k.key_id,
+          publicKey: v.encodeBase64url(new Uint8Array(k.public_key)),
+          createdAt: k.created_at,
+          createdBy: k.created_by,
+          retiredAt: k.retired_at,
+        }),
+      ),
+      wraps: this.rows<{ id: string; key_id: string; kind: WrapView["kind"]; credential_id: string | null; label: string; wrapped: string; created_at: string; created_by: string }>(
+        "SELECT id, key_id, kind, credential_id, label, wrapped, created_at, created_by FROM key_wraps ORDER BY created_at, id",
+      ).map((w) => ({
+        id: w.id,
+        keyId: w.key_id,
+        kind: w.kind,
+        credentialId: w.credential_id, // pragma: allowlist secret (a field name, not a value)
+        label: w.label,
+        wrapped: w.wrapped,
+        createdAt: w.created_at,
+        createdBy: w.created_by,
+      })),
+      policy: this.policyView(),
+    };
+  }
+
+  async listMessages(ctx: CallContext, query: unknown): Promise<ListPage> {
+    await this.enter(ctx);
+    this.requireRole(ctx, "open");
+    const q = v.object(query, "list query", ["folder", "before", "limit"]);
+    const folder = v.oneOf(q.folder, "folder", Object.values(Folders));
+    const limit = v.optional(q.limit, (l) => v.integer(l, "limit", 1, 100)) ?? 50;
+    const before = v.optional(q.before, (b) => parseCursor(b));
+    const rows = before
+      ? this.rows<MessageRow>(
+          `SELECT * FROM messages WHERE folder_id = ? AND (received_at < ? OR (received_at = ? AND id < ?))
+           ORDER BY received_at DESC, id DESC LIMIT ?`,
+          folder,
+          before.receivedAt,
+          before.receivedAt,
+          before.id,
+          limit + 1,
+        )
+      : this.rows<MessageRow>("SELECT * FROM messages WHERE folder_id = ? ORDER BY received_at DESC, id DESC LIMIT ?", folder, limit + 1);
+    const page = rows.slice(0, limit);
+    const last = page.at(-1);
+    return { items: page.map(toItem), next: rows.length > limit && last ? `${last.received_at}|${last.id}` : null };
+  }
+
+  /** The R2 key of a message's sealed body; MailService streams it from R2 itself. */
+  async bodyKey(ctx: CallContext, messageId: unknown): Promise<string> {
+    await this.enter(ctx);
+    this.requireRole(ctx, "open");
+    return this.messageRow(v.id(messageId, "message id", "msg")).body_key;
+  }
+
+  async updateMessage(ctx: CallContext, messageId: unknown, patch: unknown): Promise<MessageItem> {
+    await this.enter(ctx);
+    this.requireRole(ctx, "open");
+    const id = v.id(messageId, "message id", "msg");
+    const p = v.object(patch, "update", ["seen", "flagged", "folder"]);
+    const seen = v.optional(p.seen, (s) => v.bool(s, "seen"));
+    const flagged = v.optional(p.flagged, (f) => v.bool(f, "flagged"));
+    // Drafts are their own table; no message moves into that folder.
+    const folder = v.optional(p.folder, (f) =>
+      v.oneOf(f, "folder", Object.values(Folders).filter((x) => x !== Folders.DRAFTS)),
+    );
+    if (seen === undefined && flagged === undefined && folder === undefined) throw new InvalidRequest("nothing to update");
+    const row = this.messageRow(id);
+    const trashedAt =
+      folder === undefined ? row.trashed_at : folder === Folders.TRASH ? (row.trashed_at ?? this.now()) : null;
+    this.ctx.storage.sql.exec(
+      "UPDATE messages SET seen = ?, flagged = ?, folder_id = ?, trashed_at = ? WHERE id = ?",
+      seen === undefined ? row.seen : seen ? 1 : 0,
+      flagged === undefined ? row.flagged : flagged ? 1 : 0,
+      folder ?? row.folder_id,
+      trashedAt,
+      id,
+    );
+    return toItem(this.messageRow(id));
+  }
+
+  async purgeMessage(ctx: CallContext, messageId: unknown): Promise<void> {
+    await this.enter(ctx);
+    this.requireRole(ctx, "owner");
+    const row = this.messageRow(v.id(messageId, "message id", "msg"));
+    await this.deleteMessage(row);
+    this.audit(ctx.actor.accountId, "message-purged", { message: row.id });
+  }
+
+  async unreadCount(ctx: CallContext): Promise<{ inbox: number }> {
+    await this.enter(ctx);
+    this.requireRole(ctx, "open");
+    return { inbox: this.inboxUnread() };
+  }
+
+  // ---- drafts: sealed in the browser; the server sees an id, a time and a blob --
+
+  async listDrafts(ctx: CallContext): Promise<DraftRecord[]> {
+    await this.enter(ctx);
+    this.requireRole(ctx, "open");
+    return this.rows<{ id: string; key_id: string; key_envelope: string; sealed: string; updated_at: string }>(
+      "SELECT id, key_id, key_envelope, sealed, updated_at FROM drafts ORDER BY updated_at DESC, id DESC",
+    ).map((d) => ({ id: d.id, keyId: d.key_id, keyEnvelope: d.key_envelope, sealed: d.sealed, updatedAt: d.updated_at }));
+  }
+
+  async saveDraft(ctx: CallContext, draft: unknown): Promise<{ id: string; updatedAt: string }> {
+    await this.enter(ctx);
+    this.requireRole(ctx, "open");
+    const d = v.object(draft, "draft", ["id", "keyId", "keyEnvelope", "sealed"]);
+    const id = v.id(d.id, "draft id", "drf");
+    const keyId = this.knownKeyId(d.keyId);
+    const keyEnvelope = v.base64url(d.keyEnvelope, "key envelope", { bytes: 80 });
+    const sealed = v.base64url(d.sealed, "sealed draft", { maxChars: 1_400_000 });
+    const updatedAt = this.now();
+    this.ctx.storage.sql.exec(
+      `INSERT INTO drafts (id, key_id, key_envelope, sealed, updated_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET key_id = excluded.key_id, key_envelope = excluded.key_envelope,
+         sealed = excluded.sealed, updated_at = excluded.updated_at`,
+      id,
+      keyId,
+      keyEnvelope,
+      sealed,
+      updatedAt,
+    );
+    return { id, updatedAt };
+  }
+
+  async deleteDraft(ctx: CallContext, draftId: unknown): Promise<void> {
+    await this.enter(ctx);
+    this.requireRole(ctx, "open");
+    const id = v.id(draftId, "draft id", "drf");
+    if (this.ctx.storage.sql.exec("DELETE FROM drafts WHERE id = ?", id).rowsWritten === 0) throw new NotFound();
+  }
+
+  // ---- keys (M3, M5) -----------------------------------------------------------
+
+  /** Stores the public key and its wraps. MailService then activates the Directory row. */
+  async enroll(ctx: CallContext, input: unknown): Promise<{ keyId: string }> {
+    await this.enter(ctx);
+    this.requireRole(ctx, "owner");
+    if (ctx.mailbox.status !== "provisioned") throw new InvalidRequest("the mailbox is not awaiting enrolment");
+    const req = v.object(input, "enrolment", ["publicKey", "wraps"]);
+    const publicKey = v.decodeBase64url(v.base64url(req.publicKey, "public key", { bytes: 32 }));
+    // Recomputed here: a keyId the browser claims is never trusted.
+    const keyId = await this.ports.sealer.keyIdOf(publicKey);
+    const wraps = v.array(req.wraps, "wraps", 10).map((w, i) => parseWrap(w, `wrap ${i + 1}`));
+    if (wraps.length === 0 || !wraps.some((w) => w.kind === "recovery")) throw new InvalidRequest("a recovery wrap is required");
+    if (wraps.some((w) => w.keyId !== keyId)) throw new InvalidRequest("a wrap names another key");
+    if (new Set(wraps.map((w) => w.id)).size !== wraps.length) throw new InvalidRequest("wrap ids repeat");
+
+    const at = this.now();
+    const by = ctx.actor.accountId;
+    this.ctx.storage.transactionSync(() => {
+      const existing = this.rows<{ key_id: string }>("SELECT key_id FROM keys WHERE retired_at IS NULL");
+      if (existing.length > 0) {
+        // A retry after the Directory update failed: same key, nothing to do.
+        if (existing[0]?.key_id === keyId) return;
+        throw new InvalidRequest("a key is already enrolled");
+      }
+      this.ctx.storage.sql.exec(
+        "INSERT INTO keys (key_id, public_key, created_at, created_by) VALUES (?, ?, ?, ?)",
+        keyId,
+        publicKey,
+        at,
+        by,
+      );
+      for (const w of wraps) this.insertWrap(w, at, by);
+      this.audit(by, "key-enrolled", { keyId, wraps: wraps.map((w) => `${w.id}:${w.kind}`).join(",") });
+    });
+    return { keyId };
+  }
+
+  async addWrap(ctx: CallContext, wrap: unknown): Promise<void> {
+    await this.enter(ctx);
+    this.requireRole(ctx, "owner");
+    const w = parseWrap(wrap, "wrap");
+    const key = this.activeKey();
+    if (key === null || w.keyId !== key.keyId) throw new InvalidRequest("a wrap must name the mailbox's key");
+    if (this.rows("SELECT 1 FROM key_wraps WHERE id = ?", w.id).length > 0) throw new InvalidRequest("that wrap id exists");
+    this.ctx.storage.transactionSync(() => {
+      this.insertWrap(w, this.now(), ctx.actor.accountId);
+      this.audit(ctx.actor.accountId, "wrap-added", { wrap: w.id, kind: w.kind });
+    });
+  }
+
+  async removeWrap(ctx: CallContext, wrapId: unknown): Promise<void> {
+    await this.enter(ctx);
+    this.requireRole(ctx, "owner");
+    const id = v.id(wrapId, "wrap id", "wrp");
+    const wrap = this.rows<{ id: string; key_id: string; kind: string }>("SELECT id, key_id, kind FROM key_wraps WHERE id = ?", id)[0];
+    if (wrap === undefined) throw new NotFound();
+    if (wrap.kind === "recovery") {
+      const recoveries = this.rows("SELECT 1 FROM key_wraps WHERE key_id = ? AND kind = 'recovery'", wrap.key_id).length;
+      // M5: the last recovery wrap stays; without it a lost device is lost mail.
+      if (recoveries <= 1) throw new InvalidRequest("the last recovery wrap cannot be removed");
+    }
+    this.ctx.storage.transactionSync(() => {
+      this.ctx.storage.sql.exec("DELETE FROM key_wraps WHERE id = ?", id);
+      this.audit(ctx.actor.accountId, "wrap-removed", { wrap: id, kind: wrap.kind });
+    });
+  }
+
+  // ---- policy and audit ----------------------------------------------------------
+
+  async setPolicy(ctx: CallContext, patch: unknown): Promise<PolicyView & { displayName: string }> {
+    await this.enter(ctx);
+    this.requireRole(ctx, "owner");
+    const p = v.object(patch, "policy", ["displayName", "assistant"]);
+    const assistant = v.optional(p.assistant, (a) => v.oneOf(a, "assistant", ["off", "on"] as const));
+    // Spec §6 and decision D1: v1 builds only the safe default.
+    if (assistant === "on") throw new AssistantUnavailable();
+    const displayName = v.optional(p.displayName, (d) => v.text(d, "display name", { max: 100, singleLine: true }));
+    const fields = [...(displayName === undefined ? [] : ["displayName"]), ...(assistant === undefined ? [] : ["assistant"])];
+    if (fields.length === 0) throw new InvalidRequest("nothing to update");
+    this.ctx.storage.transactionSync(() => {
+      if (displayName !== undefined) this.ctx.storage.sql.exec("UPDATE identity SET display_name = ?", displayName);
+      this.ctx.storage.sql.exec("UPDATE policy SET updated_at = ?, updated_by = ?", this.now(), ctx.actor.accountId);
+      this.audit(ctx.actor.accountId, "policy-changed", { fields: fields.join(",") });
+    });
+    return { ...this.policyView(), displayName: this.identityRow()!.display_name };
+  }
+
+  async readAudit(ctx: CallContext, query: unknown): Promise<AuditEntry[]> {
+    await this.enter(ctx);
+    this.requireRole(ctx, "owner");
+    const q = v.object(query ?? {}, "audit query", ["before"]);
+    const before = v.optional(q.before, (b) => v.integer(b, "before", 1, Number.MAX_SAFE_INTEGER));
+    const rows = this.rows<{ id: number; at: string; actor: string; action: string; detail: string }>(
+      `SELECT id, at, actor, action, detail FROM audit ${before === undefined ? "" : "WHERE id < ?"} ORDER BY id DESC LIMIT 100`,
+      ...(before === undefined ? [] : [before]),
+    );
+    return rows.map((r) => ({ id: r.id, at: r.at, actor: r.actor, action: r.action, detail: JSON.parse(r.detail) as Record<string, unknown> }));
+  }
+
+  // ---- sending (M6, M7) -----------------------------------------------------------
+
+  async send(ctx: CallContext, request: unknown): Promise<SendResult> {
+    await this.enter(ctx);
+    this.requireRole(ctx, "send");
+    if (ctx.mailbox.status !== "active") throw new MailboxNotActive();
+    const req = parseSendRequest(request);
+    const key = this.activeKey();
+    if (key === null) throw new MailboxNotActive();
+    const identity = this.identityRow()!;
+    const now = this.ports.clock.now();
+
+    // M7, idempotency: a repeated key returns the first result and sends nothing.
+    const previous = this.rows<SendRow>("SELECT * FROM sends WHERE idempotency_key = ?", req.idempotencyKey)[0];
+    if (previous?.provider_message_id) {
+      return { messageId: previous.message_id, providerMessageId: previous.provider_message_id };
+    }
+    if (previous !== undefined) {
+      if (now.getTime() - Date.parse(previous.created_at) < ABANDONED_SEND_MS) throw new SendFailed(true);
+      this.ctx.storage.sql.exec("DELETE FROM sends WHERE idempotency_key = ?", req.idempotencyKey);
+    }
+
+    // M7, rate: counted over sends made or in flight.
+    this.checkRate(now);
+    const configurationSet = ctx.mailbox.sesConfigurationSet;
+    if (configurationSet === null) {
+      logAlert("mailbox-without-configuration-set", { mailbox: this.name });
+      throw new SendFailed(false);
+    }
+
+    // Reserve the key before the first await, so a concurrent repeat sees it.
+    this.ctx.storage.sql.exec("INSERT INTO sends (idempotency_key, created_at) VALUES (?, ?)", req.idempotencyKey, now.toISOString());
+    const release = () => this.ctx.storage.sql.exec("DELETE FROM sends WHERE idempotency_key = ?", req.idempotencyKey);
+
+    // M6: From is the mailbox, whatever the request said. The request has no
+    // `from` field at all (the shape check refuses one); this is the only From.
+    const from = identity.display_name === "" ? { address: identity.address } : { name: identity.display_name, address: identity.address };
+    let built;
+    try {
+      built = this.ports.mime.build(
+        {
+          from,
+          to: req.to,
+          ...(req.cc.length > 0 ? { cc: req.cc } : {}),
+          ...(req.bcc.length > 0 ? { bcc: req.bcc } : {}),
+          subject: req.subject,
+          text: req.text,
+          ...(req.html === undefined ? {} : { html: req.html }),
+          ...(req.inReplyTo === undefined ? {} : { inReplyTo: req.inReplyTo }),
+          ...(req.references.length > 0 ? { references: req.references } : {}),
+          ...(req.attachments.length > 0 ? { attachments: req.attachments } : {}),
+        },
+        { messageIdDomain: identity.address.slice(identity.address.lastIndexOf("@") + 1), now },
+      );
+    } catch (err) {
+      release();
+      if (errorName(err) === "InvalidMessage") throw new InvalidRequest("the message could not be built");
+      throw err;
+    }
+
+    let providerMessageId: string;
+    try {
+      ({ providerMessageId } = await this.ports.mailer.send({
+        raw: built.raw,
+        fromAddress: identity.address,
+        recipients: built.recipients,
+        configurationSet,
+        ...(ctx.mailbox.sesTenant === null ? {} : { tenantName: ctx.mailbox.sesTenant }),
+      }));
+    } catch (err) {
+      release();
+      const retryable = errorName(err) === "SendRejected" && (err as { retryable?: unknown }).retryable === true;
+      logEvent("send", { mailbox: this.name, outcome: "failed", error: errorName(err), retryable });
+      throw new SendFailed(retryable);
+    }
+    // From here the message is out. Nothing below may report failure.
+    this.ctx.storage.sql.exec("UPDATE sends SET provider_message_id = ? WHERE idempotency_key = ?", providerMessageId, req.idempotencyKey);
+
+    let messageId: string | null = null;
+    try {
+      const header = outboundHeader({
+        from: { name: identity.display_name, address: identity.address },
+        to: req.to,
+        cc: req.cc,
+        bcc: req.bcc,
+        subject: req.subject,
+        text: req.text,
+        date: now,
+        messageId: built.messageId,
+        ...(req.inReplyTo === undefined ? {} : { inReplyTo: req.inReplyTo }),
+        references: req.references,
+        attachments: req.attachments,
+      });
+      const id = this.ports.ids.messageId();
+      const sealed = await this.ports.sealer.seal(key, { mailboxId: this.name, messageId: id }, header, built.raw);
+      await this.storeSealed({ messageId: id, folder: Folders.SENT, direction: "out", size: built.raw.byteLength, sealed, seen: true });
+      this.ctx.storage.sql.exec("UPDATE sends SET message_id = ? WHERE idempotency_key = ?", id, req.idempotencyKey);
+      messageId = id;
+    } catch (err) {
+      this.audit(ctx.actor.accountId, "sent-copy-not-stored", { error: errorName(err) });
+      logAlert("sent-copy-not-stored", { mailbox: this.name, error: errorName(err) });
+    }
+    if (req.draftId !== undefined) this.ctx.storage.sql.exec("DELETE FROM drafts WHERE id = ?", req.draftId);
+    logEvent("send", { mailbox: this.name, message: messageId, size: built.raw.byteLength, recipients: built.recipients.length, outcome: "sent" });
+    return { messageId, providerMessageId };
+  }
+
+  private checkRate(now: Date): void {
+    const windows = [
+      { ms: 60 * 60 * 1000, max: SENDS_PER_HOUR },
+      { ms: 24 * 60 * 60 * 1000, max: SENDS_PER_DAY },
+    ];
+    for (const w of windows) {
+      const since = new Date(now.getTime() - w.ms).toISOString();
+      const inWindow = this.rows<{ created_at: string }>(
+        "SELECT created_at FROM sends WHERE created_at > ? ORDER BY created_at ASC",
+        since,
+      );
+      if (inWindow.length >= w.max) {
+        const oldest = Date.parse(inWindow[0]!.created_at);
+        throw new RateLimited(Math.max(1, Math.ceil((oldest + w.ms - now.getTime()) / 1000)));
+      }
+    }
+  }
+
+  // ---- operator (MailAdmin) -----------------------------------------------------------
+
+  /** M10: the delivery mode and forward target change only here, and every change is audited. */
+  async setDelivery(entry: DirectoryEntry, operator: string, input: unknown): Promise<PolicyView> {
+    await this.ensureIdentity(entry, operator);
+    const i = v.object(input, "delivery", ["delivery", "forwardTo"]);
+    const delivery = v.oneOf(i.delivery, "delivery", ["store", "store-and-forward"] as const);
+    const forwardTo =
+      delivery === "store-and-forward" ? v.address(i.forwardTo, "forward target").toLowerCase() : i.forwardTo === undefined || i.forwardTo === null ? null : invalidForward();
+    this.ctx.storage.transactionSync(() => {
+      this.ctx.storage.sql.exec(
+        "UPDATE policy SET delivery = ?, forward_to = ?, updated_at = ?, updated_by = ?",
+        delivery,
+        forwardTo,
+        this.now(),
+        operator,
+      );
+      this.audit(operator, "delivery-changed", { delivery, forwardTo });
+    });
+    return this.policyView();
+  }
+
+  async recordOperatorAction(entry: DirectoryEntry, operator: string, action: "mailbox-suspended" | "mailbox-resumed"): Promise<void> {
+    await this.ensureIdentity(entry, operator);
+    this.audit(operator, action, {});
+  }
+
+  // ---- housekeeping (M9) ---------------------------------------------------------------
+
+  /** Deletes every message that has been in Trash for 30 days: the R2 object, then the row. Scheduled daily. */
+  async purgeExpiredTrash(): Promise<number> {
+    const cutoff = new Date(this.ports.clock.now().getTime() - TRASH_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    const expired = this.rows<MessageRow>(
+      "SELECT * FROM messages WHERE folder_id = ? AND trashed_at IS NOT NULL AND trashed_at <= ?",
+      Folders.TRASH,
+      cutoff,
+    );
+    for (const row of expired) await this.deleteMessage(row);
+    if (expired.length > 0) this.audit("system:housekeeping", "trash-emptied", { count: expired.length });
+    logEvent("trash-purge", { mailbox: this.safeName(), count: expired.length });
+    return expired.length;
+  }
+
+  // ---- internals ------------------------------------------------------------------------
+
+  private async enter(ctx: CallContext): Promise<void> {
+    await this.ensureIdentity(ctx.mailbox, ctx.actor.accountId);
+  }
+
+  /**
+   * Identity is copied from the Directory the first time the mailbox is
+   * touched and never changes: a call carrying another tenant or address is
+   * refused as NotFound (M4) and raised to the operator.
+   */
+  private async ensureIdentity(entry: DirectoryEntry, actor: string): Promise<void> {
+    if (entry.id !== this.name || entry.status === "closed") throw new NotFound();
+    const existing = this.identityRow();
+    if (existing !== null) {
+      if (existing.tenant_id !== entry.tenantId || existing.address !== entry.address) {
+        logAlert("identity-conflict", { mailbox: this.name });
+        throw new NotFound();
+      }
+      return;
+    }
+    const at = this.now();
+    this.ctx.storage.transactionSync(() => {
+      this.ctx.storage.sql.exec(
+        "INSERT INTO identity (only, mailbox_id, tenant_id, address) VALUES (1, ?, ?, ?)",
+        entry.id,
+        entry.tenantId,
+        entry.address,
+      );
+      this.ctx.storage.sql.exec("INSERT INTO policy (only, updated_at, updated_by) VALUES (1, ?, ?)", at, actor);
+      this.audit(actor, "mailbox-initialized", {});
+    });
+    await this.schedule(PURGE_CRON, "purgeExpiredTrash");
+  }
+
+  private requireRole(ctx: CallContext, need: "open" | "send" | "owner"): void {
+    const role: Role = ctx.actor.role;
+    if (need === "owner") {
+      if (role !== "owner") throw new Forbidden();
+      return;
+    }
+    const policy = this.policyRow();
+    const allowed = JSON.parse(need === "open" ? policy.open_roles : policy.send_roles) as Role[];
+    if (!allowed.includes(role)) throw new Forbidden();
+  }
+
+  private identityRow(): IdentityRow | null {
+    return this.rows<IdentityRow>("SELECT mailbox_id, tenant_id, address, display_name FROM identity")[0] ?? null;
+  }
+
+  private policyRow(): PolicyRow {
+    const row = this.rows<PolicyRow>("SELECT * FROM policy")[0];
+    if (row === undefined) throw new Error("mailbox policy missing");
+    return row;
+  }
+
+  private policyView(): PolicyView {
+    const p = this.policyRow();
+    return {
+      openRoles: JSON.parse(p.open_roles) as Role[],
+      sendRoles: JSON.parse(p.send_roles) as Role[],
+      assistant: p.assistant,
+      delivery: p.delivery,
+      forwardTo: p.forward_to,
+      updatedAt: p.updated_at,
+      updatedBy: p.updated_by,
+    };
+  }
+
+  private activeKey(): { keyId: string; publicKey: Uint8Array } | null {
+    const row = this.rows<{ key_id: string; public_key: ArrayBuffer }>(
+      "SELECT key_id, public_key FROM keys WHERE retired_at IS NULL ORDER BY created_at DESC LIMIT 1",
+    )[0];
+    return row === undefined ? null : { keyId: row.key_id, publicKey: new Uint8Array(row.public_key) };
+  }
+
+  private knownKeyId(value: unknown): string {
+    if (typeof value !== "string" || !v.KEY_ID.test(value) || this.rows("SELECT 1 FROM keys WHERE key_id = ?", value).length === 0) {
+      throw new InvalidRequest("key id names no key of this mailbox");
+    }
+    return value;
+  }
+
+  private insertWrap(w: ParsedWrap, at: string, by: string): void {
+    this.ctx.storage.sql.exec(
+      "INSERT INTO key_wraps (id, key_id, kind, credential_id, label, wrapped, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      w.id,
+      w.keyId,
+      w.kind,
+      w.credentialId,
+      w.label,
+      w.wrapped,
+      at,
+      by,
+    );
+  }
+
+  private messageRow(id: string): MessageRow {
+    const row = this.rows<MessageRow>("SELECT * FROM messages WHERE id = ?", id)[0];
+    if (row === undefined) throw new NotFound();
+    return row;
+  }
+
+  private async deleteMessage(row: MessageRow): Promise<void> {
+    await this.env.MAIL.delete(row.body_key);
+    this.ctx.storage.sql.exec("DELETE FROM messages WHERE id = ?", row.id);
+  }
+
+  private inboxUnread(): number {
+    return this.rows<{ n: number }>("SELECT COUNT(*) AS n FROM messages WHERE folder_id = ? AND seen = 0", Folders.INBOX)[0]?.n ?? 0;
+  }
+
+  /** Never message content: ids, kinds, counts and outcomes only. */
+  private audit(actor: string, action: string, detail: Record<string, LogValue>): void {
+    this.ctx.storage.sql.exec(
+      "INSERT INTO audit (at, actor, action, detail) VALUES (?, ?, ?, ?)",
+      this.now(),
+      actor,
+      action,
+      JSON.stringify(detail),
+    );
+  }
+
+  private rows<T>(query: string, ...args: unknown[]): T[] {
+    return this.ctx.storage.sql.exec(query, ...args).toArray() as T[];
+  }
+
+  private now(): string {
+    return this.ports.clock.now().toISOString();
+  }
+
+  private safeName(): string | null {
+    try {
+      return this.name;
+    } catch {
+      return null;
+    }
+  }
+}
+
+function invalidForward(): never {
+  throw new InvalidRequest("a forward target is only for store-and-forward");
+}
+
+interface ParsedWrap {
+  id: string;
+  keyId: string;
+  kind: "passkey-prf" | "recovery";
+  credentialId: string | null;
+  label: string;
+  wrapped: string;
+}
+
+function parseWrap(value: unknown, what: string): ParsedWrap {
+  const w = v.object(value, what, ["id", "keyId", "kind", "credentialId", "label", "wrapped"]);
+  const kind = v.oneOf(w.kind, `${what} kind`, ["passkey-prf", "recovery"] as const);
+  const keyId = typeof w.keyId === "string" && v.KEY_ID.test(w.keyId) ? w.keyId : invalid(`${what} key id`);
+  const credentialId =
+    kind === "passkey-prf"
+      ? v.base64url(w.credentialId, `${what} credential id`, { maxChars: 1400 })
+      : w.credentialId === undefined || w.credentialId === null
+        ? null
+        : invalid(`${what} credential id (recovery wraps have none)`);
+  return {
+    id: v.id(w.id, `${what} id`, "wrp"),
+    keyId,
+    kind,
+    credentialId,
+    label: v.text(w.label, `${what} label`, { min: 1, max: 100, singleLine: true }),
+    // 0x01 || iv (12) || AES-256-GCM of the 32-byte private key (+16 tag) = 61 bytes.
+    wrapped: v.base64url(w.wrapped, `${what} wrapped key`, { bytes: 61 }),
+  };
+}
+
+function invalid(what: string): never {
+  throw new InvalidRequest(`invalid ${what}`);
+}
+
+const BARE_ID = /^[^\s<>\u0000-\u001f\u007f]{1,998}$/;
+const IDEMPOTENCY_KEY = /^[A-Za-z0-9_.:-]{1,200}$/;
+
+export interface ParsedSendRequest {
+  idempotencyKey: string;
+  to: v.Recipient[];
+  cc: v.Recipient[];
+  bcc: v.Recipient[];
+  subject: string;
+  text: string;
+  html?: string;
+  inReplyTo?: string;
+  references: string[];
+  attachments: { filename: string; mimeType: string; content: Uint8Array; inline?: boolean; contentId?: string }[];
+  draftId?: string;
+}
+
+function parseSendRequest(value: unknown): ParsedSendRequest {
+  const r = v.object(value, "send request", [
+    "idempotencyKey",
+    "to",
+    "cc",
+    "bcc",
+    "subject",
+    "text",
+    "html",
+    "inReplyTo",
+    "references",
+    "attachments",
+    "draftId",
+  ]);
+  const idempotencyKey = typeof r.idempotencyKey === "string" && IDEMPOTENCY_KEY.test(r.idempotencyKey) ? r.idempotencyKey : invalid("idempotency key");
+  const list = (x: unknown, what: string) => (x === undefined ? [] : v.array(x, what, LIMITS.maxRecipients).map((a, i) => v.recipient(a, `${what} ${i + 1}`)));
+  const to = list(r.to, "to");
+  const cc = list(r.cc, "cc");
+  const bcc = list(r.bcc, "bcc");
+  if (to.length === 0) throw new InvalidRequest("at least one recipient in to is required");
+  // M7: at most 50 recipients a message, across to, cc and bcc.
+  if (to.length + cc.length + bcc.length > LIMITS.maxRecipients) throw new InvalidRequest(`at most ${LIMITS.maxRecipients} recipients`);
+  const html = v.optional(r.html, (h) => v.text(h, "html", { max: 5_000_000 }));
+  const inReplyTo = v.optional(r.inReplyTo, (x) => (typeof x === "string" && BARE_ID.test(x) ? x : invalid("in-reply-to")));
+  const draftId = v.optional(r.draftId, (d) => v.id(d, "draft id", "drf"));
+  const attachments = (r.attachments === undefined ? [] : v.array(r.attachments, "attachments", 50)).map((a, i) => {
+    const what = `attachment ${i + 1}`;
+    const x = v.object(a, what, ["filename", "mimeType", "content", "inline", "contentId"]);
+    if (!(x.content instanceof Uint8Array)) throw new InvalidRequest(`${what} content must be bytes`);
+    const inline = v.optional(x.inline, (b) => v.bool(b, `${what} inline`));
+    const contentId = v.optional(x.contentId, (c) => v.text(c, `${what} content id`, { min: 1, max: 200, singleLine: true }));
+    return {
+      filename: v.text(x.filename, `${what} filename`, { min: 1, max: 255, singleLine: true }),
+      mimeType: v.text(x.mimeType, `${what} type`, { min: 3, max: 255, singleLine: true }),
+      content: x.content,
+      ...(inline === undefined ? {} : { inline }),
+      ...(contentId === undefined ? {} : { contentId }),
+    };
+  });
+  if (attachments.reduce((n, a) => n + a.content.byteLength, 0) > LIMITS.maxRawBytes) throw new InvalidRequest("the attachments are too large");
+  return {
+    idempotencyKey,
+    to,
+    cc,
+    bcc,
+    subject: v.text(r.subject, "subject", { max: 998, singleLine: true }),
+    text: v.text(r.text, "text", { max: 5_000_000 }),
+    ...(html === undefined ? {} : { html }),
+    ...(inReplyTo === undefined ? {} : { inReplyTo }),
+    references: (r.references === undefined ? [] : v.array(r.references, "references", 100)).map((x) =>
+      typeof x === "string" && BARE_ID.test(x) ? x : invalid("reference"),
+    ),
+    attachments,
+    ...(draftId === undefined ? {} : { draftId }),
+  };
+}
+
+const CURSOR = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)\|(msg_[0-9abcdefghjkmnpqrstvwxyz]{26})$/;
+
+function parseCursor(value: unknown): { receivedAt: string; id: string } {
+  const m = typeof value === "string" ? CURSOR.exec(value) : null;
+  if (m === null) throw new InvalidRequest("before must be a cursor from a previous page");
+  return { receivedAt: m[1]!, id: m[2]! };
+}
