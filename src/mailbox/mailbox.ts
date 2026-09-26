@@ -14,7 +14,9 @@ import {
   SendFailed,
 } from "../errors";
 import { type LogValue, logAlert, logEvent } from "../log";
-import { inboundHeader, outboundHeader, parseMessage } from "../mail/header";
+import type { MessageHeader } from "@platform-mail/crypto";
+import { inboundHeader, minimalHeader, outboundHeader, parseMessage } from "../mail/header";
+import { sesMessageId } from "../mail/ses-message-id";
 import type { MailboxPorts } from "../ports";
 import { productionPorts } from "../wiring";
 import { type FolderId, Folders } from "./folders";
@@ -43,8 +45,6 @@ export const TRASH_DAYS = 30;
 /** agentic-inbox's limits, domain-model M7. */
 export const SENDS_PER_HOUR = 20;
 export const SENDS_PER_DAY = 100;
-/** A send reserved this long ago and never finished is treated as abandoned. */
-const ABANDONED_SEND_MS = 2 * 60 * 1000;
 
 const NOT_ACCEPTING = "This mailbox is not accepting mail";
 const TOO_LARGE = "Message too large";
@@ -134,6 +134,9 @@ export class Mailbox extends Agent<Env> {
    */
   override observability = undefined;
 
+  /** Idempotency keys whose SES call is running in this object right now. */
+  private readonly sendsInFlight = new Set<string>();
+
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     // Synchronous and first, so no request can see a half-built schema.
@@ -222,12 +225,29 @@ export class Mailbox extends Agent<Env> {
     await (email.setReject(reason) as unknown as Promise<void> | undefined);
   }
 
+  /**
+   * Seals, and never loses a message to the header ceiling: when sealMessage
+   * throws RangeError (a header still over 64 KiB after the contract's own
+   * trimming), it retries once with the contract's minimal header. The full
+   * headers are inside the sealed raw message either way.
+   */
+  private async seal(key: { keyId: string; publicKey: Uint8Array }, messageId: string, header: MessageHeader, raw: Uint8Array) {
+    const ids = { mailboxId: this.name, messageId };
+    try {
+      return await this.ports.sealer.seal(key, ids, header, raw);
+    } catch (err) {
+      if (errorName(err) !== "RangeError") throw err;
+      logEvent("seal", { mailbox: this.name, message: messageId, outcome: "minimal-header" });
+      return await this.ports.sealer.seal(key, ids, minimalHeader(header), raw);
+    }
+  }
+
   private async storeArrival(email: AgentEmail, entry: DirectoryEntry, key: { keyId: string; publicKey: Uint8Array }): Promise<string> {
     const raw = await email.getRaw();
     // A message the parser cannot read is still stored, with an empty header.
     const header = inboundHeader(await parseMessage(raw), email.from);
     const messageId = this.ports.ids.messageId();
-    const sealed = await this.ports.sealer.seal(key, { mailboxId: entry.id, messageId }, header, raw);
+    const sealed = await this.seal(key, messageId, header, raw);
     await this.storeSealed({
       messageId,
       folder: Folders.INBOX,
@@ -551,8 +571,9 @@ export class Mailbox extends Agent<Env> {
       return { messageId: previous.message_id, providerMessageId: previous.provider_message_id };
     }
     if (previous !== undefined) {
-      if (now.getTime() - Date.parse(previous.created_at) < ABANDONED_SEND_MS) throw new SendFailed(true);
-      this.ctx.storage.sql.exec("DELETE FROM sends WHERE idempotency_key = ?", req.idempotencyKey);
+      // Running right now (ask again shortly), or its outcome is unknown: SES
+      // may have accepted it, so it is NEVER sent again under this key.
+      throw new SendFailed(this.sendsInFlight.has(req.idempotencyKey));
     }
 
     // M7, rate: counted over sends made or in flight.
@@ -566,7 +587,23 @@ export class Mailbox extends Agent<Env> {
     // Reserve the key before the first await, so a concurrent repeat sees it.
     this.ctx.storage.sql.exec("INSERT INTO sends (idempotency_key, created_at) VALUES (?, ?)", req.idempotencyKey, now.toISOString());
     const release = () => this.ctx.storage.sql.exec("DELETE FROM sends WHERE idempotency_key = ?", req.idempotencyKey);
+    this.sendsInFlight.add(req.idempotencyKey);
+    try {
+      return await this.sendReserved(ctx, req, key, identity, now, configurationSet, release);
+    } finally {
+      this.sendsInFlight.delete(req.idempotencyKey);
+    }
+  }
 
+  private async sendReserved(
+    ctx: CallContext,
+    req: ParsedSendRequest,
+    key: { keyId: string; publicKey: Uint8Array },
+    identity: IdentityRow,
+    now: Date,
+    configurationSet: string,
+    release: () => void,
+  ): Promise<SendResult> {
     // M6: From is the mailbox, whatever the request said. The request has no
     // `from` field at all (the shape check refuses one); this is the only From.
     const from = identity.display_name === "" ? { address: identity.address } : { name: identity.display_name, address: identity.address };
@@ -603,10 +640,19 @@ export class Mailbox extends Agent<Env> {
         ...(ctx.mailbox.sesTenant === null ? {} : { tenantName: ctx.mailbox.sesTenant }),
       }));
     } catch (err) {
-      release();
-      const retryable = errorName(err) === "SendRejected" && (err as { retryable?: unknown }).retryable === true;
-      logEvent("send", { mailbox: this.name, outcome: "failed", error: errorName(err), retryable });
-      throw new SendFailed(retryable);
+      const rejected = err as { status?: unknown; retryable?: unknown };
+      if (errorName(err) === "SendRejected" && typeof rejected.status === "number" && rejected.status !== 0) {
+        // SES answered, and did not take the message: the key is free again.
+        release();
+        const retryable = rejected.retryable === true;
+        logEvent("send", { mailbox: this.name, outcome: "refused", status: rejected.status, retryable });
+        throw new SendFailed(retryable);
+      }
+      // Status 0 (timeout, network, a 2xx without an id) or anything else: SES
+      // may have accepted it. The reservation stays, so the key never sends again.
+      this.audit(ctx.actor.accountId, "send-outcome-unknown", { idempotencyKey: req.idempotencyKey, error: errorName(err) });
+      logAlert("send-outcome-unknown", { mailbox: this.name, error: errorName(err) });
+      throw new SendFailed(false);
     }
     // From here the message is out. Nothing below may report failure.
     this.ctx.storage.sql.exec("UPDATE sends SET provider_message_id = ? WHERE idempotency_key = ?", providerMessageId, req.idempotencyKey);
@@ -621,13 +667,14 @@ export class Mailbox extends Agent<Env> {
         subject: req.subject,
         text: req.text,
         date: now,
-        messageId: built.messageId,
+        // The id recipients see: SES replaces the one in the raw message (S3).
+        messageId: sesMessageId(providerMessageId, this.env.SES_REGION),
         ...(req.inReplyTo === undefined ? {} : { inReplyTo: req.inReplyTo }),
         references: req.references,
         attachments: req.attachments,
       });
       const id = this.ports.ids.messageId();
-      const sealed = await this.ports.sealer.seal(key, { mailboxId: this.name, messageId: id }, header, built.raw);
+      const sealed = await this.seal(key, id, header, built.raw);
       await this.storeSealed({ messageId: id, folder: Folders.SENT, direction: "out", size: built.raw.byteLength, sealed, seen: true });
       this.ctx.storage.sql.exec("UPDATE sends SET message_id = ? WHERE idempotency_key = ?", id, req.idempotencyKey);
       messageId = id;

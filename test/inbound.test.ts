@@ -203,6 +203,35 @@ describe("arrival: what a stored message is", () => {
     expect((await stored(mb)).rows).toHaveLength(1);
   });
 
+  it("never loses a message to the header ceiling: a few thousand To: recipients are stored", async () => {
+    const mb = await provisionMailbox();
+    const many = Array.from({ length: 3000 }, (_, i) => `u${i}@example-${"d".repeat(20)}.com`).join(", ");
+    const raw = crlf([`To: ${many}`, "Subject: party", "", "you are all invited"]);
+    const email = incomingEmail(raw, { to: mb.address });
+    await deliver(email.message);
+    expect(email.rejects).toEqual([]);
+    const sealed = mb.ports.sealer.sealed[0]!;
+    expect(sealed.header).toMatchObject({ to: [], subject: "party", snippet: "" });
+    expect(sealed.raw).toEqual(raw);
+    expect((await stored(mb)).rows).toHaveLength(1);
+  });
+
+  it("retries once with the minimal header when sealMessage throws RangeError (S1: header still over 64 KiB)", async () => {
+    const mb = await provisionMailbox();
+    const realSeal = mb.ports.sealer.seal.bind(mb.ports.sealer);
+    const seen: unknown[] = [];
+    mb.ports.sealer.seal = async (pub, ids, header, raw) => {
+      seen.push(header);
+      if (seen.length === 1) throw new RangeError("the header is larger than 64 KiB");
+      return realSeal(pub, ids, header, raw);
+    };
+    const email = incomingEmail(sampleMessage({ to: mb.address, subject: "Quote" }), { to: mb.address });
+    await deliver(email.message);
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toMatchObject({ subject: "Quote", to: [], snippet: "", attachments: [] });
+    expect((await stored(mb)).rows).toHaveLength(1);
+  });
+
   it("M2: an active mailbox without a key refuses mail too (no key, no mail)", async () => {
     const mb = await provisionMailbox({ status: "active", enroll: false });
     const email = incomingEmail(sampleMessage({ to: mb.address }), { to: mb.address });

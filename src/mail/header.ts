@@ -146,16 +146,13 @@ export function outboundHeader(input: OutboundHeaderInput): MessageHeader {
 }
 
 const sizeOf = (h: MessageHeader) => new TextEncoder().encode(JSON.stringify(h)).length;
-const clip = (s: string, n: number) => Array.from(s).slice(0, n).join("");
+const clip = (text: string, n: number) => Array.from(text).slice(0, n).join("");
 
 /**
- * The 64 KiB ceiling. The contract's two steps first: `references` keeps its
- * last 20 entries, then `snippet` is shortened. If a pathological message is
- * still larger (a 100 KB subject, thousands of recipients), every other string
- * and list is bounded by a limit that halves until the header fits. The
- * contract does not say what gives way in that case (reported as a gap); no
- * mail is lost either way, because the raw message is sealed in full and the
- * browser can parse it again.
+ * The 64 KiB ceiling, in the contract's order: `references` keeps its last 20
+ * entries, then `snippet` is shortened, then (envelope-v1 amendment,
+ * 2026-09-26) the minimal header. Nothing is lost either way: the full headers
+ * stay inside the sealed raw message.
  */
 export function fitHeader(header: MessageHeader): MessageHeader {
   if (sizeOf(header) <= MAX_HEADER_BYTES) return header;
@@ -168,26 +165,37 @@ export function fitHeader(header: MessageHeader): MessageHeader {
     const shorter = { ...trimmed, snippet: chars.slice(0, n).join("") };
     if (sizeOf(shorter) <= MAX_HEADER_BYTES) return shorter;
   }
+  return minimalHeader(header);
+}
 
-  for (let limit = 1024; ; limit = Math.max(1, Math.floor(limit / 2))) {
-    const address = (a: Address): Address => ({ name: clip(a.name, limit), address: clip(a.address, limit) });
-    const bounded: MessageHeader = {
-      ...trimmed,
-      snippet: "",
-      envelopeFrom: trimmed.envelopeFrom === null ? null : clip(trimmed.envelopeFrom, limit),
-      from: trimmed.from === null ? null : address(trimmed.from),
-      to: trimmed.to.slice(0, limit).map(address),
-      cc: trimmed.cc.slice(0, limit).map(address),
-      bcc: trimmed.bcc.slice(0, limit).map(address),
-      replyTo: trimmed.replyTo.slice(0, limit).map(address),
-      subject: clip(trimmed.subject, limit),
-      messageId: trimmed.messageId === null ? null : clip(trimmed.messageId, limit),
-      inReplyTo: trimmed.inReplyTo === null ? null : clip(trimmed.inReplyTo, limit),
-      references: trimmed.references.map((r) => clip(r, limit)),
-      attachments: trimmed.attachments
-        .slice(0, limit)
-        .map((a) => ({ ...a, filename: clip(a.filename, limit), mimeType: clip(a.mimeType, limit) })),
-    };
-    if (sizeOf(bounded) <= MAX_HEADER_BYTES || limit === 1) return bounded;
-  }
+/**
+ * The header for mail whose full header cannot fit (thousands of recipients or
+ * attachments), as the contract defines it: the same v, direction,
+ * envelopeFrom, date, messageId and inReplyTo; `from` only if its JSON is
+ * under 1 KiB; every list emptied; the subject cut to 200 characters; no
+ * snippet. It is also what the Worker retries with when `sealMessage` throws
+ * RangeError. The kept strings are additionally bounded to 998 characters, the
+ * RFC 5322 line length, so that even a pathological Message-ID cannot make the
+ * minimal header too large.
+ */
+export function minimalHeader(header: MessageHeader): MessageHeader {
+  const line = (value: string | null) => (value === null ? null : clip(value, 998));
+  const fromFits = header.from !== null && new TextEncoder().encode(JSON.stringify(header.from)).length < 1024;
+  return {
+    v: 1,
+    direction: header.direction,
+    envelopeFrom: line(header.envelopeFrom),
+    from: fromFits ? header.from : null,
+    to: [],
+    cc: [],
+    bcc: [],
+    replyTo: [],
+    subject: clip(header.subject, 200),
+    date: header.date,
+    messageId: line(header.messageId),
+    inReplyTo: line(header.inReplyTo),
+    references: [],
+    snippet: "",
+    attachments: [],
+  };
 }

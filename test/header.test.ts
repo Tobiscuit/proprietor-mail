@@ -3,6 +3,7 @@ import {
   MAX_HEADER_BYTES,
   fitHeader,
   inboundHeader,
+  minimalHeader,
   outboundHeader,
   parseMessage,
 } from "../src/mail/header";
@@ -167,14 +168,47 @@ describe("the 64 KiB ceiling", () => {
     expect(fitHeader(header)).toBe(header);
   });
 
-  it("stays under the ceiling whatever the message holds (a contract gap: the fields beyond references and snippet)", async () => {
+  it("falls back to the contract's minimal header when references and snippet are not enough (a few thousand To:)", async () => {
     // Under the parser's 256 KiB header bound, far over the 64 KiB header ceiling.
-    const many = Array.from({ length: 1500 }, (_, i) => `user${i}@example-${"d".repeat(30)}.com`).join(", ");
-    const raw = crlf([`To: ${many}`, `Cc: ${many}`, `Subject: ${"s".repeat(50_000)}`, "", "b"]);
+    const many = Array.from({ length: 3000 }, (_, i) => `u${i}@example-${"d".repeat(20)}.com`).join(", ");
+    const raw = crlf([
+      'From: "Ana" <ana@example.com>',
+      `To: ${many}`,
+      `Subject: ${"s".repeat(300)}`,
+      "Date: Sat, 26 Sep 2026 15:04:05 +0000",
+      "Message-ID: <big@example.com>",
+      "In-Reply-To: <parent@x>",
+      "",
+      "b",
+    ]);
     const header = inboundHeader(await parseMessage(raw), "a@b.test");
     expect(byteLength(header)).toBeLessThanOrEqual(MAX_HEADER_BYTES);
     expect(Object.keys(header)).toEqual(HEADER_KEYS);
-    expect(header.to.length).toBeGreaterThan(0);
+    expect(header).toEqual({
+      v: 1,
+      direction: "in",
+      envelopeFrom: "a@b.test",
+      from: { name: "Ana", address: "ana@example.com" },
+      to: [],
+      cc: [],
+      bcc: [],
+      replyTo: [],
+      subject: "s".repeat(200),
+      date: "2026-09-26T15:04:05.000Z",
+      messageId: "big@example.com",
+      inReplyTo: "parent@x",
+      references: [],
+      snippet: "",
+      attachments: [],
+    });
+  });
+
+  it("the minimal header drops a `from` whose JSON is 1 KiB or more", () => {
+    const header = minimalHeader({
+      v: 1, direction: "in", envelopeFrom: null, from: { name: "n".repeat(2000), address: "a@b.test" }, to: [], cc: [], bcc: [],
+      replyTo: [], subject: "", date: null, messageId: null, inReplyTo: null, references: [], snippet: "", attachments: [],
+    });
+    expect(header.from).toBeNull();
   });
 });
 
