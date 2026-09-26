@@ -181,13 +181,26 @@ A test checks this, and that `src/` compiles without Node types. The package's
 whole browser footprint, bundled and minified with esbuild, is about 41 KB
 (12 KB gzipped).
 
-### Releases: the SHA256SUMS a vendored copy is checked against
+### Releases: one set of bytes, three ways to check it
 
 A release is a tag `mail-crypto-vX.Y.Z` on a commit that is already on `main`,
 where X.Y.Z is this `package.json`'s `version`.
 `.github/workflows/release-mail-crypto.yml` refuses any other tag. It runs the
-tests, then attaches `SHA256SUMS` to a GitHub release: one line per file under
-`src/`, computed by `scripts/sha256sums.mjs` from the tagged tree, in
-sha256sum's format with paths relative to this directory. From the directory
-that holds a vendored `src/`, `sha256sum --check --strict SHA256SUMS` checks the
-copy.
+tests, then, without installing anything:
+
+- computes `SHA256SUMS`: one line per file under `src/`, by
+  `scripts/sha256sums.mjs` from the tagged tree, in sha256sum's format with
+  paths relative to this directory. From the directory that holds a vendored
+  `src/`, `sha256sum --check --strict SHA256SUMS` checks the copy;
+- packs the npm tarball once (`src/`, this README, `package.json` and
+  `LICENSE`);
+- attests both files with GitHub artifact attestations;
+- stages that tarball on npm through trusted publishing, with npm provenance.
+  A maintainer approves the staged version with 2FA before it can be
+  installed;
+- attaches both files to the GitHub release.
+
+The published package is the TypeScript source itself, with no build step,
+as the dashboard vendors it: it is meant for a bundler (esbuild, Vite,
+wrangler), not for Node to import directly. The repository's `README.md`
+shows how to verify a release end to end.
