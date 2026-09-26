@@ -12,7 +12,7 @@
     "test": "vitest run",
     "typecheck": "tsc -p src/tsconfig.json && tsc -p test/tsconfig.json && npm run typecheck --workspaces --if-present",
     "dev": "wrangler dev --local --port 8787",
-    "provision": "node scripts/provision-mailbox.mjs"
+    "provision": "node scripts/provision-mailbox.ts"
   },
   "dependencies": {
     "agents": "0.24.0",
