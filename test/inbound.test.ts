@@ -232,6 +232,17 @@ describe("arrival: what a stored message is", () => {
     expect((await stored(mb)).rows).toHaveLength(1);
   });
 
+  it("M4: a Directory row altered after first contact (another tenant) gets mail refused, not stored, and an alert", async () => {
+    const mb = await provisionMailbox();
+    await deliver(incomingEmail(sampleMessage({ to: mb.address }), { to: mb.address }).message);
+    await env.DIRECTORY.prepare("UPDATE mailboxes SET tenant_id = 'tnt_someone_else' WHERE id = ?").bind(mb.id).run();
+    const email = incomingEmail(sampleMessage({ to: mb.address }), { to: mb.address });
+    await deliver(email.message);
+    expect(email.rejects).toEqual(["This mailbox is not accepting mail"]);
+    expect((await stored(mb)).rows).toHaveLength(1);
+    expect(errors.some((line) => line.includes('"operator-alert"') && line.includes("identity-conflict"))).toBe(true);
+  });
+
   it("M2: an active mailbox without a key refuses mail too (no key, no mail)", async () => {
     const mb = await provisionMailbox({ status: "active", enroll: false });
     const email = incomingEmail(sampleMessage({ to: mb.address }), { to: mb.address });

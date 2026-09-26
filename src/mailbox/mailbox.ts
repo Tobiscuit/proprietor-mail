@@ -180,7 +180,17 @@ export class Mailbox extends Agent<Env> {
       outcome("rejected", { reason: "too-large" });
       return;
     }
-    await this.ensureIdentity(entry, "system:email");
+    try {
+      await this.ensureIdentity(entry, "system:email");
+    } catch (err) {
+      // M4: the Directory row no longer matches the identity this mailbox was
+      // created with (already raised as an operator alert). Refuse the mail:
+      // never store it under an identity that changed.
+      if (errorName(err) !== "NotFound") throw err;
+      await this.reject(email, NOT_ACCEPTING);
+      outcome("rejected", { reason: "identity-conflict" });
+      return;
+    }
     const key = this.activeKey();
     if (key === null) {
       await this.reject(email, NOT_ACCEPTING);
