@@ -143,7 +143,7 @@ describe.skipIf(!CRYPTO || !OUTBOUND)("with the real @platform-mail/outbound (S3
     try {
       const testEnv = {
         ...env,
-        SES_ACCESS_KEY_ID: "AKIATESTNOTAREALKEY0", // pragma: allowlist secret (fake, never leaves the isolate)
+        SES_ACCESS_KEY_ID: "AKIDEXAMPLE", // pragma: allowlist secret (AWS's example key id; never leaves the isolate)
         SES_SECRET_ACCESS_KEY: "test-secret-never-sent-anywhere", // pragma: allowlist secret
       };
       await injectPorts(mb.stub, { ...fakePorts(), mime: productionPorts(env).mime, mailer: productionPorts(testEnv).mailer });
