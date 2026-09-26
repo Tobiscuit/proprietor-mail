@@ -1,6 +1,7 @@
 import path from "node:path";
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
+import { escapeGuard } from "./test/harness/escape-guard.ts";
 import { TEST_CAPABILITY_KEYS } from "./test/support/test-keys.ts";
 
 // THREE KINDS OF PROJECT, one `npm test` (the SEO engine's harness, adapted).
@@ -20,6 +21,13 @@ import { TEST_CAPABILITY_KEYS } from "./test/support/test-keys.ts";
 // `wrangler` and `miniflare` are returned together from cloudflareTest:
 // returning only `miniflare` silently drops the wrangler config and the D1
 // binding with it.
+//
+// `escapeGuard()` fails the run when workerd reports an exception that escaped
+// an RPC hop (an uncaught throw, or an invocation cancelled as "hung") that no
+// test declared (test/harness/escape-guard.ts, test/README.md). It adds its
+// own reporter, so it runs whatever `--reporter` says. Do not set
+// `dangerouslyIgnoreUnhandledErrors` either: vitest's own policy is the guard
+// for the rejections it can see.
 export default defineConfig({
   test: {
     projects: [
@@ -41,6 +49,7 @@ export default defineConfig({
               },
             };
           }),
+          escapeGuard(),
         ],
         test: {
           name: "worker",

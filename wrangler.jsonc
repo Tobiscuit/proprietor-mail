@@ -4,11 +4,10 @@
   "main": "src/index.ts",
   // 2026-08-15 is the newest date BOTH installed runtimes support: the test
   // pool (@cloudflare/vitest-pool-workers 0.22.0) ships workerd 1.20260815.1,
-  // wrangler 4.141.0 ships 1.20260925.1. It is also after 2026-04-21, the date
-  // from which `enhanced_error_serialization` is on by default: MailService's
-  // named errors reach the caller with `name`, `message` and their own fields
-  // (`reason`, `retryAfterSeconds`, `retryable`). The dashboard (the consumer)
-  // needs a date on or after 2026-04-21 too, or that flag set explicitly.
+  // wrangler 4.141.0 ships 1.20260925.1. Nothing here depends on how RPC
+  // serializes errors: MailService answers with values, refusals included
+  // (contracts/mail-service-v1.md), because a thrown error lost its name and
+  // fields between two processes even at this date.
   "compatibility_date": "2026-08-15",
   "compatibility_flags": ["nodejs_compat"],
 

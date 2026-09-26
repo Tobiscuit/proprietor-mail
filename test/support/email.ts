@@ -76,3 +76,4 @@ export function incomingEmail(
   };
   return { message: message as unknown as ForwardableEmailMessage, rejects, forwards };
 }
+

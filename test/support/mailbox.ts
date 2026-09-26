@@ -8,6 +8,7 @@ import type { MailboxPorts } from "../../src/ports";
 import { base64urlFromBytes, canonicalClaims, canonicalHeader, randomJti, signToken } from "./capability-tokens";
 import { type FakePorts, fakePorts } from "./fakes";
 import { freshMailboxId, freshTenantId, testId } from "./ids";
+import { valueOf } from "./results";
 import { TEST_KEY_B64URL, TEST_KID } from "./test-keys";
 import { bytesFromBase64url } from "./capability-tokens";
 
@@ -135,10 +136,12 @@ export async function provisionMailbox(
   const mb: TestMailbox = { id, tenantId, address, stub, ports };
   if (opts.enroll ?? status !== "provisioned") {
     const key = await newKeyPair();
-    await stub.enroll(callContext(mb, { status: "provisioned" }), {
-      publicKey: base64urlFromBytes(key.publicKey),
-      wraps: [recoveryWrap(key.keyId)],
-    });
+    valueOf(
+      await stub.enroll(callContext(mb, { status: "provisioned" }), {
+        publicKey: base64urlFromBytes(key.publicKey),
+        wraps: [recoveryWrap(key.keyId)],
+      }),
+    );
     mb.key = key;
   }
   if (status !== "provisioned") await setStatus(id, status);
@@ -164,19 +167,3 @@ export async function mint(opts: { tenant: string; mbx?: string; role?: Role; su
 
 export const capFor = (mb: TestMailbox, opts: { role?: Role; sub?: string; jti?: string } = {}) =>
   mint({ tenant: mb.tenantId, mbx: mb.id, ...opts });
-
-/**
- * The error an RPC call rejects with. Awaited plainly on purpose: vitest's
- * `expect(p).rejects` reads properties off workerd's RPC promise, and each
- * property read on an RPC promise is itself a pipelined call that rejects too,
- * unhandled. (workerd also logs "Uncaught (in promise)" for every rejected DO
- * RPC method; that line is the runtime's, and the error still arrives intact.)
- */
-export async function rejectionOf(p: PromiseLike<unknown>): Promise<Error & Record<string, unknown>> {
-  try {
-    await p;
-  } catch (err) {
-    return err as Error & Record<string, unknown>;
-  }
-  throw new Error("expected the call to be refused");
-}

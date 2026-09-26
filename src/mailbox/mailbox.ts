@@ -8,10 +8,16 @@ import {
   AssistantUnavailable,
   Forbidden,
   InvalidRequest,
+  type MailResult,
   MailboxNotActive,
   NotFound,
   RateLimited,
+  Refusal,
   SendFailed,
+  errorName,
+  internalError,
+  ok,
+  refused,
 } from "../errors";
 import { type LogValue, logAlert, logEvent } from "../log";
 import type { MessageHeader } from "@platform-mail/crypto";
@@ -39,9 +45,19 @@ export type { CallContext } from "./types";
 
 /** Email Routing's own ceiling for an inbound message (spec §8). */
 export const MAX_INBOUND_BYTES = 25 * 1024 * 1024;
-/** Once a day at 03:17 UTC: the Trash purge (M9). */
-export const PURGE_CRON = "17 3 * * *";
+/** Once a day at 03:17 UTC: the Trash purge (M9) and the pruning of sends and audit (tasks.md S2k). */
+export const HOUSEKEEPING_CRON = "17 3 * * *";
 export const TRASH_DAYS = 30;
+/**
+ * `sends` rows (idempotency keys and the rate-limit count) are kept 30 days.
+ * The rate limit looks back one day, and a dashboard repeats a key within
+ * seconds; past 30 days a repeated key sends again, including one whose SES
+ * outcome was never known.
+ */
+export const SENDS_KEPT_DAYS = 30;
+/** Audit rows are kept one year. */
+export const AUDIT_KEPT_DAYS = 365;
+const DAY_MS = 24 * 60 * 60 * 1000;
 /** agentic-inbox's limits, domain-model M7. */
 export const SENDS_PER_HOUR = 20;
 export const SENDS_PER_DAY = 100;
@@ -105,8 +121,6 @@ function toItem(row: MessageRow): MessageItem {
   };
 }
 
-const errorName = (err: unknown) => (err instanceof Error ? err.name : typeof err);
-
 /**
  * One mailbox (domain-model §3, the aggregate root): an Agents SDK Agent, so a
  * SQLite-backed Durable Object named by the mailbox id. It holds the sealed
@@ -116,7 +130,10 @@ const errorName = (err: unknown) => (err instanceof Error ? err.name : typeof er
  * Every method but `onEmail` and the housekeeping is reached through
  * MailService (capability and Directory checked, M4) or MailAdmin; each takes
  * the Directory row and the actor, and applies the rest here: its identity,
- * its policy and its invariants.
+ * its policy and its invariants. Each answers with a MailResult through
+ * `answer`: a refusal crosses the RPC hop as a value, never as a throw
+ * (contracts/mail-service-v1.md). `onEmail` is the one method that throws on
+ * purpose (plan.md §5).
  */
 export class Mailbox extends Agent<Env> {
   /**
@@ -153,7 +170,7 @@ export class Mailbox extends Agent<Env> {
 
   override async onStart(): Promise<void> {
     // Heals a lost schedule on every wake; cron schedules are idempotent.
-    if (this.identityRow() !== null) await this.schedule(PURGE_CRON, "purgeExpiredTrash");
+    if (this.identityRow() !== null) await this.schedule(HOUSEKEEPING_CRON, "dailyHousekeeping");
   }
 
   // ---- inbound (plan.md §5) --------------------------------------------------
@@ -318,291 +335,325 @@ export class Mailbox extends Agent<Env> {
 
   // ---- reading (MailService) --------------------------------------------------
 
-  async describe(ctx: CallContext): Promise<MailboxView> {
-    await this.enter(ctx);
-    this.requireRole(ctx, "open");
-    const identity = this.identityRow()!;
-    return {
-      id: identity.mailbox_id,
-      address: identity.address,
-      status: ctx.mailbox.status,
-      displayName: identity.display_name,
-      keys: this.rows<{ key_id: string; public_key: ArrayBuffer; created_at: string; created_by: string; retired_at: string | null }>(
-        "SELECT key_id, public_key, created_at, created_by, retired_at FROM keys ORDER BY created_at",
-      ).map(
-        (k): KeyView => ({
-          keyId: k.key_id,
-          publicKey: v.encodeBase64url(new Uint8Array(k.public_key)),
-          createdAt: k.created_at,
-          createdBy: k.created_by,
-          retiredAt: k.retired_at,
-        }),
-      ),
-      wraps: this.rows<{ id: string; key_id: string; kind: WrapView["kind"]; credential_id: string | null; label: string; wrapped: string; created_at: string; created_by: string }>(
-        "SELECT id, key_id, kind, credential_id, label, wrapped, created_at, created_by FROM key_wraps ORDER BY created_at, id",
-      ).map((w) => ({
-        id: w.id,
-        keyId: w.key_id,
-        kind: w.kind,
-        credentialId: w.credential_id, // pragma: allowlist secret (a field name, not a value)
-        label: w.label,
-        wrapped: w.wrapped,
-        createdAt: w.created_at,
-        createdBy: w.created_by,
-      })),
-      policy: this.policyView(),
-    };
+  async describe(ctx: CallContext): Promise<MailResult<MailboxView>> {
+    return this.answer("describe", async () => {
+      await this.enter(ctx);
+      this.requireRole(ctx, "open");
+      const identity = this.identityRow()!;
+      return {
+        id: identity.mailbox_id,
+        address: identity.address,
+        status: ctx.mailbox.status,
+        displayName: identity.display_name,
+        keys: this.rows<{ key_id: string; public_key: ArrayBuffer; created_at: string; created_by: string; retired_at: string | null }>(
+          "SELECT key_id, public_key, created_at, created_by, retired_at FROM keys ORDER BY created_at",
+        ).map(
+          (k): KeyView => ({
+            keyId: k.key_id,
+            publicKey: v.encodeBase64url(new Uint8Array(k.public_key)),
+            createdAt: k.created_at,
+            createdBy: k.created_by,
+            retiredAt: k.retired_at,
+          }),
+        ),
+        wraps: this.rows<{ id: string; key_id: string; kind: WrapView["kind"]; credential_id: string | null; label: string; wrapped: string; created_at: string; created_by: string }>(
+          "SELECT id, key_id, kind, credential_id, label, wrapped, created_at, created_by FROM key_wraps ORDER BY created_at, id",
+        ).map((w) => ({
+          id: w.id,
+          keyId: w.key_id,
+          kind: w.kind,
+          credentialId: w.credential_id, // pragma: allowlist secret (a field name, not a value)
+          label: w.label,
+          wrapped: w.wrapped,
+          createdAt: w.created_at,
+          createdBy: w.created_by,
+        })),
+        policy: this.policyView(),
+      };
+    });
   }
 
-  async listMessages(ctx: CallContext, query: unknown): Promise<ListPage> {
-    await this.enter(ctx);
-    this.requireRole(ctx, "open");
-    const q = v.object(query, "list query", ["folder", "before", "limit"]);
-    const folder = v.oneOf(q.folder, "folder", Object.values(Folders));
-    const limit = v.optional(q.limit, (l) => v.integer(l, "limit", 1, 100)) ?? 50;
-    const before = v.optional(q.before, (b) => parseCursor(b));
-    const rows = before
-      ? this.rows<MessageRow>(
-          `SELECT * FROM messages WHERE folder_id = ? AND (received_at < ? OR (received_at = ? AND id < ?))
-           ORDER BY received_at DESC, id DESC LIMIT ?`,
-          folder,
-          before.receivedAt,
-          before.receivedAt,
-          before.id,
-          limit + 1,
-        )
-      : this.rows<MessageRow>("SELECT * FROM messages WHERE folder_id = ? ORDER BY received_at DESC, id DESC LIMIT ?", folder, limit + 1);
-    const page = rows.slice(0, limit);
-    const last = page.at(-1);
-    return { items: page.map(toItem), next: rows.length > limit && last ? `${last.received_at}|${last.id}` : null };
+  async listMessages(ctx: CallContext, query: unknown): Promise<MailResult<ListPage>> {
+    return this.answer("listMessages", async () => {
+      await this.enter(ctx);
+      this.requireRole(ctx, "open");
+      const q = v.object(query, "list query", ["folder", "before", "limit"]);
+      const folder = v.oneOf(q.folder, "folder", Object.values(Folders));
+      const limit = v.optional(q.limit, (l) => v.integer(l, "limit", 1, 100)) ?? 50;
+      const before = v.optional(q.before, (b) => parseCursor(b));
+      const rows = before
+        ? this.rows<MessageRow>(
+            `SELECT * FROM messages WHERE folder_id = ? AND (received_at < ? OR (received_at = ? AND id < ?))
+             ORDER BY received_at DESC, id DESC LIMIT ?`,
+            folder,
+            before.receivedAt,
+            before.receivedAt,
+            before.id,
+            limit + 1,
+          )
+        : this.rows<MessageRow>("SELECT * FROM messages WHERE folder_id = ? ORDER BY received_at DESC, id DESC LIMIT ?", folder, limit + 1);
+      const page = rows.slice(0, limit);
+      const last = page.at(-1);
+      return { items: page.map(toItem), next: rows.length > limit && last ? `${last.received_at}|${last.id}` : null };
+    });
   }
 
   /** The R2 key of a message's sealed body; MailService streams it from R2 itself. */
-  async bodyKey(ctx: CallContext, messageId: unknown): Promise<string> {
-    await this.enter(ctx);
-    this.requireRole(ctx, "open");
-    return this.messageRow(v.id(messageId, "message id", "msg")).body_key;
+  async bodyKey(ctx: CallContext, messageId: unknown): Promise<MailResult<string>> {
+    return this.answer("bodyKey", async () => {
+      await this.enter(ctx);
+      this.requireRole(ctx, "open");
+      return this.messageRow(v.id(messageId, "message id", "msg")).body_key;
+    });
   }
 
-  async updateMessage(ctx: CallContext, messageId: unknown, patch: unknown): Promise<MessageItem> {
-    await this.enter(ctx);
-    this.requireRole(ctx, "open");
-    const id = v.id(messageId, "message id", "msg");
-    const p = v.object(patch, "update", ["seen", "flagged", "folder"]);
-    const seen = v.optional(p.seen, (s) => v.bool(s, "seen"));
-    const flagged = v.optional(p.flagged, (f) => v.bool(f, "flagged"));
-    // Drafts are their own table; no message moves into that folder.
-    const folder = v.optional(p.folder, (f) =>
-      v.oneOf(f, "folder", Object.values(Folders).filter((x) => x !== Folders.DRAFTS)),
-    );
-    if (seen === undefined && flagged === undefined && folder === undefined) throw new InvalidRequest("nothing to update");
-    const row = this.messageRow(id);
-    const trashedAt =
-      folder === undefined ? row.trashed_at : folder === Folders.TRASH ? (row.trashed_at ?? this.now()) : null;
-    this.ctx.storage.sql.exec(
-      "UPDATE messages SET seen = ?, flagged = ?, folder_id = ?, trashed_at = ? WHERE id = ?",
-      seen === undefined ? row.seen : seen ? 1 : 0,
-      flagged === undefined ? row.flagged : flagged ? 1 : 0,
-      folder ?? row.folder_id,
-      trashedAt,
-      id,
-    );
-    return toItem(this.messageRow(id));
+  async updateMessage(ctx: CallContext, messageId: unknown, patch: unknown): Promise<MailResult<MessageItem>> {
+    return this.answer("updateMessage", async () => {
+      await this.enter(ctx);
+      this.requireRole(ctx, "open");
+      const id = v.id(messageId, "message id", "msg");
+      const p = v.object(patch, "update", ["seen", "flagged", "folder"]);
+      const seen = v.optional(p.seen, (s) => v.bool(s, "seen"));
+      const flagged = v.optional(p.flagged, (f) => v.bool(f, "flagged"));
+      // Drafts are their own table; no message moves into that folder.
+      const folder = v.optional(p.folder, (f) =>
+        v.oneOf(f, "folder", Object.values(Folders).filter((x) => x !== Folders.DRAFTS)),
+      );
+      if (seen === undefined && flagged === undefined && folder === undefined) throw new InvalidRequest("nothing to update");
+      const row = this.messageRow(id);
+      const trashedAt =
+        folder === undefined ? row.trashed_at : folder === Folders.TRASH ? (row.trashed_at ?? this.now()) : null;
+      this.ctx.storage.sql.exec(
+        "UPDATE messages SET seen = ?, flagged = ?, folder_id = ?, trashed_at = ? WHERE id = ?",
+        seen === undefined ? row.seen : seen ? 1 : 0,
+        flagged === undefined ? row.flagged : flagged ? 1 : 0,
+        folder ?? row.folder_id,
+        trashedAt,
+        id,
+      );
+      return toItem(this.messageRow(id));
+    });
   }
 
-  async purgeMessage(ctx: CallContext, messageId: unknown): Promise<void> {
-    await this.enter(ctx);
-    this.requireRole(ctx, "owner");
-    const row = this.messageRow(v.id(messageId, "message id", "msg"));
-    await this.deleteMessage(row);
-    this.audit(ctx.actor.accountId, "message-purged", { message: row.id });
+  async purgeMessage(ctx: CallContext, messageId: unknown): Promise<MailResult<null>> {
+    return this.answer("purgeMessage", async () => {
+      await this.enter(ctx);
+      this.requireRole(ctx, "owner");
+      const row = this.messageRow(v.id(messageId, "message id", "msg"));
+      await this.deleteMessage(row);
+      this.audit(ctx.actor.accountId, "message-purged", { message: row.id });
+      return null;
+    });
   }
 
-  async unreadCount(ctx: CallContext): Promise<{ inbox: number }> {
-    await this.enter(ctx);
-    this.requireRole(ctx, "open");
-    return { inbox: this.inboxUnread() };
+  async unreadCount(ctx: CallContext): Promise<MailResult<{ inbox: number }>> {
+    return this.answer("unreadCount", async () => {
+      await this.enter(ctx);
+      this.requireRole(ctx, "open");
+      return { inbox: this.inboxUnread() };
+    });
   }
 
   // ---- drafts: sealed in the browser; the server sees an id, a time and a blob --
 
-  async listDrafts(ctx: CallContext): Promise<DraftRecord[]> {
-    await this.enter(ctx);
-    this.requireRole(ctx, "open");
-    return this.rows<{ id: string; key_id: string; key_envelope: string; sealed: string; updated_at: string }>(
-      "SELECT id, key_id, key_envelope, sealed, updated_at FROM drafts ORDER BY updated_at DESC, id DESC",
-    ).map((d) => ({ id: d.id, keyId: d.key_id, keyEnvelope: d.key_envelope, sealed: d.sealed, updatedAt: d.updated_at }));
+  async listDrafts(ctx: CallContext): Promise<MailResult<DraftRecord[]>> {
+    return this.answer("listDrafts", async () => {
+      await this.enter(ctx);
+      this.requireRole(ctx, "open");
+      return this.rows<{ id: string; key_id: string; key_envelope: string; sealed: string; updated_at: string }>(
+        "SELECT id, key_id, key_envelope, sealed, updated_at FROM drafts ORDER BY updated_at DESC, id DESC",
+      ).map((d) => ({ id: d.id, keyId: d.key_id, keyEnvelope: d.key_envelope, sealed: d.sealed, updatedAt: d.updated_at }));
+    });
   }
 
-  async saveDraft(ctx: CallContext, draft: unknown): Promise<{ id: string; updatedAt: string }> {
-    await this.enter(ctx);
-    this.requireRole(ctx, "open");
-    const d = v.object(draft, "draft", ["id", "keyId", "keyEnvelope", "sealed"]);
-    const id = v.id(d.id, "draft id", "drf");
-    const keyId = this.knownKeyId(d.keyId);
-    const keyEnvelope = v.base64url(d.keyEnvelope, "key envelope", { bytes: 80 });
-    const sealed = v.base64url(d.sealed, "sealed draft", { maxChars: 1_400_000 });
-    const updatedAt = this.now();
-    this.ctx.storage.sql.exec(
-      `INSERT INTO drafts (id, key_id, key_envelope, sealed, updated_at) VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET key_id = excluded.key_id, key_envelope = excluded.key_envelope,
-         sealed = excluded.sealed, updated_at = excluded.updated_at`,
-      id,
-      keyId,
-      keyEnvelope,
-      sealed,
-      updatedAt,
-    );
-    return { id, updatedAt };
+  async saveDraft(ctx: CallContext, draft: unknown): Promise<MailResult<{ id: string; updatedAt: string }>> {
+    return this.answer("saveDraft", async () => {
+      await this.enter(ctx);
+      this.requireRole(ctx, "open");
+      const d = v.object(draft, "draft", ["id", "keyId", "keyEnvelope", "sealed"]);
+      const id = v.id(d.id, "draft id", "drf");
+      const keyId = this.knownKeyId(d.keyId);
+      const keyEnvelope = v.base64url(d.keyEnvelope, "key envelope", { bytes: 80 });
+      const sealed = v.base64url(d.sealed, "sealed draft", { maxChars: 1_400_000 });
+      const updatedAt = this.now();
+      this.ctx.storage.sql.exec(
+        `INSERT INTO drafts (id, key_id, key_envelope, sealed, updated_at) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET key_id = excluded.key_id, key_envelope = excluded.key_envelope,
+           sealed = excluded.sealed, updated_at = excluded.updated_at`,
+        id,
+        keyId,
+        keyEnvelope,
+        sealed,
+        updatedAt,
+      );
+      return { id, updatedAt };
+    });
   }
 
-  async deleteDraft(ctx: CallContext, draftId: unknown): Promise<void> {
-    await this.enter(ctx);
-    this.requireRole(ctx, "open");
-    const id = v.id(draftId, "draft id", "drf");
-    if (this.ctx.storage.sql.exec("DELETE FROM drafts WHERE id = ?", id).rowsWritten === 0) throw new NotFound();
+  async deleteDraft(ctx: CallContext, draftId: unknown): Promise<MailResult<null>> {
+    return this.answer("deleteDraft", async () => {
+      await this.enter(ctx);
+      this.requireRole(ctx, "open");
+      const id = v.id(draftId, "draft id", "drf");
+      if (this.ctx.storage.sql.exec("DELETE FROM drafts WHERE id = ?", id).rowsWritten === 0) throw new NotFound();
+      return null;
+    });
   }
 
   // ---- keys (M3, M5) -----------------------------------------------------------
 
   /** Stores the public key and its wraps. MailService then activates the Directory row. */
-  async enroll(ctx: CallContext, input: unknown): Promise<{ keyId: string }> {
-    await this.enter(ctx);
-    this.requireRole(ctx, "owner");
-    if (ctx.mailbox.status !== "provisioned") throw new InvalidRequest("the mailbox is not awaiting enrolment");
-    const req = v.object(input, "enrolment", ["publicKey", "wraps"]);
-    const publicKey = v.decodeBase64url(v.base64url(req.publicKey, "public key", { bytes: 32 }));
-    // Recomputed here: a keyId the browser claims is never trusted.
-    const keyId = await this.ports.sealer.keyIdOf(publicKey);
-    const wraps = v.array(req.wraps, "wraps", 10).map((w, i) => parseWrap(w, `wrap ${i + 1}`));
-    if (wraps.length === 0 || !wraps.some((w) => w.kind === "recovery")) throw new InvalidRequest("a recovery wrap is required");
-    if (wraps.some((w) => w.keyId !== keyId)) throw new InvalidRequest("a wrap names another key");
-    if (new Set(wraps.map((w) => w.id)).size !== wraps.length) throw new InvalidRequest("wrap ids repeat");
+  async enroll(ctx: CallContext, input: unknown): Promise<MailResult<{ keyId: string }>> {
+    return this.answer("enroll", async () => {
+      await this.enter(ctx);
+      this.requireRole(ctx, "owner");
+      if (ctx.mailbox.status !== "provisioned") throw new InvalidRequest("the mailbox is not awaiting enrolment");
+      const req = v.object(input, "enrolment", ["publicKey", "wraps"]);
+      const publicKey = v.decodeBase64url(v.base64url(req.publicKey, "public key", { bytes: 32 }));
+      // Recomputed here: a keyId the browser claims is never trusted.
+      const keyId = await this.ports.sealer.keyIdOf(publicKey);
+      const wraps = v.array(req.wraps, "wraps", 10).map((w, i) => parseWrap(w, `wrap ${i + 1}`));
+      if (wraps.length === 0 || !wraps.some((w) => w.kind === "recovery")) throw new InvalidRequest("a recovery wrap is required");
+      if (wraps.some((w) => w.keyId !== keyId)) throw new InvalidRequest("a wrap names another key");
+      if (new Set(wraps.map((w) => w.id)).size !== wraps.length) throw new InvalidRequest("wrap ids repeat");
 
-    const at = this.now();
-    const by = ctx.actor.accountId;
-    this.ctx.storage.transactionSync(() => {
-      const existing = this.rows<{ key_id: string }>("SELECT key_id FROM keys WHERE retired_at IS NULL");
-      if (existing.length > 0) {
-        // A retry after the Directory update failed: same key, nothing to do.
-        if (existing[0]?.key_id === keyId) return;
-        throw new InvalidRequest("a key is already enrolled");
+      const at = this.now();
+      const by = ctx.actor.accountId;
+      this.ctx.storage.transactionSync(() => {
+        const existing = this.rows<{ key_id: string }>("SELECT key_id FROM keys WHERE retired_at IS NULL");
+        if (existing.length > 0) {
+          // A retry after the Directory update failed: same key, nothing to do.
+          if (existing[0]?.key_id === keyId) return;
+          throw new InvalidRequest("a key is already enrolled");
+        }
+        this.ctx.storage.sql.exec(
+          "INSERT INTO keys (key_id, public_key, created_at, created_by) VALUES (?, ?, ?, ?)",
+          keyId,
+          publicKey,
+          at,
+          by,
+        );
+        for (const w of wraps) this.insertWrap(w, at, by);
+        this.audit(by, "key-enrolled", { keyId, wraps: wraps.map((w) => `${w.id}:${w.kind}`).join(",") });
+      });
+      return { keyId };
+    });
+  }
+
+  async addWrap(ctx: CallContext, wrap: unknown): Promise<MailResult<null>> {
+    return this.answer("addWrap", async () => {
+      await this.enter(ctx);
+      this.requireRole(ctx, "owner");
+      const w = parseWrap(wrap, "wrap");
+      const key = this.activeKey();
+      if (key === null || w.keyId !== key.keyId) throw new InvalidRequest("a wrap must name the mailbox's key");
+      if (this.rows("SELECT 1 FROM key_wraps WHERE id = ?", w.id).length > 0) throw new InvalidRequest("that wrap id exists");
+      this.ctx.storage.transactionSync(() => {
+        this.insertWrap(w, this.now(), ctx.actor.accountId);
+        this.audit(ctx.actor.accountId, "wrap-added", { wrap: w.id, kind: w.kind });
+      });
+      return null;
+    });
+  }
+
+  async removeWrap(ctx: CallContext, wrapId: unknown): Promise<MailResult<null>> {
+    return this.answer("removeWrap", async () => {
+      await this.enter(ctx);
+      this.requireRole(ctx, "owner");
+      const id = v.id(wrapId, "wrap id", "wrp");
+      const wrap = this.rows<{ id: string; key_id: string; kind: string }>("SELECT id, key_id, kind FROM key_wraps WHERE id = ?", id)[0];
+      if (wrap === undefined) throw new NotFound();
+      if (wrap.kind === "recovery") {
+        const recoveries = this.rows("SELECT 1 FROM key_wraps WHERE key_id = ? AND kind = 'recovery'", wrap.key_id).length;
+        // M5: the last recovery wrap stays; without it a lost device is lost mail.
+        if (recoveries <= 1) throw new InvalidRequest("the last recovery wrap cannot be removed");
       }
-      this.ctx.storage.sql.exec(
-        "INSERT INTO keys (key_id, public_key, created_at, created_by) VALUES (?, ?, ?, ?)",
-        keyId,
-        publicKey,
-        at,
-        by,
-      );
-      for (const w of wraps) this.insertWrap(w, at, by);
-      this.audit(by, "key-enrolled", { keyId, wraps: wraps.map((w) => `${w.id}:${w.kind}`).join(",") });
-    });
-    return { keyId };
-  }
-
-  async addWrap(ctx: CallContext, wrap: unknown): Promise<void> {
-    await this.enter(ctx);
-    this.requireRole(ctx, "owner");
-    const w = parseWrap(wrap, "wrap");
-    const key = this.activeKey();
-    if (key === null || w.keyId !== key.keyId) throw new InvalidRequest("a wrap must name the mailbox's key");
-    if (this.rows("SELECT 1 FROM key_wraps WHERE id = ?", w.id).length > 0) throw new InvalidRequest("that wrap id exists");
-    this.ctx.storage.transactionSync(() => {
-      this.insertWrap(w, this.now(), ctx.actor.accountId);
-      this.audit(ctx.actor.accountId, "wrap-added", { wrap: w.id, kind: w.kind });
-    });
-  }
-
-  async removeWrap(ctx: CallContext, wrapId: unknown): Promise<void> {
-    await this.enter(ctx);
-    this.requireRole(ctx, "owner");
-    const id = v.id(wrapId, "wrap id", "wrp");
-    const wrap = this.rows<{ id: string; key_id: string; kind: string }>("SELECT id, key_id, kind FROM key_wraps WHERE id = ?", id)[0];
-    if (wrap === undefined) throw new NotFound();
-    if (wrap.kind === "recovery") {
-      const recoveries = this.rows("SELECT 1 FROM key_wraps WHERE key_id = ? AND kind = 'recovery'", wrap.key_id).length;
-      // M5: the last recovery wrap stays; without it a lost device is lost mail.
-      if (recoveries <= 1) throw new InvalidRequest("the last recovery wrap cannot be removed");
-    }
-    this.ctx.storage.transactionSync(() => {
-      this.ctx.storage.sql.exec("DELETE FROM key_wraps WHERE id = ?", id);
-      this.audit(ctx.actor.accountId, "wrap-removed", { wrap: id, kind: wrap.kind });
+      this.ctx.storage.transactionSync(() => {
+        this.ctx.storage.sql.exec("DELETE FROM key_wraps WHERE id = ?", id);
+        this.audit(ctx.actor.accountId, "wrap-removed", { wrap: id, kind: wrap.kind });
+      });
+      return null;
     });
   }
 
   // ---- policy and audit ----------------------------------------------------------
 
-  async setPolicy(ctx: CallContext, patch: unknown): Promise<PolicyView & { displayName: string }> {
-    await this.enter(ctx);
-    this.requireRole(ctx, "owner");
-    const p = v.object(patch, "policy", ["displayName", "assistant"]);
-    const assistant = v.optional(p.assistant, (a) => v.oneOf(a, "assistant", ["off", "on"] as const));
-    // Spec §6 and decision D1: v1 builds only the safe default.
-    if (assistant === "on") throw new AssistantUnavailable();
-    const displayName = v.optional(p.displayName, (d) => v.text(d, "display name", { max: 100, singleLine: true }));
-    const fields = [...(displayName === undefined ? [] : ["displayName"]), ...(assistant === undefined ? [] : ["assistant"])];
-    if (fields.length === 0) throw new InvalidRequest("nothing to update");
-    this.ctx.storage.transactionSync(() => {
-      if (displayName !== undefined) this.ctx.storage.sql.exec("UPDATE identity SET display_name = ?", displayName);
-      this.ctx.storage.sql.exec("UPDATE policy SET updated_at = ?, updated_by = ?", this.now(), ctx.actor.accountId);
-      this.audit(ctx.actor.accountId, "policy-changed", { fields: fields.join(",") });
+  async setPolicy(ctx: CallContext, patch: unknown): Promise<MailResult<PolicyView & { displayName: string }>> {
+    return this.answer("setPolicy", async () => {
+      await this.enter(ctx);
+      this.requireRole(ctx, "owner");
+      const p = v.object(patch, "policy", ["displayName", "assistant"]);
+      const assistant = v.optional(p.assistant, (a) => v.oneOf(a, "assistant", ["off", "on"] as const));
+      // Spec §6 and decision D1: v1 builds only the safe default.
+      if (assistant === "on") throw new AssistantUnavailable();
+      const displayName = v.optional(p.displayName, (d) => v.text(d, "display name", { max: 100, singleLine: true }));
+      const fields = [...(displayName === undefined ? [] : ["displayName"]), ...(assistant === undefined ? [] : ["assistant"])];
+      if (fields.length === 0) throw new InvalidRequest("nothing to update");
+      this.ctx.storage.transactionSync(() => {
+        if (displayName !== undefined) this.ctx.storage.sql.exec("UPDATE identity SET display_name = ?", displayName);
+        this.ctx.storage.sql.exec("UPDATE policy SET updated_at = ?, updated_by = ?", this.now(), ctx.actor.accountId);
+        this.audit(ctx.actor.accountId, "policy-changed", { fields: fields.join(",") });
+      });
+      return { ...this.policyView(), displayName: this.identityRow()!.display_name };
     });
-    return { ...this.policyView(), displayName: this.identityRow()!.display_name };
   }
 
-  async readAudit(ctx: CallContext, query: unknown): Promise<AuditEntry[]> {
-    await this.enter(ctx);
-    this.requireRole(ctx, "owner");
-    const q = v.object(query ?? {}, "audit query", ["before"]);
-    const before = v.optional(q.before, (b) => v.integer(b, "before", 1, Number.MAX_SAFE_INTEGER));
-    const rows = this.rows<{ id: number; at: string; actor: string; action: string; detail: string }>(
-      `SELECT id, at, actor, action, detail FROM audit ${before === undefined ? "" : "WHERE id < ?"} ORDER BY id DESC LIMIT 100`,
-      ...(before === undefined ? [] : [before]),
-    );
-    return rows.map((r) => ({ id: r.id, at: r.at, actor: r.actor, action: r.action, detail: JSON.parse(r.detail) as AuditEntry["detail"] }));
+  async readAudit(ctx: CallContext, query: unknown): Promise<MailResult<AuditEntry[]>> {
+    return this.answer("readAudit", async () => {
+      await this.enter(ctx);
+      this.requireRole(ctx, "owner");
+      const q = v.object(query ?? {}, "audit query", ["before"]);
+      const before = v.optional(q.before, (b) => v.integer(b, "before", 1, Number.MAX_SAFE_INTEGER));
+      const rows = this.rows<{ id: number; at: string; actor: string; action: string; detail: string }>(
+        `SELECT id, at, actor, action, detail FROM audit ${before === undefined ? "" : "WHERE id < ?"} ORDER BY id DESC LIMIT 100`,
+        ...(before === undefined ? [] : [before]),
+      );
+      return rows.map((r) => ({ id: r.id, at: r.at, actor: r.actor, action: r.action, detail: JSON.parse(r.detail) as AuditEntry["detail"] }));
+    });
   }
 
   // ---- sending (M6, M7) -----------------------------------------------------------
 
-  async send(ctx: CallContext, request: unknown): Promise<SendResult> {
-    await this.enter(ctx);
-    this.requireRole(ctx, "send");
-    if (ctx.mailbox.status !== "active") throw new MailboxNotActive();
-    const req = parseSendRequest(request);
-    const key = this.activeKey();
-    if (key === null) throw new MailboxNotActive();
-    const identity = this.identityRow()!;
-    const now = this.ports.clock.now();
+  async send(ctx: CallContext, request: unknown): Promise<MailResult<SendResult>> {
+    return this.answer("send", async () => {
+      await this.enter(ctx);
+      this.requireRole(ctx, "send");
+      if (ctx.mailbox.status !== "active") throw new MailboxNotActive();
+      const req = parseSendRequest(request);
+      const key = this.activeKey();
+      if (key === null) throw new MailboxNotActive();
+      const identity = this.identityRow()!;
+      const now = this.ports.clock.now();
 
-    // M7, idempotency: a repeated key returns the first result and sends nothing.
-    const previous = this.rows<SendRow>("SELECT * FROM sends WHERE idempotency_key = ?", req.idempotencyKey)[0];
-    if (previous?.provider_message_id) {
-      return { messageId: previous.message_id, providerMessageId: previous.provider_message_id };
-    }
-    if (previous !== undefined) {
-      // Running right now (ask again shortly), or its outcome is unknown: SES
-      // may have accepted it, so it is NEVER sent again under this key.
-      throw new SendFailed(this.sendsInFlight.has(req.idempotencyKey));
-    }
+      // M7, idempotency: a repeated key returns the first result and sends nothing.
+      const previous = this.rows<SendRow>("SELECT * FROM sends WHERE idempotency_key = ?", req.idempotencyKey)[0];
+      if (previous?.provider_message_id) {
+        return { messageId: previous.message_id, providerMessageId: previous.provider_message_id };
+      }
+      if (previous !== undefined) {
+        // Running right now (ask again shortly), or its outcome is unknown: SES
+        // may have accepted it, so it is NEVER sent again under this key.
+        throw new SendFailed(this.sendsInFlight.has(req.idempotencyKey));
+      }
 
-    // M7, rate: counted over sends made or in flight.
-    this.checkRate(now);
-    const configurationSet = ctx.mailbox.sesConfigurationSet;
-    if (configurationSet === null) {
-      logAlert("mailbox-without-configuration-set", { mailbox: this.name });
-      throw new SendFailed(false);
-    }
+      // M7, rate: counted over sends made or in flight.
+      this.checkRate(now);
+      const configurationSet = ctx.mailbox.sesConfigurationSet;
+      if (configurationSet === null) {
+        logAlert("mailbox-without-configuration-set", { mailbox: this.name });
+        throw new SendFailed(false);
+      }
 
-    // Reserve the key before the first await, so a concurrent repeat sees it.
-    this.ctx.storage.sql.exec("INSERT INTO sends (idempotency_key, created_at) VALUES (?, ?)", req.idempotencyKey, now.toISOString());
-    const release = () => this.ctx.storage.sql.exec("DELETE FROM sends WHERE idempotency_key = ?", req.idempotencyKey);
-    this.sendsInFlight.add(req.idempotencyKey);
-    try {
-      return await this.sendReserved(ctx, req, key, identity, now, configurationSet, release);
-    } finally {
-      this.sendsInFlight.delete(req.idempotencyKey);
-    }
+      // Reserve the key before the first await, so a concurrent repeat sees it.
+      this.ctx.storage.sql.exec("INSERT INTO sends (idempotency_key, created_at) VALUES (?, ?)", req.idempotencyKey, now.toISOString());
+      const release = () => this.ctx.storage.sql.exec("DELETE FROM sends WHERE idempotency_key = ?", req.idempotencyKey);
+      this.sendsInFlight.add(req.idempotencyKey);
+      try {
+        return await this.sendReserved(ctx, req, key, identity, now, configurationSet, release);
+      } finally {
+        this.sendsInFlight.delete(req.idempotencyKey);
+      }
+    });
   }
 
   private async sendReserved(
@@ -718,35 +769,56 @@ export class Mailbox extends Agent<Env> {
   // ---- operator (MailAdmin) -----------------------------------------------------------
 
   /** M10: the delivery mode and forward target change only here, and every change is audited. */
-  async setDelivery(entry: DirectoryEntry, operator: string, input: unknown): Promise<PolicyView> {
-    await this.ensureIdentity(entry, operator);
-    const i = v.object(input, "delivery", ["delivery", "forwardTo"]);
-    const delivery = v.oneOf(i.delivery, "delivery", ["store", "store-and-forward"] as const);
-    const forwardTo =
-      delivery === "store-and-forward" ? v.address(i.forwardTo, "forward target").toLowerCase() : i.forwardTo === undefined || i.forwardTo === null ? null : invalidForward();
-    this.ctx.storage.transactionSync(() => {
-      this.ctx.storage.sql.exec(
-        "UPDATE policy SET delivery = ?, forward_to = ?, updated_at = ?, updated_by = ?",
-        delivery,
-        forwardTo,
-        this.now(),
-        operator,
-      );
-      this.audit(operator, "delivery-changed", { delivery, forwardTo });
+  async setDelivery(entry: DirectoryEntry, operator: string, input: unknown): Promise<MailResult<PolicyView>> {
+    return this.answer("setDelivery", async () => {
+      await this.ensureIdentity(entry, operator);
+      const i = v.object(input, "delivery", ["delivery", "forwardTo"]);
+      const delivery = v.oneOf(i.delivery, "delivery", ["store", "store-and-forward"] as const);
+      const forwardTo =
+        delivery === "store-and-forward" ? v.address(i.forwardTo, "forward target").toLowerCase() : i.forwardTo === undefined || i.forwardTo === null ? null : invalidForward();
+      this.ctx.storage.transactionSync(() => {
+        this.ctx.storage.sql.exec(
+          "UPDATE policy SET delivery = ?, forward_to = ?, updated_at = ?, updated_by = ?",
+          delivery,
+          forwardTo,
+          this.now(),
+          operator,
+        );
+        this.audit(operator, "delivery-changed", { delivery, forwardTo });
+      });
+      return this.policyView();
     });
-    return this.policyView();
   }
 
-  async recordOperatorAction(entry: DirectoryEntry, operator: string, action: "mailbox-suspended" | "mailbox-resumed"): Promise<void> {
-    await this.ensureIdentity(entry, operator);
-    this.audit(operator, action, {});
+  async recordOperatorAction(entry: DirectoryEntry, operator: string, action: "mailbox-suspended" | "mailbox-resumed"): Promise<MailResult<null>> {
+    return this.answer("recordOperatorAction", async () => {
+      await this.ensureIdentity(entry, operator);
+      this.audit(operator, action, {});
+      return null;
+    });
   }
 
-  // ---- housekeeping (M9) ---------------------------------------------------------------
+  // ---- housekeeping (M9, tasks.md S2k) --------------------------------------------------
 
-  /** Deletes every message that has been in Trash for 30 days: the R2 object, then the row. Scheduled daily. */
-  async purgeExpiredTrash(): Promise<number> {
-    const cutoff = new Date(this.ports.clock.now().getTime() - TRASH_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  /**
+   * The daily alarm (HOUSEKEEPING_CRON): empties Trash of messages 30 days in
+   * it (M9), then deletes `sends` rows more than 30 days old and audit rows
+   * more than a year old. A row exactly at its limit stays. Not reached over
+   * RPC by MailService; a failure throws into the Agents SDK's scheduler
+   * (agents 0.24.0), which retries the job and runs the cron again next day.
+   */
+  async dailyHousekeeping(): Promise<{ trash: number; sends: number; audit: number }> {
+    const trash = await this.purgeExpiredTrash();
+    const now = this.ports.clock.now().getTime();
+    const sends = this.deleteOlderThan("sends", "created_at", new Date(now - SENDS_KEPT_DAYS * DAY_MS));
+    const audit = this.deleteOlderThan("audit", "at", new Date(now - AUDIT_KEPT_DAYS * DAY_MS));
+    logEvent("housekeeping", { mailbox: this.safeName(), trash, sends, audit });
+    return { trash, sends, audit };
+  }
+
+  /** Deletes every message that has been in Trash for 30 days: the R2 object, then the row. */
+  private async purgeExpiredTrash(): Promise<number> {
+    const cutoff = new Date(this.ports.clock.now().getTime() - TRASH_DAYS * DAY_MS).toISOString();
     const expired = this.rows<MessageRow>(
       "SELECT * FROM messages WHERE folder_id = ? AND trashed_at IS NOT NULL AND trashed_at <= ?",
       Folders.TRASH,
@@ -754,11 +826,33 @@ export class Mailbox extends Agent<Env> {
     );
     for (const row of expired) await this.deleteMessage(row);
     if (expired.length > 0) this.audit("system:housekeeping", "trash-emptied", { count: expired.length });
-    logEvent("trash-purge", { mailbox: this.safeName(), count: expired.length });
     return expired.length;
   }
 
+  /** Rows whose ISO timestamp is before `cutoff`; the table and column are this file's constants, never input. */
+  private deleteOlderThan(table: "sends" | "audit", column: "created_at" | "at", cutoff: Date): number {
+    return this.rows(`DELETE FROM ${table} WHERE ${column} < ? RETURNING 1`, cutoff.toISOString()).length;
+  }
+
   // ---- internals ------------------------------------------------------------------------
+
+  /**
+   * The RPC boundary (contracts/mail-service-v1.md). A Refusal becomes a value;
+   * anything else is a failure nobody expected: logged here by its name only
+   * (a library's message may carry content) and answered as InternalError,
+   * which MailService raises to the operator with the capability's jti.
+   * Nothing is thrown across the hop, so workerd never logs an uncaught
+   * exception for an answer.
+   */
+  private async answer<T>(method: string, run: () => Promise<T>): Promise<MailResult<T>> {
+    try {
+      return ok(await run());
+    } catch (err) {
+      if (err instanceof Refusal) return refused(err.error);
+      console.error(JSON.stringify({ event: "mailbox-error", mailbox: this.safeName(), method, error: errorName(err) }));
+      return { ok: false, error: internalError() };
+    }
+  }
 
   private async enter(ctx: CallContext): Promise<void> {
     await this.ensureIdentity(ctx.mailbox, ctx.actor.accountId);
@@ -790,7 +884,7 @@ export class Mailbox extends Agent<Env> {
       this.ctx.storage.sql.exec("INSERT INTO policy (only, updated_at, updated_by) VALUES (1, ?, ?)", at, actor);
       this.audit(actor, "mailbox-initialized", {});
     });
-    await this.schedule(PURGE_CRON, "purgeExpiredTrash");
+    await this.schedule(HOUSEKEEPING_CRON, "dailyHousekeeping");
   }
 
   private requireRole(ctx: CallContext, need: "open" | "send" | "owner"): void {

@@ -14,9 +14,9 @@ import {
   passkeyWrap,
   provisionMailbox,
   recoveryWrap,
-  rejectionOf,
   type TestMailbox,
 } from "./support/mailbox";
+import { refusalOf, valueOf } from "./support/results";
 import {
   byteString,
   captureDiagnostics,
@@ -146,21 +146,22 @@ describe("M1: no plaintext at rest, and none in a log", () => {
     expect(mb.ports.sealer.sealed[0]!.header.subject).toBe(m.subject);
     expect(mb.ports.sealer.sealed[0]!.header.attachments[0]!.filename).toBe(m.attachment);
 
-    await mail().send(await capFor(mb), {
+    const sent = await mail().send(await capFor(mb), {
       idempotencyKey: "m1-send",
       to: [{ name: m.sentRecipientName, address: m.sentRecipientAddress }],
       subject: m.sentSubject,
       text: `Dear ${m.sentRecipientName}, ${m.sentBody}`,
       attachments: [{ filename: m.sentAttachment, mimeType: "application/pdf", content: utf8(`%PDF ${m.sentBody}`) }],
     });
+    expect(sent.ok).toBe(true);
     expect(mb.ports.mailer.sent[0]!.recipients).toEqual([m.sentRecipientAddress]);
 
     // Reading paths log too: exercise them before scanning.
     const cap = await capFor(mb);
-    const { items } = await mail().list(cap, { folder: "inbox" });
-    await new Response(await mail().body(await capFor(mb), items[0]!.id)).arrayBuffer();
-    await mail().mailbox(await capFor(mb));
-    await mail().audit(await capFor(mb), {});
+    const { items } = valueOf(await mail().list(cap, { folder: "inbox" }));
+    await new Response(valueOf(await mail().body(await capFor(mb), items[0]!.id))).arrayBuffer();
+    valueOf(await mail().mailbox(await capFor(mb)));
+    valueOf(await mail().audit(await capFor(mb), {}));
 
     const haystacks = await everything(mb, captured, diagnostics.messages);
     expect(haystacks.some((h) => h.where.startsWith("mailbox sqlite messages"))).toBe(true);
@@ -182,19 +183,21 @@ describe("M3: the server holds no private key while the assistant is off", () =>
   it("after enrolment, arrivals and a send, no table, object or log holds the private key in any form", async () => {
     const mb = await provisionMailbox({ status: "provisioned" });
     const key = await newKeyPair();
-    await mail().enroll(await capFor(mb), {
-      publicKey: base64urlFromBytes(key.publicKey),
-      wraps: [recoveryWrap(key.keyId), passkeyWrap(key.keyId)],
-    });
+    valueOf(
+      await mail().enroll(await capFor(mb), {
+        publicKey: base64urlFromBytes(key.publicKey),
+        wraps: [recoveryWrap(key.keyId), passkeyWrap(key.keyId)],
+      }),
+    );
     const m = markers();
     await worker.email!(incomingEmail(markedMessage(m, mb.address), { to: mb.address }).message, env, createExecutionContext());
-    await mail().send(await capFor(mb), { idempotencyKey: "m3", to: [{ address: "a@example.com" }], subject: "s", text: "t" });
+    valueOf(await mail().send(await capFor(mb), { idempotencyKey: "m3", to: [{ address: "a@example.com" }], subject: "s", text: "t" }));
 
     const haystacks = await everything(mb, captured, diagnostics.messages);
     expect(search(haystacks, { privateBytes: key.privateKey })).toEqual([]);
     // The public key IS stored, as it must be; the scan would see it.
     expect(search(haystacks, { publicKey: key.publicKey }).length).toBeGreaterThan(0);
-    expect((await mail().mailbox(await capFor(mb))).policy.assistant).toBe("off");
+    expect(valueOf(await mail().mailbox(await capFor(mb))).policy.assistant).toBe("off");
   });
 
   it("no method accepts a private key, under any field name", async () => {
@@ -202,7 +205,7 @@ describe("M3: the server holds no private key while the assistant is off", () =>
     const priv = base64urlFromBytes((await newKeyPair()).privateKey);
     const fresh = await provisionMailbox({ status: "provisioned" });
     const k = await newKeyPair();
-    const calls: [string, () => Promise<unknown>][] = [
+    const calls: [string, () => Promise<Parameters<typeof refusalOf>[0]>][] = [
       ["enroll", async () => mail().enroll(await capFor(fresh), { publicKey: base64urlFromBytes(k.publicKey), wraps: [recoveryWrap(k.keyId)], privateKey: priv })],
       ["enroll wrap", async () => mail().enroll(await capFor(fresh), { publicKey: base64urlFromBytes(k.publicKey), wraps: [recoveryWrap(k.keyId, { privateKey: priv })] })],
       ["addWrap", async () => mail().addWrap(await capFor(mb), passkeyWrap(mb.key!.keyId, { privateKey: priv }))],
@@ -213,9 +216,8 @@ describe("M3: the server holds no private key while the assistant is off", () =>
       ["list", async () => mail().list(await capFor(mb), { folder: "inbox", privateKey: priv })],
     ];
     for (const [name, call] of calls) {
-      const err = await rejectionOf(call());
-      expect([name, err.name]).toEqual([name, "InvalidRequest"]);
+      expect([name, refusalOf(await call()).name]).toEqual([name, "InvalidRequest"]);
     }
-    expect((await mail().mailbox(await capFor(fresh))).keys).toEqual([]);
+    expect(valueOf(await mail().mailbox(await capFor(fresh))).keys).toEqual([]);
   });
 });

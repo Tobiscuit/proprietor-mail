@@ -6,7 +6,9 @@ import worker from "../src/index";
 import type { Mailbox } from "../src/mailbox/mailbox";
 import { type CapturedConsole, captureConsole } from "./support/console";
 import { crlf, incomingEmail, sampleMessage } from "./support/email";
-import { provisionMailbox, rejectionOf, type TestMailbox } from "./support/mailbox";
+import { expectEmailThrow } from "./support/escapes";
+import { provisionMailbox, type TestMailbox } from "./support/mailbox";
+import { valueOf } from "./support/results";
 
 // plan.md §5, "Arrival, step by step, and what each failure does": one test per row.
 
@@ -26,7 +28,7 @@ async function stored(mb: TestMailbox) {
 
 async function setDelivery(mb: TestMailbox, delivery: "store" | "store-and-forward", forwardTo?: string) {
   const entry = (await new Directory(env.DIRECTORY).byId(mb.id))!;
-  await mb.stub.setDelivery(entry, "operator:test", forwardTo === undefined ? { delivery } : { delivery, forwardTo });
+  valueOf(await mb.stub.setDelivery(entry, "operator:test", forwardTo === undefined ? { delivery } : { delivery, forwardTo }));
 }
 
 /** Makes the live Mailbox's R2 binding fail on put, the way an R2 outage would. */
@@ -91,31 +93,52 @@ describe("arrival: the plan.md §5 table", () => {
     expect((await stored(mb)).rows).toHaveLength(1);
   });
 
-  it("row 5: store mode, R2 fails → throws, and nothing is stored", async () => {
+  it("row 5: store mode, R2 fails → throws, and nothing is stored", async ({ task }) => {
     const mb = await provisionMailbox();
     await breakR2(mb);
     const email = incomingEmail(sampleMessage({ to: mb.address }), { to: mb.address });
-    const err = await rejectionOf(deliver(email.message));
+    const err = await expectEmailThrow(
+      task,
+      { reason: "store mode, the R2 put fails: email() throws so the message is not counted as delivered", error: "Error: R2 is unavailable", lines: 1 },
+      deliver(email.message),
+    );
     expect(err.message).toMatch(/R2 is unavailable/);
     expect(await stored(mb)).toEqual({ rows: [], objects: [] });
   });
 
-  it("row 5: store mode, the SQLite insert fails → throws, and the R2 object just written is deleted", async () => {
+  it("row 5: store mode, the SQLite insert fails → throws, and the R2 object just written is deleted", async ({ task }) => {
     const mb = await provisionMailbox();
     // A sealed message the table refuses (key_envelope NOT NULL).
     const realSeal = mb.ports.sealer.seal.bind(mb.ports.sealer);
     mb.ports.sealer.seal = async (...args) => ({ ...(await realSeal(...args)), keyEnvelope: null as unknown as string });
     const email = incomingEmail(sampleMessage({ to: mb.address }), { to: mb.address });
-    const err = await rejectionOf(deliver(email.message));
+    const err = await expectEmailThrow(
+      task,
+      {
+        reason: "store mode, the SQLite insert fails: email() throws so the message is not counted as delivered",
+        error: "NOT NULL constraint failed: messages.key_envelope",
+        lines: 1,
+      },
+      deliver(email.message),
+    );
     expect(err.message).toMatch(/NOT NULL/);
     expect(await stored(mb)).toEqual({ rows: [], objects: [] });
   });
 
-  it("row 6: store-and-forward, the forward fails → throws before storing anything", async () => {
+  it("row 6: store-and-forward, the forward fails → throws before storing anything", async ({ task }) => {
     const mb = await provisionMailbox();
     await setDelivery(mb, "store-and-forward", "owner@gmail.test");
     const email = incomingEmail(sampleMessage({ to: mb.address }), { to: mb.address, forwardFails: true }, mb.ports.trace);
-    await rejectionOf(deliver(email.message));
+    // Two lines: the SDK's EmailBridge.forward rejects, then the Mailbox's _onEmail.
+    await expectEmailThrow(
+      task,
+      {
+        reason: "store-and-forward, the forward fails: email() throws before storing anything, so the sender's server retries",
+        error: "Error: destination address is not verified",
+        lines: 2,
+      },
+      deliver(email.message),
+    );
     expect(mb.ports.trace).toEqual(["forward"]);
     expect(await stored(mb)).toEqual({ rows: [], objects: [] });
   });

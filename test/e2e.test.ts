@@ -10,8 +10,10 @@ import type { MailboxPorts } from "../src/ports";
 import { productionPorts } from "../src/wiring";
 import { base64urlFromBytes, bytesFromBase64url } from "./support/capability-tokens";
 import { crlf, incomingEmail, sampleMessage } from "./support/email";
+import { expectEmailThrow } from "./support/escapes";
 import { fakePorts } from "./support/fakes";
-import { capFor, injectPorts, provisionMailbox, rejectionOf, type TestMailbox } from "./support/mailbox";
+import { capFor, injectPorts, provisionMailbox, type TestMailbox } from "./support/mailbox";
+import { valueOf } from "./support/results";
 
 // tasks.md S2j: the REAL packages behind the ports. Each block runs once the
 // package it needs says IMPLEMENTED (slices S1 and S3), and skips until then.
@@ -40,10 +42,12 @@ async function enrolledWithRealKey(ports: MailboxPorts) {
     kind: "recovery",
     secret: recovery.secret, // pragma: allowlist secret (S1's parameter name; a fresh test recovery key)
   });
-  const enrolled = await mail().enroll(await capFor(mb), {
-    publicKey: base64urlFromBytes(publicKey.publicKey),
-    wraps: [{ ...wrap, label: "Recovery key" }],
-  });
+  const enrolled = valueOf(
+    await mail().enroll(await capFor(mb), {
+      publicKey: base64urlFromBytes(publicKey.publicKey),
+      wraps: [{ ...wrap, label: "Recovery key" }],
+    }),
+  );
   return { mb, publicKey, privateKey, recovery, enrolled };
 }
 
@@ -54,7 +58,7 @@ async function deliver(mb: TestMailbox, raw: Uint8Array): Promise<void> {
 }
 
 async function sealedBody(mb: TestMailbox, messageId: string): Promise<Uint8Array> {
-  return new Uint8Array(await new Response(await mail().body(await capFor(mb), messageId)).arrayBuffer());
+  return new Uint8Array(await new Response(valueOf(await mail().body(await capFor(mb), messageId))).arrayBuffer());
 }
 
 describe.skipIf(!CRYPTO)("with the real @platform-mail/crypto (S1)", () => {
@@ -63,7 +67,7 @@ describe.skipIf(!CRYPTO)("with the real @platform-mail/crypto (S1)", () => {
     const raw = sampleMessage({ to: mb.address, subject: "Kitchen remodel — Zürich", body: "Hola, ¿cuánto cuesta?" });
     await deliver(mb, raw);
 
-    const [item] = (await mail().list(await capFor(mb), { folder: "inbox" })).items;
+    const [item] = valueOf(await mail().list(await capFor(mb), { folder: "inbox" })).items;
     const ids = { mailboxId: mb.id, messageId: item!.id };
     const opened = await mailCrypto.openBody(privateKey, ids, { keyEnvelope: item!.keyEnvelope, body: await sealedBody(mb, item!.id) });
     expect(opened).toEqual(raw);
@@ -75,7 +79,7 @@ describe.skipIf(!CRYPTO)("with the real @platform-mail/crypto (S1)", () => {
   it("recomputes the same keyId S1 computes, and the stored wrap unlocks to the advertised key (G7)", async () => {
     const { mb, publicKey, recovery, enrolled } = await enrolledWithRealKey(realCryptoPorts());
     expect(enrolled.keyId).toBe(publicKey.keyId);
-    const view = await mail().mailbox(await capFor(mb));
+    const view = valueOf(await mail().mailbox(await capFor(mb)));
     expect(view.keys[0]!.publicKey).toBe(base64urlFromBytes(publicKey.publicKey));
     const wrap = view.wraps[0]!;
     const unlocked = await mailCrypto.unwrapPrivateKey(
@@ -90,7 +94,7 @@ describe.skipIf(!CRYPTO)("with the real @platform-mail/crypto (S1)", () => {
     const many = Array.from({ length: 3000 }, (_, i) => `u${i}@example-${"d".repeat(20)}.com`).join(", ");
     const raw = crlf([`To: ${many}`, "Subject: party", "", "you are all invited"]);
     await deliver(mb, raw);
-    const [item] = (await mail().list(await capFor(mb), { folder: "inbox" })).items;
+    const [item] = valueOf(await mail().list(await capFor(mb), { folder: "inbox" })).items;
     const ids = { mailboxId: mb.id, messageId: item!.id };
     expect(await mailCrypto.openHeader(privateKey, ids, item!)).toMatchObject({ subject: "party", to: [] });
     expect(await mailCrypto.openBody(privateKey, ids, { keyEnvelope: item!.keyEnvelope, body: await sealedBody(mb, item!.id) })).toEqual(raw);
@@ -101,8 +105,8 @@ describe.skipIf(!CRYPTO || !OUTBOUND)("with the real @platform-mail/outbound (S3
   it("sends real MIME (to a fake SES) and the Sent copy opens to exactly the bytes SES was handed", async () => {
     const ports = { ...realCryptoPorts(), mime: productionPorts(env).mime };
     const { mb, privateKey } = await enrolledWithRealKey(ports);
-    await mail().setPolicy(await capFor(mb), { displayName: "Operator" });
-    const result = await mail().send(await capFor(mb), {
+    valueOf(await mail().setPolicy(await capFor(mb), { displayName: "Operator" }));
+    const sent = await mail().send(await capFor(mb), {
       idempotencyKey: "e2e-send",
       to: [{ name: "Ana Ruiz", address: "ana@example.com" }],
       bcc: [{ address: "archive@example.net" }],
@@ -110,6 +114,7 @@ describe.skipIf(!CRYPTO || !OUTBOUND)("with the real @platform-mail/outbound (S3
       text: "Hi Ana,\n\nthe quote is attached.",
       attachments: [{ filename: "quote.pdf", mimeType: "application/pdf", content: new TextEncoder().encode("%PDF-1.4 test") }],
     });
+    const result = valueOf(sent);
     const handed = (ports as unknown as { mailer: { sent: outbound.RawSendRequest[] } }).mailer.sent[0]!;
     expect(handed.fromAddress).toBe(mb.address);
     expect(handed.recipients.sort()).toEqual(["ana@example.com", "archive@example.net"]);
@@ -120,7 +125,7 @@ describe.skipIf(!CRYPTO || !OUTBOUND)("with the real @platform-mail/outbound (S3
     expect(new TextDecoder().decode(handed.raw)).not.toMatch(/^bcc:/im);
 
     const ids = { mailboxId: mb.id, messageId: result.messageId! };
-    const [item] = (await mail().list(await capFor(mb), { folder: "sent" })).items;
+    const [item] = valueOf(await mail().list(await capFor(mb), { folder: "sent" })).items;
     expect(await mailCrypto.openBody(privateKey, ids, { keyEnvelope: item!.keyEnvelope, body: await sealedBody(mb, item!.id) })).toEqual(handed.raw);
     const header = await mailCrypto.openHeader(privateKey, ids, item!);
     expect(header).toMatchObject({ direction: "out", messageId: `${result.providerMessageId}@email.amazonses.com`, bcc: [{ name: "", address: "archive@example.net" }] });
@@ -142,7 +147,9 @@ describe.skipIf(!CRYPTO || !OUTBOUND)("with the real @platform-mail/outbound (S3
         SES_SECRET_ACCESS_KEY: "test-secret-never-sent-anywhere", // pragma: allowlist secret
       };
       await injectPorts(mb.stub, { ...fakePorts(), mime: productionPorts(env).mime, mailer: productionPorts(testEnv).mailer });
-      const result = await mail().send(await capFor(mb), { idempotencyKey: "wiring", to: [{ address: "success@simulator.amazonses.com" }], subject: "s", text: "t" });
+      const result = valueOf(
+        await mail().send(await capFor(mb), { idempotencyKey: "wiring", to: [{ address: "success@simulator.amazonses.com" }], subject: "s", text: "t" }),
+      );
       expect(result.providerMessageId).toBe("0100018e-test");
     } finally {
       globalThis.fetch = realFetch;
@@ -154,25 +161,33 @@ describe.skipIf(!CRYPTO || !OUTBOUND)("with the real @platform-mail/outbound (S3
 });
 
 describe.skipIf(CRYPTO)("until S1 lands", () => {
-  it("the production wiring is live: an arrival fails loudly with NotImplemented, never silently", async () => {
+  it("the production wiring is live: an arrival fails loudly with NotImplemented, never silently", async ({ task }) => {
     const mb = await provisionMailbox();
     await runInDurableObject(mb.stub, (instance: Mailbox) => {
       instance.ports = productionPorts(env);
     });
     const email = incomingEmail(sampleMessage({ to: mb.address }), { to: mb.address });
-    const err = await rejectionOf(worker.email!(email.message, env, createExecutionContext()));
+    const err = await expectEmailThrow(
+      task,
+      {
+        reason: "store mode, storing fails (S1's stub cannot make a message id): email() throws so the message is not counted as delivered",
+        error: "NotImplemented: @platform-mail/crypto",
+        lines: 1,
+      },
+      worker.email!(email.message, env, createExecutionContext()),
+    );
     expect(err.name).toBe("NotImplemented");
     expect(email.rejects).toEqual([]);
   });
 });
 
 describe.skipIf(OUTBOUND)("until S3 lands", () => {
-  it("the production wiring is live: a send fails with SendFailed, and nothing is marked sent", async () => {
+  it("the production wiring is live: a send is answered as InternalError, and nothing is marked sent", async () => {
     const mb = await provisionMailbox();
     await injectPorts(mb.stub, { ...fakePorts(), mime: productionPorts(env).mime });
     // buildMime is S3's stub: it throws NotImplemented before anything goes out.
-    const err = await rejectionOf(mail().send(await capFor(mb), { idempotencyKey: "stub", to: [{ address: "a@example.com" }], subject: "s", text: "t" }));
-    expect(err.message).toBe("internal error");
+    const answer = await mail().send(await capFor(mb), { idempotencyKey: "stub", to: [{ address: "a@example.com" }], subject: "s", text: "t" });
+    expect(answer).toEqual({ ok: false, error: { name: "InternalError", message: "internal error" } });
     const sends = await runInDurableObject(mb.stub, (_i, state) => state.storage.sql.exec("SELECT * FROM sends").toArray());
     expect(sends).toEqual([]);
   });

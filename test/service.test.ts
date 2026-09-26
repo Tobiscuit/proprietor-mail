@@ -1,11 +1,10 @@
-import { runInDurableObject } from "cloudflare:test";
+import { createExecutionContext, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import worker from "../src/index";
-import { createExecutionContext } from "cloudflare:test";
+import { base64urlFromBytes } from "./support/capability-tokens";
 import { type CapturedConsole, captureConsole } from "./support/console";
 import { incomingEmail, sampleMessage } from "./support/email";
-import { base64urlFromBytes } from "./support/capability-tokens";
 import { testId } from "./support/ids";
 import {
   capFor,
@@ -16,11 +15,13 @@ import {
   passkeyWrap,
   provisionMailbox,
   recoveryWrap,
-  rejectionOf,
   type TestMailbox,
 } from "./support/mailbox";
+import { refusalOf, valueOf } from "./support/results";
 
 const mail = () => exports.MailService;
+
+const NOT_FOUND = { ok: false, error: { name: "NotFound", message: "not found" } };
 
 async function arrive(mb: TestMailbox, n = 1): Promise<void> {
   for (let i = 0; i < n; i++) {
@@ -28,6 +29,28 @@ async function arrive(mb: TestMailbox, n = 1): Promise<void> {
     await worker.email!(email.message, env, createExecutionContext());
     mb.ports.clock.advance(1000);
   }
+}
+
+/** Every MailService method, called with the given capability and a harmless argument. */
+function everyMethod(cap: string): [string, () => Promise<unknown>][] {
+  return [
+    ["mailboxes", () => mail().mailboxes(cap)],
+    ["mailbox", () => mail().mailbox(cap)],
+    ["enroll", () => mail().enroll(cap, {})],
+    ["addWrap", () => mail().addWrap(cap, {})],
+    ["removeWrap", () => mail().removeWrap(cap, testId("wrp"))],
+    ["list", () => mail().list(cap, { folder: "inbox" })],
+    ["body", () => mail().body(cap, testId("msg"))],
+    ["update", () => mail().update(cap, testId("msg"), { seen: true })],
+    ["purge", () => mail().purge(cap, testId("msg"))],
+    ["drafts", () => mail().drafts(cap)],
+    ["saveDraft", () => mail().saveDraft(cap, {})],
+    ["deleteDraft", () => mail().deleteDraft(cap, testId("drf"))],
+    ["send", () => mail().send(cap, {})],
+    ["unread", () => mail().unread(cap)],
+    ["setPolicy", () => mail().setPolicy(cap, {})],
+    ["audit", () => mail().audit(cap, {})],
+  ];
 }
 
 let captured: CapturedConsole;
@@ -38,36 +61,71 @@ beforeEach(() => {
 });
 afterEach(() => captured.restore());
 
-describe("capability checks on every call (contracts/capability-v1.md)", () => {
-  it("refuses a bad token as CapabilityRejected{invalid}, the name and reason crossing RPC", async () => {
-    const mb = await provisionMailbox();
-    const err = await rejectionOf(mail().list("not-a-token", { folder: "inbox" }));
-    expect(err).toBeInstanceOf(Error);
-    expect(err.name).toBe("CapabilityRejected");
-    expect(err.reason).toBe("invalid");
-    void mb;
+describe("answers are values (contracts/mail-service-v1.md)", () => {
+  it("answers a refused capability with a value from every method, never a rejection", async () => {
+    for (const [method, call] of everyMethod("not-a-token")) {
+      const answer = await call();
+      expect([method, answer]).toEqual([
+        method,
+        { ok: false, error: { name: "CapabilityRejected", message: "capability rejected: invalid", reason: "invalid" } },
+      ]);
+    }
   });
 
+  it("answers an unexpected failure as InternalError, and alerts the operator with the jti", async () => {
+    const mb = await provisionMailbox({ status: "provisioned" });
+    mb.ports.sealer.keyIdOf = async () => {
+      throw new TypeError("a bug nobody expected");
+    };
+    const key = await newKeyPair();
+    const answer = await mail().enroll(await capFor(mb, { jti: "trace-jti-internal" }), {
+      publicKey: base64urlFromBytes(key.publicKey),
+      wraps: [recoveryWrap(key.keyId)],
+    });
+    expect(answer).toEqual({ ok: false, error: { name: "InternalError", message: "internal error" } });
+    const alert = logs.map((l) => JSON.parse(l) as Record<string, unknown>).find((l) => l.event === "operator-alert");
+    expect(alert).toEqual({ event: "operator-alert", kind: "mail-service-internal-error", method: "enroll", jti: "trace-jti-internal", mailbox: mb.id, error: null });
+    // The Mailbox names what failed in its own line; nothing from the error's message reaches a log.
+    expect(logs.some((l) => l.includes('"mailbox-error"') && l.includes('"TypeError"'))).toBe(true);
+    expect(logs.some((l) => l.includes("a bug nobody expected"))).toBe(false);
+    expect((await directoryRow(mb.id))?.status).toBe("provisioned");
+  });
+});
+
+describe("capability checks on every call (contracts/capability-v1.md)", () => {
   it("refuses an expired token as CapabilityRejected{expired}", async () => {
     const mb = await provisionMailbox();
     const cap = await mint({ tenant: mb.tenantId, mbx: mb.id, iat: nowSeconds() - 120 });
-    expect(await rejectionOf(mail().list(cap, { folder: "inbox" }))).toMatchObject({ name: "CapabilityRejected", reason: "expired" });
+    expect(refusalOf(await mail().list(cap, { folder: "inbox" }))).toEqual({
+      name: "CapabilityRejected",
+      message: "capability rejected: expired",
+      reason: "expired",
+    });
   });
 
   it("logs the jti, the method and the outcome of every call, and nothing else", async () => {
     const mb = await provisionMailbox();
     await mail().unread(await capFor(mb, { jti: "trace-jti-accepted" }));
     const expired = await mint({ tenant: mb.tenantId, mbx: mb.id, iat: nowSeconds() - 120, jti: "trace-jti-expired" });
-    await rejectionOf(mail().unread(expired));
+    await mail().unread(expired);
+    await mail().unread(await capFor(mb, { role: "editor", jti: "trace-jti-forbidden" }));
     const lines = logs.filter((l) => l.includes('"mail-service"')).map((l) => JSON.parse(l) as Record<string, unknown>);
-    expect(lines).toContainEqual({ event: "mail-service", method: "unread", jti: "trace-jti-accepted", outcome: "accepted", mailbox: mb.id, result: "ok" });
-    expect(lines).toContainEqual({ event: "mail-service", method: "unread", jti: "trace-jti-expired", outcome: "rejected", reason: "expired" });
+    expect(lines).toEqual([
+      { event: "mail-service", method: "unread", jti: "trace-jti-accepted", outcome: "accepted", mailbox: mb.id, result: "ok" },
+      { event: "mail-service", method: "unread", jti: "trace-jti-expired", outcome: "rejected", reason: "expired" },
+      { event: "mail-service", method: "unread", jti: "trace-jti-forbidden", outcome: "accepted", mailbox: mb.id, result: "Forbidden" },
+    ]);
   });
 
   it("asks for a mailbox in the capability for every mailbox method", async () => {
     const mb = await provisionMailbox();
     const noMailbox = await mint({ tenant: mb.tenantId });
-    expect(await rejectionOf(mail().list(noMailbox, { folder: "inbox" }))).toMatchObject({ name: "InvalidRequest" });
+    for (const [method, call] of everyMethod(noMailbox).filter(([m]) => m !== "mailboxes")) {
+      expect([method, await call()]).toEqual([
+        method,
+        { ok: false, error: { name: "InvalidRequest", message: "invalid request: the capability names no mailbox" } },
+      ]);
+    }
   });
 });
 
@@ -75,31 +133,28 @@ describe("M4: a mailbox belongs to one tenant for life", () => {
   it("answers a capability for tenant A naming tenant B's mailbox exactly as it answers a missing mailbox", async () => {
     const a = await provisionMailbox();
     const b = await provisionMailbox();
-    const crossTenant = await mint({ tenant: a.tenantId, mbx: b.id });
-    const missing = await mint({ tenant: a.tenantId, mbx: testId("mbx") });
-    const e1 = await rejectionOf(mail().list(crossTenant, { folder: "inbox" }));
-    const e2 = await rejectionOf(mail().list(missing, { folder: "inbox" }));
-    expect(e1.name).toBe("NotFound");
-    expect({ name: e1.name, message: e1.message, keys: Object.keys(e1).sort() }).toEqual({
-      name: e2.name,
-      message: e2.message,
-      keys: Object.keys(e2).sort(),
-    });
+    const crossTenant = await mail().list(await mint({ tenant: a.tenantId, mbx: b.id }), { folder: "inbox" });
+    const missing = await mail().list(await mint({ tenant: a.tenantId, mbx: testId("mbx") }), { folder: "inbox" });
+    expect(crossTenant).toEqual(NOT_FOUND);
+    expect(crossTenant).toStrictEqual(missing);
     // And B's own mailbox never learned anything: nothing was touched.
     expect((await directoryRow(b.id))?.tenant_id).toBe(b.tenantId);
   });
 
+  it("answers the same NotFound when the Mailbox itself refuses a Directory row that changed tenant", async () => {
+    const mb = await provisionMailbox();
+    await env.DIRECTORY.prepare("UPDATE mailboxes SET tenant_id = 'tnt_moved' WHERE id = ?").bind(mb.id).run();
+    // The Directory now says tnt_moved, and the capability agrees; the Mailbox remembers its first tenant.
+    const moved = await mail().list(await mint({ tenant: "tnt_moved", mbx: mb.id }), { folder: "inbox" });
+    const missing = await mail().list(await mint({ tenant: "tnt_moved", mbx: testId("mbx") }), { folder: "inbox" });
+    expect(moved).toEqual(NOT_FOUND);
+    expect(moved).toStrictEqual(missing);
+  });
+
   it("answers NotFound for a closed mailbox, for every method", async () => {
     const mb = await provisionMailbox({ status: "closed" });
-    const cap = await capFor(mb);
-    for (const call of [
-      () => mail().mailbox(cap),
-      () => mail().list(cap, { folder: "inbox" }),
-      () => mail().unread(cap),
-      () => mail().drafts(cap),
-      () => mail().audit(cap, {}),
-    ]) {
-      expect(await rejectionOf(call())).toMatchObject({ name: "NotFound" });
+    for (const [method, call] of everyMethod(await capFor(mb)).filter(([m]) => m !== "mailboxes")) {
+      expect([method, await call()]).toEqual([method, NOT_FOUND]);
     }
   });
 
@@ -107,7 +162,7 @@ describe("M4: a mailbox belongs to one tenant for life", () => {
     const a = await provisionMailbox({ status: "provisioned" });
     await provisionMailbox();
     const list = await mail().mailboxes(await mint({ tenant: a.tenantId, role: "editor" }));
-    expect(list).toEqual([{ id: a.id, address: a.address, status: "provisioned" }]);
+    expect(list).toEqual({ ok: true, value: [{ id: a.id, address: a.address, status: "provisioned" }] });
   });
 });
 
@@ -123,7 +178,7 @@ describe("roles (D9: only owners open a mailbox by default)", () => {
       () => mail().audit(cap, {}),
       () => mail().send(cap, { idempotencyKey: "k1", to: [{ address: "a@b.test" }], subject: "s", text: "t" }),
     ]) {
-      expect(await rejectionOf(call())).toMatchObject({ name: "Forbidden" });
+      expect(await call()).toEqual({ ok: false, error: { name: "Forbidden", message: "forbidden" } });
     }
   });
 });
@@ -131,7 +186,7 @@ describe("roles (D9: only owners open a mailbox by default)", () => {
 describe("mailbox() and enrolment (M5, M10)", () => {
   it("shows a provisioned mailbox with no keys, and the delivery mode and forward target (M10)", async () => {
     const mb = await provisionMailbox({ status: "provisioned" });
-    const view = await mail().mailbox(await capFor(mb));
+    const view = valueOf(await mail().mailbox(await capFor(mb)));
     expect(view).toMatchObject({ id: mb.id, address: mb.address, status: "provisioned", displayName: "", keys: [], wraps: [] });
     expect(view.policy).toMatchObject({ delivery: "store", forwardTo: null, assistant: "off" });
   });
@@ -141,10 +196,10 @@ describe("mailbox() and enrolment (M5, M10)", () => {
     const key = await newKeyPair();
     const wraps = [recoveryWrap(key.keyId), passkeyWrap(key.keyId)];
     const result = await mail().enroll(await capFor(mb), { publicKey: base64urlFromBytes(key.publicKey), wraps });
-    expect(result).toEqual({ keyId: key.keyId });
+    expect(result).toEqual({ ok: true, value: { keyId: key.keyId } });
     expect(await directoryRow(mb.id)).toMatchObject({ status: "active" });
     expect((await directoryRow(mb.id))?.activated_at).toEqual(expect.any(String));
-    const view = await mail().mailbox(await capFor(mb));
+    const view = valueOf(await mail().mailbox(await capFor(mb)));
     expect(view.status).toBe("active");
     expect(view.keys).toEqual([
       expect.objectContaining({ keyId: key.keyId, publicKey: base64urlFromBytes(key.publicKey), createdBy: "acc_owner", retiredAt: null }),
@@ -157,54 +212,52 @@ describe("mailbox() and enrolment (M5, M10)", () => {
   it("M5: refuses enrolment without a recovery wrap, and the mailbox stays provisioned", async () => {
     const mb = await provisionMailbox({ status: "provisioned" });
     const key = await newKeyPair();
-    const err = await rejectionOf(
-      mail().enroll(await capFor(mb), { publicKey: base64urlFromBytes(key.publicKey), wraps: [passkeyWrap(key.keyId)] }),
-    );
-    expect(err).toMatchObject({ name: "InvalidRequest" });
+    const answer = await mail().enroll(await capFor(mb), { publicKey: base64urlFromBytes(key.publicKey), wraps: [passkeyWrap(key.keyId)] });
+    expect(answer).toEqual({ ok: false, error: { name: "InvalidRequest", message: "invalid request: a recovery wrap is required" } });
     expect((await directoryRow(mb.id))?.status).toBe("provisioned");
-    expect((await mail().mailbox(await capFor(mb))).keys).toEqual([]);
+    expect(valueOf(await mail().mailbox(await capFor(mb))).keys).toEqual([]);
   });
 
   it("recomputes the keyId: a wrap naming another key is refused", async () => {
     const mb = await provisionMailbox({ status: "provisioned" });
     const key = await newKeyPair();
     const other = await newKeyPair();
-    const err = await rejectionOf(
-      mail().enroll(await capFor(mb), { publicKey: base64urlFromBytes(key.publicKey), wraps: [recoveryWrap(other.keyId)] }),
-    );
-    expect(err).toMatchObject({ name: "InvalidRequest" });
+    const answer = await mail().enroll(await capFor(mb), { publicKey: base64urlFromBytes(key.publicKey), wraps: [recoveryWrap(other.keyId)] });
+    expect(refusalOf(answer)).toMatchObject({ name: "InvalidRequest" });
+    expect((await directoryRow(mb.id))?.status).toBe("provisioned");
   });
 
   it("enrols only a provisioned mailbox, and only an owner", async () => {
     const mb = await provisionMailbox();
     const key = await newKeyPair();
     const request = { publicKey: base64urlFromBytes(key.publicKey), wraps: [recoveryWrap(key.keyId)] };
-    expect(await rejectionOf(mail().enroll(await capFor(mb), request))).toMatchObject({ name: "InvalidRequest" });
+    expect(refusalOf(await mail().enroll(await capFor(mb), request))).toMatchObject({ name: "InvalidRequest" });
     const fresh = await provisionMailbox({ status: "provisioned" });
-    expect(await rejectionOf(mail().enroll(await capFor(fresh, { role: "editor" }), request))).toMatchObject({ name: "Forbidden" });
+    expect(refusalOf(await mail().enroll(await capFor(fresh, { role: "editor" }), request))).toMatchObject({ name: "Forbidden" });
+    expect((await directoryRow(fresh.id))?.status).toBe("provisioned");
   });
 
   it("M5: the last recovery wrap cannot be removed; another can", async () => {
     const mb = await provisionMailbox();
     const cap = await capFor(mb);
-    const [only] = (await mail().mailbox(cap)).wraps;
-    expect(await rejectionOf(mail().removeWrap(await capFor(mb), only!.id))).toMatchObject({ name: "InvalidRequest" });
+    const [only] = valueOf(await mail().mailbox(cap)).wraps;
+    expect(refusalOf(await mail().removeWrap(await capFor(mb), only!.id))).toMatchObject({ name: "InvalidRequest" });
 
     const second = recoveryWrap(mb.key!.keyId, { label: "Printed sheet" });
-    await mail().addWrap(await capFor(mb), second);
-    await mail().removeWrap(await capFor(mb), only!.id);
-    expect((await mail().mailbox(await capFor(mb))).wraps.map((w) => w.id)).toEqual([second.id]);
-    expect(await rejectionOf(mail().removeWrap(await capFor(mb), second.id))).toMatchObject({ name: "InvalidRequest" });
+    expect(await mail().addWrap(await capFor(mb), second)).toEqual({ ok: true, value: null });
+    expect(await mail().removeWrap(await capFor(mb), only!.id)).toEqual({ ok: true, value: null });
+    expect(valueOf(await mail().mailbox(await capFor(mb))).wraps.map((w) => w.id)).toEqual([second.id]);
+    expect(refusalOf(await mail().removeWrap(await capFor(mb), second.id))).toMatchObject({ name: "InvalidRequest" });
   });
 
   it("adds a passkey wrap for the mailbox's key only, and audits key changes", async () => {
     const mb = await provisionMailbox();
     const other = await newKeyPair();
-    expect(await rejectionOf(mail().addWrap(await capFor(mb), passkeyWrap(other.keyId)))).toMatchObject({ name: "InvalidRequest" });
+    expect(refusalOf(await mail().addWrap(await capFor(mb), passkeyWrap(other.keyId)))).toMatchObject({ name: "InvalidRequest" });
     const phone = passkeyWrap(mb.key!.keyId);
-    await mail().addWrap(await capFor(mb), phone);
-    await mail().removeWrap(await capFor(mb), phone.id);
-    const actions = (await mail().audit(await capFor(mb), {})).map((a) => a.action);
+    valueOf(await mail().addWrap(await capFor(mb), phone));
+    valueOf(await mail().removeWrap(await capFor(mb), phone.id));
+    const actions = valueOf(await mail().audit(await capFor(mb), {})).map((a) => a.action);
     expect(actions.slice(0, 3)).toEqual(["wrap-removed", "wrap-added", "key-enrolled"]);
   });
 });
@@ -214,10 +267,10 @@ describe("reading", () => {
     const mb = await provisionMailbox();
     await arrive(mb, 3);
     const cap = await capFor(mb);
-    const first = await mail().list(cap, { folder: "inbox", limit: 2 });
+    const first = valueOf(await mail().list(cap, { folder: "inbox", limit: 2 }));
     expect(first.items).toHaveLength(2);
     expect(first.next).toEqual(expect.any(String));
-    const second = await mail().list(await capFor(mb), { folder: "inbox", limit: 2, before: first.next! });
+    const second = valueOf(await mail().list(await capFor(mb), { folder: "inbox", limit: 2, before: first.next! }));
     expect(second.items).toHaveLength(1);
     expect(second.next).toBeNull();
     const all = [...first.items, ...second.items];
@@ -225,46 +278,57 @@ describe("reading", () => {
     expect(Object.keys(all[0]!).sort()).toEqual(
       ["direction", "flagged", "folder", "header", "id", "keyEnvelope", "keyId", "receivedAt", "seen", "size"],
     );
-    expect(await rejectionOf(mail().list(await capFor(mb), { folder: "inbox", limit: 101 }))).toMatchObject({ name: "InvalidRequest" });
-    expect(await rejectionOf(mail().list(await capFor(mb), { folder: "nope" }))).toMatchObject({ name: "InvalidRequest" });
+    expect(refusalOf(await mail().list(await capFor(mb), { folder: "inbox", limit: 101 }))).toMatchObject({ name: "InvalidRequest" });
+    expect(refusalOf(await mail().list(await capFor(mb), { folder: "nope" }))).toMatchObject({ name: "InvalidRequest" });
   });
 
-  it("streams the sealed body from R2, byte for byte", async () => {
+  it("streams the sealed body from R2, byte for byte, as the value of an ok answer", async () => {
     const mb = await provisionMailbox();
     await arrive(mb);
-    const [item] = (await mail().list(await capFor(mb), { folder: "inbox" })).items;
-    const stream = await mail().body(await capFor(mb), item!.id);
+    const [item] = valueOf(await mail().list(await capFor(mb), { folder: "inbox" })).items;
+    const answer = await mail().body(await capFor(mb), item!.id);
+    expect(answer.ok).toBe(true);
+    const stream = valueOf(answer);
+    expect(stream).toBeInstanceOf(ReadableStream);
     const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
     const stored = await env.MAIL.get(`mbx/${mb.id}/msg/${item!.id}`);
     expect(bytes).toEqual(new Uint8Array(await stored!.arrayBuffer()));
     expect(new TextDecoder().decode(bytes.slice(0, 4))).toBe("PMB1");
-    expect(await rejectionOf(mail().body(await capFor(mb), testId("msg")))).toMatchObject({ name: "NotFound" });
+  });
+
+  it("answers NotFound for a message that does not exist, and for one whose R2 object is gone", async () => {
+    const mb = await provisionMailbox();
+    await arrive(mb);
+    const [item] = valueOf(await mail().list(await capFor(mb), { folder: "inbox" })).items;
+    expect(await mail().body(await capFor(mb), testId("msg"))).toEqual(NOT_FOUND);
+    await env.MAIL.delete(`mbx/${mb.id}/msg/${item!.id}`);
+    expect(await mail().body(await capFor(mb), item!.id)).toEqual(NOT_FOUND);
   });
 
   it("marks, flags and moves; Trash stamps the time; nothing moves into Drafts", async () => {
     const mb = await provisionMailbox();
     await arrive(mb, 2);
-    const [a, b] = (await mail().list(await capFor(mb), { folder: "inbox" })).items;
-    expect(await mail().update(await capFor(mb), a!.id, { seen: true, flagged: true })).toMatchObject({ seen: true, flagged: true, folder: "inbox" });
-    expect(await mail().unread(await capFor(mb))).toEqual({ inbox: 1 });
-    await mail().update(await capFor(mb), b!.id, { folder: "trash" });
+    const [a, b] = valueOf(await mail().list(await capFor(mb), { folder: "inbox" })).items;
+    expect(valueOf(await mail().update(await capFor(mb), a!.id, { seen: true, flagged: true }))).toMatchObject({ seen: true, flagged: true, folder: "inbox" });
+    expect(await mail().unread(await capFor(mb))).toEqual({ ok: true, value: { inbox: 1 } });
+    valueOf(await mail().update(await capFor(mb), b!.id, { folder: "trash" }));
     const trashedAt = await runInDurableObject(mb.stub, (_i, state) =>
       state.storage.sql.exec("SELECT trashed_at FROM messages WHERE id = ?", b!.id).one().trashed_at,
     );
     expect(trashedAt).toBe(mb.ports.clock.now().toISOString());
-    await mail().update(await capFor(mb), b!.id, { folder: "inbox" });
+    valueOf(await mail().update(await capFor(mb), b!.id, { folder: "inbox" }));
     expect(
       await runInDurableObject(mb.stub, (_i, state) => state.storage.sql.exec("SELECT trashed_at FROM messages WHERE id = ?", b!.id).one().trashed_at),
     ).toBeNull();
-    expect(await rejectionOf(mail().update(await capFor(mb), b!.id, { folder: "drafts" }))).toMatchObject({ name: "InvalidRequest" });
+    expect(refusalOf(await mail().update(await capFor(mb), b!.id, { folder: "drafts" }))).toMatchObject({ name: "InvalidRequest" });
   });
 
   it("purges a message (owner): the row and the R2 object", async () => {
     const mb = await provisionMailbox();
     await arrive(mb);
-    const [item] = (await mail().list(await capFor(mb), { folder: "inbox" })).items;
-    await mail().purge(await capFor(mb), item!.id);
-    expect((await mail().list(await capFor(mb), { folder: "inbox" })).items).toEqual([]);
+    const [item] = valueOf(await mail().list(await capFor(mb), { folder: "inbox" })).items;
+    expect(await mail().purge(await capFor(mb), item!.id)).toEqual({ ok: true, value: null });
+    expect(valueOf(await mail().list(await capFor(mb), { folder: "inbox" })).items).toEqual([]);
     expect(await env.MAIL.head(`mbx/${mb.id}/msg/${item!.id}`)).toBeNull();
   });
 });
@@ -278,29 +342,32 @@ describe("drafts: sealed in the browser", () => {
       keyEnvelope: base64urlFromBytes(crypto.getRandomValues(new Uint8Array(80))),
       sealed: base64urlFromBytes(crypto.getRandomValues(new Uint8Array(200))),
     };
-    await mail().saveDraft(await capFor(mb), draft);
-    expect(await mail().drafts(await capFor(mb))).toEqual([{ ...draft, updatedAt: mb.ports.clock.now().toISOString() }]);
-    expect(await rejectionOf(mail().saveDraft(await capFor(mb), { ...draft, keyId: "0".repeat(32) }))).toMatchObject({ name: "InvalidRequest" });
-    expect(await rejectionOf(mail().saveDraft(await capFor(mb), { ...draft, keyEnvelope: "AAAA" }))).toMatchObject({ name: "InvalidRequest" });
-    await mail().deleteDraft(await capFor(mb), draft.id);
-    expect(await mail().drafts(await capFor(mb))).toEqual([]);
-    expect(await rejectionOf(mail().deleteDraft(await capFor(mb), draft.id))).toMatchObject({ name: "NotFound" });
+    expect(await mail().saveDraft(await capFor(mb), draft)).toEqual({ ok: true, value: { id: draft.id, updatedAt: mb.ports.clock.now().toISOString() } });
+    expect(await mail().drafts(await capFor(mb))).toEqual({ ok: true, value: [{ ...draft, updatedAt: mb.ports.clock.now().toISOString() }] });
+    expect(refusalOf(await mail().saveDraft(await capFor(mb), { ...draft, keyId: "0".repeat(32) }))).toMatchObject({ name: "InvalidRequest" });
+    expect(refusalOf(await mail().saveDraft(await capFor(mb), { ...draft, keyEnvelope: "AAAA" }))).toMatchObject({ name: "InvalidRequest" });
+    expect(await mail().deleteDraft(await capFor(mb), draft.id)).toEqual({ ok: true, value: null });
+    expect(valueOf(await mail().drafts(await capFor(mb)))).toEqual([]);
+    expect(await mail().deleteDraft(await capFor(mb), draft.id)).toEqual(NOT_FOUND);
   });
 });
 
 describe("policy and audit", () => {
   it("refuses to turn the assistant on (D1): AssistantUnavailable", async () => {
     const mb = await provisionMailbox();
-    expect(await rejectionOf(mail().setPolicy(await capFor(mb), { assistant: "on" }))).toMatchObject({ name: "AssistantUnavailable" });
-    expect((await mail().mailbox(await capFor(mb))).policy.assistant).toBe("off");
+    expect(await mail().setPolicy(await capFor(mb), { assistant: "on" })).toEqual({
+      ok: false,
+      error: { name: "AssistantUnavailable", message: "the assistant is not available (spec decision D1)" },
+    });
+    expect(valueOf(await mail().mailbox(await capFor(mb))).policy.assistant).toBe("off");
   });
 
   it("sets the display name, and audits the change without its value", async () => {
     const mb = await provisionMailbox();
-    const policy = await mail().setPolicy(await capFor(mb), { displayName: "Operator", assistant: "off" });
+    const policy = valueOf(await mail().setPolicy(await capFor(mb), { displayName: "Operator", assistant: "off" }));
     expect(policy).toMatchObject({ displayName: "Operator", assistant: "off" });
-    const [latest] = await mail().audit(await capFor(mb), {});
+    const [latest] = valueOf(await mail().audit(await capFor(mb), {}));
     expect(latest).toMatchObject({ actor: "acc_owner", action: "policy-changed", detail: { fields: "displayName,assistant" } });
-    expect(await rejectionOf(mail().setPolicy(await capFor(mb), { displayName: "a\r\nBcc: x@y.test" }))).toMatchObject({ name: "InvalidRequest" });
+    expect(refusalOf(await mail().setPolicy(await capFor(mb), { displayName: "a\r\nBcc: x@y.test" }))).toMatchObject({ name: "InvalidRequest" });
   });
 });

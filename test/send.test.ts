@@ -4,7 +4,8 @@ import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { base64urlFromBytes } from "./support/capability-tokens";
 import { testId } from "./support/ids";
-import { capFor, provisionMailbox, rejectionOf, type TestMailbox } from "./support/mailbox";
+import { capFor, provisionMailbox, type TestMailbox } from "./support/mailbox";
+import { refusalOf, valueOf } from "./support/results";
 
 const mail = () => exports.MailService;
 
@@ -31,8 +32,8 @@ async function sendsRows(mb: TestMailbox) {
 describe("M6: only the owner sends, and always as the mailbox", () => {
   it("builds From from the mailbox's address and display name, and SES authorizes on that address", async () => {
     const mb = await provisionMailbox();
-    await mail().setPolicy(await capFor(mb), { displayName: "Operator" });
-    await mail().send(await capFor(mb), request());
+    valueOf(await mail().setPolicy(await capFor(mb), { displayName: "Operator" }));
+    valueOf(await mail().send(await capFor(mb), request()));
     expect(mb.ports.mime.built[0]!.msg.from).toEqual({ name: "Operator", address: mb.address });
     expect(mb.ports.mailer.sent[0]!.fromAddress).toBe(mb.address);
   });
@@ -40,26 +41,26 @@ describe("M6: only the owner sends, and always as the mailbox", () => {
   it("refuses a request that tries to choose From (or Reply-To), and sends nothing", async () => {
     const mb = await provisionMailbox();
     for (const field of [{ from: { address: "ceo@bank.example" } }, { replyTo: [{ address: "x@evil.example" }] }]) {
-      expect(await rejectionOf(mail().send(await capFor(mb), request(field)))).toMatchObject({ name: "InvalidRequest" });
+      expect(refusalOf(await mail().send(await capFor(mb), request(field)))).toMatchObject({ name: "InvalidRequest" });
     }
     expect(mb.ports.mailer.sent).toEqual([]);
   });
 
   it("uses the SES tenant and configuration set from the Directory row", async () => {
     const mb = await provisionMailbox();
-    await mail().send(await capFor(mb), request());
+    valueOf(await mail().send(await capFor(mb), request()));
     expect(mb.ports.mailer.sent[0]).toMatchObject({ configurationSet: "send-test-mail", tenantName: "client-test" });
     expect(mb.ports.mailer.sent[0]!.recipients).toEqual(["ana@example.com"]);
   });
 
   it("answers MailboxNotActive for a suspended mailbox", async () => {
     const mb = await provisionMailbox({ status: "suspended" });
-    expect(await rejectionOf(mail().send(await capFor(mb), request()))).toMatchObject({ name: "MailboxNotActive" });
+    expect(await mail().send(await capFor(mb), request())).toEqual({ ok: false, error: { name: "MailboxNotActive", message: "this mailbox is not active" } });
   });
 
   it("does not send from a mailbox with no SES configuration set", async () => {
     const mb = await provisionMailbox({ sesConfigurationSet: null });
-    expect(await rejectionOf(mail().send(await capFor(mb), request()))).toMatchObject({ name: "SendFailed", retryable: false });
+    expect(await mail().send(await capFor(mb), request())).toEqual({ ok: false, error: { name: "SendFailed", message: "sending failed", retryable: false } });
     expect(mb.ports.mailer.sent).toEqual([]);
   });
 });
@@ -68,36 +69,36 @@ describe("M7: sending is bounded and idempotent", () => {
   it("allows 50 recipients across to, cc and bcc, and refuses 51", async () => {
     const mb = await provisionMailbox();
     const people = (n: number, tag: string) => Array.from({ length: n }, (_, i) => ({ address: `${tag}${i}@example.com` }));
-    await mail().send(await capFor(mb), request({ to: people(20, "t"), cc: people(20, "c"), bcc: people(10, "b") }));
-    const err = await rejectionOf(mail().send(await capFor(mb), request({ to: people(20, "t"), cc: people(20, "c"), bcc: people(11, "b") })));
-    expect(err).toMatchObject({ name: "InvalidRequest" });
+    valueOf(await mail().send(await capFor(mb), request({ to: people(20, "t"), cc: people(20, "c"), bcc: people(10, "b") })));
+    const refusal = refusalOf(await mail().send(await capFor(mb), request({ to: people(20, "t"), cc: people(20, "c"), bcc: people(11, "b") })));
+    expect(refusal).toEqual({ name: "InvalidRequest", message: "invalid request: at most 50 recipients" });
     expect(mb.ports.mailer.sent).toHaveLength(1);
   });
 
   it("answers RateLimited on the 21st send in an hour, with retryAfterSeconds crossing RPC", async () => {
     const mb = await provisionMailbox();
     for (let i = 0; i < 20; i++) {
-      await mail().send(await capFor(mb), request());
+      valueOf(await mail().send(await capFor(mb), request()));
       mb.ports.clock.advance(60 * 1000);
     }
-    const err = await rejectionOf(mail().send(await capFor(mb), request()));
-    expect(err.name).toBe("RateLimited");
     // The first send leaves the hour 20 minutes from now.
-    expect(err.retryAfterSeconds).toBe(40 * 60);
+    expect(await mail().send(await capFor(mb), request())).toEqual({
+      ok: false,
+      error: { name: "RateLimited", message: "send rate limit reached", retryAfterSeconds: 40 * 60 },
+    });
     expect(mb.ports.mailer.sent).toHaveLength(20);
     mb.ports.clock.advance(40 * 60 * 1000);
-    await mail().send(await capFor(mb), request());
+    valueOf(await mail().send(await capFor(mb), request()));
     expect(mb.ports.mailer.sent).toHaveLength(21);
   });
 
   it("answers RateLimited on the 101st send in a day", async () => {
     const mb = await provisionMailbox();
     for (let i = 0; i < 100; i++) {
-      await mail().send(await capFor(mb), request());
+      valueOf(await mail().send(await capFor(mb), request()));
       mb.ports.clock.advance(4 * 60 * 1000); // 15 an hour: never the hourly limit
     }
-    const err = await rejectionOf(mail().send(await capFor(mb), request()));
-    expect(err).toMatchObject({ name: "RateLimited" });
+    expect(refusalOf(await mail().send(await capFor(mb), request()))).toMatchObject({ name: "RateLimited" });
     expect(mb.ports.mailer.sent).toHaveLength(100);
   });
 
@@ -106,6 +107,7 @@ describe("M7: sending is bounded and idempotent", () => {
     const req = request();
     const first = await mail().send(await capFor(mb), req);
     const again = await mail().send(await capFor(mb), req);
+    expect(first.ok).toBe(true);
     expect(again).toEqual(first);
     expect(mb.ports.mailer.sent).toHaveLength(1);
     expect(await sentRows(mb)).toHaveLength(1);
@@ -115,15 +117,17 @@ describe("M7: sending is bounded and idempotent", () => {
 describe("the Sent copy", () => {
   it("is the exact bytes handed to SES, sealed with a direction-out header, stored in Sent as read", async () => {
     const mb = await provisionMailbox();
-    const result = await mail().send(
-      await capFor(mb),
-      request({
+    const result = valueOf(
+      await mail().send(
+        await capFor(mb),
+        request({
         cc: [{ address: "bob@example.org" }],
         bcc: [{ address: "archive@example.net" }],
         inReplyTo: "abc@example.com",
         references: ["root@x", "abc@example.com"],
-        attachments: [{ filename: "quote.pdf", mimeType: "application/pdf", content: new Uint8Array(1234) }],
-      }),
+          attachments: [{ filename: "quote.pdf", mimeType: "application/pdf", content: new Uint8Array(1234) }],
+        }),
+      ),
     );
     const handedToSes = mb.ports.mailer.sent[0]!.raw;
     const sealed = mb.ports.sealer.sealed.at(-1)!;
@@ -153,21 +157,23 @@ describe("the Sent copy", () => {
 
   it("carries the Message-ID recipients see: SES replaces the built one (S3 finding, us-east-1)", async () => {
     const mb = await provisionMailbox();
-    const result = await mail().send(await capFor(mb), request());
+    const result = valueOf(await mail().send(await capFor(mb), request()));
     expect(mb.ports.sealer.sealed.at(-1)!.header.messageId).toBe(`${result.providerMessageId}@email.amazonses.com`);
   });
 
   it("deletes the draft it was sent from", async () => {
     const mb = await provisionMailbox();
     const draftId = testId("drf");
-    await mail().saveDraft(await capFor(mb), {
-      id: draftId,
-      keyId: mb.key!.keyId,
-      keyEnvelope: base64urlFromBytes(crypto.getRandomValues(new Uint8Array(80))),
-      sealed: base64urlFromBytes(crypto.getRandomValues(new Uint8Array(64))),
-    });
-    await mail().send(await capFor(mb), request({ draftId }));
-    expect(await mail().drafts(await capFor(mb))).toEqual([]);
+    valueOf(
+      await mail().saveDraft(await capFor(mb), {
+        id: draftId,
+        keyId: mb.key!.keyId,
+        keyEnvelope: base64urlFromBytes(crypto.getRandomValues(new Uint8Array(80))),
+        sealed: base64urlFromBytes(crypto.getRandomValues(new Uint8Array(64))),
+      }),
+    );
+    valueOf(await mail().send(await capFor(mb), request({ draftId })));
+    expect(valueOf(await mail().drafts(await capFor(mb)))).toEqual([]);
   });
 
   it("still reports the send when storing the Sent copy fails: the message is already out", async () => {
@@ -178,8 +184,8 @@ describe("the Sent copy", () => {
     };
     const result = await mail().send(await capFor(mb), request());
     mb.ports.sealer.seal = realSeal;
-    expect(result).toEqual({ messageId: null, providerMessageId: "ses-1" });
-    expect((await mail().audit(await capFor(mb), {}))[0]).toMatchObject({ action: "sent-copy-not-stored" });
+    expect(result).toEqual({ ok: true, value: { messageId: null, providerMessageId: "ses-1" } });
+    expect(valueOf(await mail().audit(await capFor(mb), {}))[0]).toMatchObject({ action: "sent-copy-not-stored" });
   });
 });
 
@@ -188,29 +194,32 @@ describe("when SES says no", () => {
     const mb = await provisionMailbox();
     const req = request();
     mb.ports.mailer.failWith = new SendRejected("throttled", 429, "TooManyRequestsException", true);
-    expect(await rejectionOf(mail().send(await capFor(mb), req))).toMatchObject({ name: "SendFailed", retryable: true });
+    expect(await mail().send(await capFor(mb), req)).toEqual({
+      ok: false,
+      error: { name: "SendFailed", message: "sending failed; it may be retried", retryable: true },
+    });
     mb.ports.mailer.failWith = undefined;
-    await mail().send(await capFor(mb), req);
+    valueOf(await mail().send(await capFor(mb), req));
     expect(mb.ports.mailer.sent).toHaveLength(1);
   });
 
   it("a definite refusal: SendFailed{retryable: false}", async () => {
     const mb = await provisionMailbox();
     mb.ports.mailer.failWith = new SendRejected("not authorized", 403, "AccessDeniedException", false);
-    expect(await rejectionOf(mail().send(await capFor(mb), request()))).toMatchObject({ name: "SendFailed", retryable: false });
+    expect(refusalOf(await mail().send(await capFor(mb), request()))).toEqual({ name: "SendFailed", message: "sending failed", retryable: false });
   });
 
   it("an unknown outcome (status 0: timeout, network, 2xx without an id): recorded, and NEVER sent again under that key", async () => {
     const mb = await provisionMailbox();
     const req = request();
     mb.ports.mailer.failWith = new SendRejected("timed out", 0, "Timeout", false);
-    expect(await rejectionOf(mail().send(await capFor(mb), req))).toMatchObject({ name: "SendFailed", retryable: false });
+    expect(refusalOf(await mail().send(await capFor(mb), req))).toMatchObject({ name: "SendFailed", retryable: false });
     mb.ports.mailer.failWith = undefined;
     mb.ports.clock.advance(24 * 60 * 60 * 1000);
-    expect(await rejectionOf(mail().send(await capFor(mb), req))).toMatchObject({ name: "SendFailed", retryable: false });
+    expect(refusalOf(await mail().send(await capFor(mb), req))).toMatchObject({ name: "SendFailed", retryable: false });
     expect(mb.ports.mailer.sent).toEqual([]);
     expect(mb.ports.trace.filter((t) => t === "ses")).toHaveLength(1);
-    expect((await mail().audit(await capFor(mb), {}))[0]).toMatchObject({ action: "send-outcome-unknown" });
+    expect(valueOf(await mail().audit(await capFor(mb), {}))[0]).toMatchObject({ action: "send-outcome-unknown" });
   });
 
   it("a message the MIME builder refuses: InvalidRequest, nothing sent", async () => {
@@ -218,7 +227,7 @@ describe("when SES says no", () => {
     const invalid = new Error("header injection");
     invalid.name = "InvalidMessage";
     mb.ports.mime.failWith = invalid;
-    expect(await rejectionOf(mail().send(await capFor(mb), request()))).toMatchObject({ name: "InvalidRequest" });
+    expect(refusalOf(await mail().send(await capFor(mb), request()))).toEqual({ name: "InvalidRequest", message: "invalid request: the message could not be built" });
     expect(mb.ports.mailer.sent).toEqual([]);
     expect(await sendsRows(mb)).toEqual([]);
   });

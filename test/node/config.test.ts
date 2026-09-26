@@ -43,8 +43,4 @@ describe("wrangler.jsonc", () => {
   it("carries no secret: only the SES region as a plain var", () => {
     expect(config.vars).toEqual({ SES_REGION: "us-east-1" });
   });
-
-  it("dates after 2026-04-21, so RPC errors keep their names and fields", () => {
-    expect(String(config.compatibility_date) >= "2026-04-21").toBe(true);
-  });
 });
