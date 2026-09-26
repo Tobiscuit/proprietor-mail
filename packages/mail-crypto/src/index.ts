@@ -29,8 +29,15 @@ import {
   sealKeyEnvelope,
 } from "./envelope";
 import { NotImplemented } from "./errors";
-import { importPrivateScalar, importPublicKey, keyIdOf as keyIdOfPublicKey, materialOf } from "./keys";
+import {
+  importPrivateScalar,
+  importPublicKey,
+  keyIdOf as keyIdOfPublicKey,
+  materialOf,
+  publicKeyMatches as materialMatches,
+} from "./keys";
 import { parseDraft, parseHeader, serializeDraft, serializeHeader } from "./plaintext";
+import { prfInput as prfInputFor, unwrapPrivateKey as unwrapWithSecret, wrapPrivateKey as wrapWithSecret } from "./wrap";
 
 /** False until S1 replaces the stubs. Tests that need real crypto skip on it. */
 export const IMPLEMENTED: boolean = false;
@@ -263,30 +270,26 @@ export async function openDraft(
 
 /** True when the private key's public half equals the advertised public key (domain-model G7). */
 export async function publicKeyMatches(priv: MailboxPrivateKey, pub: MailboxPublicKey): Promise<boolean> {
-  void priv, pub;
-  throw new NotImplemented("publicKeyMatches");
+  return materialMatches(materialOf(priv), pub);
 }
 
 /** The 32-byte `prf.eval.first` input for a passkey wrap. */
 export async function prfInput(mailboxId: string, wrapId: string): Promise<Uint8Array> {
-  void mailboxId, wrapId;
-  throw new NotImplemented("prfInput");
+  return prfInputFor(mailboxId, wrapId);
 }
 
 export async function wrapPrivateKey(
   priv: MailboxPrivateKey,
   ctx: { mailboxId: string; wrapId: string; kind: WrapKind; secret: Uint8Array },
 ): Promise<KeyWrap> {
-  void priv, ctx;
-  throw new NotImplemented("wrapPrivateKey");
+  return wrapWithSecret(priv, ctx);
 }
 
 export async function unwrapPrivateKey(
   wrap: KeyWrap,
   ctx: { mailboxId: string; secret: Uint8Array },
 ): Promise<MailboxPrivateKey> {
-  void wrap, ctx;
-  throw new NotImplemented("unwrapPrivateKey");
+  return unwrapWithSecret(wrap, ctx);
 }
 
 /** A new 32-byte recovery secret and the 55-character display form (11 groups of 5). */
