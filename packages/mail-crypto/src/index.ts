@@ -36,6 +36,8 @@ import {
   materialOf,
   publicKeyMatches as materialMatches,
 } from "./keys";
+
+export { x25519Supported } from "./keys";
 import { parseDraft, parseHeader, serializeDraft, serializeHeader } from "./plaintext";
 import { newRecoveryKey as newRecovery, parseRecoveryKey as parseRecovery } from "./recovery";
 import { prfInput as prfInputFor, unwrapPrivateKey as unwrapWithSecret, wrapPrivateKey as wrapWithSecret } from "./wrap";

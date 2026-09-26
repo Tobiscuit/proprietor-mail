@@ -1,6 +1,6 @@
 /**
- * Byte helpers that run unchanged in browsers, Workers and Node: no Buffer,
- * no atob/btoa quirks, no node:* imports.
+ * Byte helpers built on Uint8Array and TextEncoder/TextDecoder only, so they
+ * run unchanged in browsers, Workers and Node (and avoid atob/btoa quirks).
  */
 
 const encoder = new TextEncoder();

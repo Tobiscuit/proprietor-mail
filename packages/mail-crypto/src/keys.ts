@@ -99,3 +99,24 @@ export function publicKeyMatches(material: KeyMaterial, pub: MailboxPublicKey): 
     bytesEqual(pub.publicKey, material.publicKey)
   );
 }
+
+/**
+ * True when this runtime's Web Crypto has native X25519 with every operation
+ * this package uses (pkcs8 and raw import, deriveBits, generateKey, raw
+ * export). There is no pure-JavaScript fallback (see the README), so a page
+ * can call this before a passkey ceremony and ask for a browser update
+ * instead of failing halfway through.
+ */
+export async function x25519Supported(): Promise<boolean> {
+  try {
+    const probe = clamp(new Uint8Array(32).fill(0x2a));
+    const privateKey = await crypto.subtle.importKey("pkcs8", concat(PKCS8_X25519_PREFIX, probe), X25519, false, ["deriveBits"]);
+    const basePoint = await crypto.subtle.importKey("raw", BASE_POINT, X25519, true, []);
+    await crypto.subtle.deriveBits({ name: "X25519", public: basePoint }, privateKey, 256);
+    const pair = (await crypto.subtle.generateKey(X25519, true, ["deriveBits"])) as CryptoKeyPair;
+    return (await crypto.subtle.exportKey("raw", pair.publicKey)).byteLength === 32;
+  } catch {
+    return false;
+  }
+}
+
