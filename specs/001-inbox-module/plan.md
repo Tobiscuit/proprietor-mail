@@ -62,6 +62,12 @@ rename is on the critical path before any key is enrolled). These remain
 the maintainer's decisions; both sessions use the recommendations as working defaults
 until he answers.
 
+**Found in the S2 audit, for the dashboard Worker:** its compatibility date
+must be 2026-04-21 or later (or it must set the
+`enhanced_error_serialization` flag). Otherwise the fields Mail's errors carry
+across RPC (`reason`, `retryAfterSeconds`, `retryable`) are lost and only the
+error's name survives.
+
 **The shell's commitments from step 0**, each with a test, because every
 dashboard deploy is inside the key's trust boundary (D2): a strict nonce CSP
 (`script-src 'nonce-…' 'strict-dynamic'; object-src 'none'; base-uri 'none';
