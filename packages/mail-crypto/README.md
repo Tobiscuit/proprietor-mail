@@ -14,7 +14,8 @@ It uses only Web Crypto and `crypto.getRandomValues`: no `node:*` imports, no
 
 ```
 npm test -w @platform-mail/crypto          # vitest: every acceptance test in tasks.md §S1
-npm run typecheck -w @platform-mail/crypto # src/ without Node types, then src/ + test/
+npm run typecheck -w @platform-mail/crypto # src/ with the DOM lib, src/ with @cloudflare/workers-types
+                                           # (no DOM, as the Mail Worker compiles it), then src/ + test/
 npm run write-vectors -w @platform-mail/crypto  # regenerate contracts/envelope-v1.vectors.json
 ```
 

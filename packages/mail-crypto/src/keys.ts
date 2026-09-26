@@ -11,7 +11,22 @@
 import { bytesEqual, concat, copy, toHex } from "./bytes";
 import type { MailboxPrivateKey, MailboxPublicKey } from "./index";
 
-const X25519: Algorithm = { name: "X25519" };
+/** A plain `{ name }`: @cloudflare/workers-types has no global `Algorithm` type. */
+const X25519: { name: string } = { name: "X25519" };
+
+type DeriveBitsParams = Parameters<SubtleCrypto["deriveBits"]>[0];
+
+/**
+ * X25519 `deriveBits` parameters with the peer key under `public`, the name
+ * the Secure Curves spec and every runtime use (workerd included: checked by
+ * running this package in workerd 2026-09-03). @cloudflare/workers-types
+ * calls the field `$public`, so the object goes through `unknown` to the
+ * parameter type the ambient lib declares; the object itself is the same
+ * under both.
+ */
+function x25519Peer(publicKey: CryptoKey): DeriveBitsParams {
+  return { name: "X25519", public: publicKey } as unknown as DeriveBitsParams;
+}
 
 /** PKCS #8 PrivateKeyInfo for an X25519 key (RFC 8410): this prefix, then the 32-byte scalar. */
 const PKCS8_X25519_PREFIX = Uint8Array.of(
@@ -61,7 +76,7 @@ export async function importPrivateScalar(raw: Uint8Array): Promise<MailboxPriva
   try {
     const privateKey = await crypto.subtle.importKey("pkcs8", pkcs8, X25519, false, ["deriveBits"]);
     const basePoint = await crypto.subtle.importKey("raw", BASE_POINT, X25519, true, []);
-    const publicKey = new Uint8Array(await crypto.subtle.deriveBits({ name: "X25519", public: basePoint }, privateKey, 256));
+    const publicKey = new Uint8Array(await crypto.subtle.deriveBits(x25519Peer(basePoint), privateKey, 256));
     const publicCryptoKey = await crypto.subtle.importKey("raw", publicKey, X25519, true, []);
     const material: KeyMaterial = {
       keyId: await keyIdOf(publicKey),
@@ -112,9 +127,11 @@ export async function x25519Supported(): Promise<boolean> {
     const probe = clamp(new Uint8Array(32).fill(0x2a));
     const privateKey = await crypto.subtle.importKey("pkcs8", concat(PKCS8_X25519_PREFIX, probe), X25519, false, ["deriveBits"]);
     const basePoint = await crypto.subtle.importKey("raw", BASE_POINT, X25519, true, []);
-    await crypto.subtle.deriveBits({ name: "X25519", public: basePoint }, privateKey, 256);
+    await crypto.subtle.deriveBits(x25519Peer(basePoint), privateKey, 256);
     const pair = (await crypto.subtle.generateKey(X25519, true, ["deriveBits"])) as CryptoKeyPair;
-    return (await crypto.subtle.exportKey("raw", pair.publicKey)).byteLength === 32;
+    const exported = await crypto.subtle.exportKey("raw", pair.publicKey);
+    // workers-types returns ArrayBuffer | JsonWebKey for every format; "raw" is always an ArrayBuffer.
+    return exported instanceof ArrayBuffer && exported.byteLength === 32;
   } catch {
     return false;
   }

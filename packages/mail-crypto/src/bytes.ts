@@ -4,10 +4,13 @@
  */
 
 const encoder = new TextEncoder();
-const strictDecoder = new TextDecoder("utf-8", { fatal: true });
+// ignoreBOM: false is the default; @cloudflare/workers-types requires it spelled out.
+const strictDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
 
 export function utf8(s: string): Uint8Array<ArrayBuffer> {
-  return encoder.encode(s);
+  // encode() always returns a view on a new ArrayBuffer (Encoding Standard);
+  // @cloudflare/workers-types declares the looser Uint8Array<ArrayBufferLike>.
+  return encoder.encode(s) as Uint8Array<ArrayBuffer>;
 }
 
 /** Strict UTF-8 decoding: malformed bytes throw instead of becoming U+FFFD. */
