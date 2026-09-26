@@ -1,0 +1,64 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "platform-mail",
+  "main": "src/index.ts",
+  // 2026-08-15 is the newest date BOTH installed runtimes support: the test
+  // pool (@cloudflare/vitest-pool-workers 0.22.0) ships workerd 1.20260815.1,
+  // wrangler 4.141.0 ships 1.20260925.1. It is also after 2026-04-21, the date
+  // from which `enhanced_error_serialization` is on by default: MailService's
+  // named errors reach the caller with `name`, `message` and their own fields
+  // (`reason`, `retryAfterSeconds`, `retryable`). The dashboard (the consumer)
+  // needs a date on or after 2026-04-21 too, or that flag set explicitly.
+  "compatibility_date": "2026-08-15",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // No public HTTP surface at all (plan.md §3): reached by Email Routing and
+  // by service binding, nothing else. `fetch` answers 404 to everything.
+  "workers_dev": false,
+  "preview_urls": false,
+
+  // Logs carry ids, sizes and outcomes only (domain-model M1, spec D8).
+  "observability": { "enabled": true },
+
+  // The Mail Directory: Mail's own D1, never the engine's.
+  // PLACEHOLDER database_id. Nothing remote has been created and nothing here
+  // creates it: `wrangler d1 create` is part of plan.md §6, applied by nobody
+  // yet. Local runs (`wrangler dev --local`, the tests) never read this id.
+  "d1_databases": [
+    {
+      "binding": "DIRECTORY",
+      "database_name": "platform-mail",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // One object per message: mbx/<mailboxId>/msg/<messageId>, the sealed raw
+  // message. Nothing else is written to R2.
+  "r2_buckets": [{ "binding": "MAIL", "bucket_name": "platform-mail" }],
+
+  // One Mailbox Agent (a SQLite-backed Durable Object) per mailbox. The
+  // binding NAME is what routeAgentEmail's resolver returns as `agentName`:
+  // agents 0.24.0 matches it against the env keys (exact, kebab-case or
+  // lower-case), not against the class name.
+  "durable_objects": {
+    "bindings": [{ "name": "Mailbox", "class_name": "Mailbox" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Mailbox"] }],
+
+  "vars": {
+    "SES_REGION": "us-east-1"
+  }
+
+  // Secrets (Vault → process environment → `wrangler secret put`, never argv
+  // and never a kept file):
+  //   MAIL_CAPABILITY_KEYS   Vault secret/platform-mail/capability, field `keys`
+  //   SES_ACCESS_KEY_ID      Vault secret/aws/ses-send-mail
+  //   SES_SECRET_ACCESS_KEY  Vault secret/aws/ses-send-mail
+  //
+  // The new-mail signal (spec 007 step 3). Until the dashboard Worker exports
+  // `MailSignals`, the NewMailSignal port has a no-op adapter; then:
+  //   "services": [
+  //     { "binding": "MAIL_SIGNALS", "service": "<dashboard worker>", "entrypoint": "MailSignals" }
+  //   ]
+}
