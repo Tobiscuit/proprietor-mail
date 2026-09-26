@@ -133,37 +133,53 @@ cd /home/link/platform-mail-worktrees/s2-mail-worker && curl -s "http://localhos
 
 The driver prints Mail's answers as the dashboard will branch on them: an ok
 answer's value, or `{"refused":{"name":…,"message":…}}` (status 409) for a
-refusal. A thrown error reaches it only if the binding itself fails
-(`{"bindingFailed":…}`, status 502).
+refusal. An exception in the driver itself (opening a message) or a failing
+binding shows as `{"failed":<name>}` (status 500). The driver keeps the
+owner's private key in memory only after Mail accepts the enrolment, and
+loses it when it reloads.
 
-### Observed, 2026-09-26
+### Observed, 2026-09-26 (after refusals became values)
 
-**With S1 and S3 merged** (run in a throwaway copy of this branch with the
-`feat/s1-mail-crypto` and `feat/s3-mail-outbound` heads overlaid):
+**With S1 and S3 merged** (a throwaway detached checkout of
+`feat/s4-integration` with this branch merged in; ports 8797/8798 because
+other sessions held 8787):
 
 ```text
 unknown address  → {"outcome":"ok","rejectReason":"No such mailbox",…}
 provisioned      → {"outcome":"ok","rejectReason":"This mailbox is not accepting mail",…}
-/enroll          → {"keyId":"f559d47420157465385d893fe121b9e7"}
+/refuse          → {"ok":false,"error":{"name":"CapabilityRejected","message":"capability rejected: expired","reason":"expired"}}
+/list, tenant_x  → {"refused":{"name":"NotFound","message":"not found"}}
+/enroll          → {"keyId":"dcb51e21bad5f954d952328b3398f464"}
+/enroll again    → {"refused":{"name":"InvalidRequest","message":"invalid request: the mailbox is not awaiting enrolment"}}
 deliver          → {"outcome":"ok","forwards":[],"replies":[],"events":[{"type":"received",…}]}
-/list            → [{"id":"msg_33r954wgvv9wvdmxqtap387nvb","folder":"inbox","size":283,
-                     "receivedAt":"2026-09-26T16:38:20.069Z","keyId":"f559d474…","sealedHeaderChars":583}]
-/open            → {"id":"msg_33r954wgvv9wvdmxqtap387nvb","subject":"Kitchen remodel quote",
+/list            → [{"id":"msg_23senmk2xh6a2pds2bj9v3t45b","folder":"inbox","size":283,…,"sealedHeaderChars":583}]
+/open            → {"id":"msg_23senmk2xh6a2pds2bj9v3t45b","subject":"Kitchen remodel quote",
                      "from":{"name":"Ana Ruiz","address":"ana@example.com"},
                      "snippet":"Hi, we'd like a quote for a kitchen remodel.","rawBytes":283}
 without &format=json → Worker successfully processed email
-GET http://localhost:8787/ → 404
+GET http://localhost:8797/ → 404
 ```
 
-The Mail Worker's log lines for that run carry ids, sizes, outcomes and jti
-values only, for example
-`{"event":"arrival","mailbox":"mbx_6m3c…","size":283,"outcome":"stored","message":"msg_33r9…","forwarded":false}`.
-A `grep` of the whole `.wrangler/state` directory (D1, Durable Object SQLite,
-R2, wrangler's local observability capture) for the subject, the sender's
-name and address and the body found nothing; the R2 object starts with `PMB1`.
+Across the two processes a refusal arrives as a value with its `name` and
+`reason` (the S2 audit saw a thrown one arrive as `Error`, the name folded
+into its message and `reason` gone), and `body()`'s `ReadableStream` arrives inside
+the ok answer and opens to the exact raw bytes. No refusal made either
+process log an uncaught exception or a "hung" cancellation. The Mail Worker
+logged two "hung" cancellations once, around its first request while the
+driver was connecting through the dev registry; repeating every request of
+the run did not bring them back.
 
-**On this branch alone** (the packages are still stubs): the two rejections
-are the same, `/enroll` answers `{"error":"Error","message":"internal error"}`
-(the Mailbox recomputes the keyId with S1's `keyIdOf`, a stub), and the Worker
-logs `Uncaught NotImplemented: @platform-mail/crypto: keyIdOf is not
-implemented yet (slice S1)`. Nothing is stored without S1, by design.
+The Mail Worker's log lines carry ids, sizes, outcomes and jti values only,
+for example
+`{"event":"mail-service","method":"enroll","jti":"a-fU8itiSMVEZO0Zs1s9eQ","outcome":"accepted","mailbox":"mbx_0a0p…","result":"InvalidRequest"}`;
+it holds none of the subject, the sender's name or address, or the body.
+(The earlier run, before this change, also grepped the whole `.wrangler/state`
+directory for them and found nothing; the R2 object starts with `PMB1`.)
+
+**On this branch alone** (the packages are still stubs; not re-run after
+this change): the Mailbox recomputes the keyId with S1's `keyIdOf`, a stub
+that throws, so `/enroll` answers
+`{"refused":{"name":"InternalError","message":"internal error"}}`, the
+Mailbox logs a `mailbox-error` naming `NotImplemented`, and MailService an
+operator alert with the jti. That path is the InternalError test in
+`test/service.test.ts`. Nothing is stored without S1, by design.

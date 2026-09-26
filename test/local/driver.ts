@@ -34,13 +34,13 @@ async function capability(tenant: string, mbx: string): Promise<string> {
   return signToken(canonicalHeader(TEST_KID), claims, bytesFromBase64url(TEST_KEY_B64URL));
 }
 
-async function enrolment(mbx: string) {
+/** An enrolment request, and the private key to keep if (and only if) Mail accepts it. */
+async function enrolment(mbx: string): Promise<{ request: unknown; privateKey?: mailCrypto.MailboxPrivateKey }> {
   if (mailCrypto.IMPLEMENTED) {
     const { publicKey, privateKey } = await mailCrypto.generateMailboxKey();
-    privateKeys.set(mbx, privateKey);
     const recovery = mailCrypto.newRecoveryKey();
     const wrap = await mailCrypto.wrapPrivateKey(privateKey, { mailboxId: mbx, wrapId: mailCrypto.newId("wrp"), kind: "recovery", secret: recovery.secret }); // pragma: allowlist secret (S1's parameter name)
-    return { publicKey: base64urlFromBytes(publicKey.publicKey), wraps: [{ ...wrap, label: "Recovery key (local run)" }] };
+    return { request: { publicKey: base64urlFromBytes(publicKey.publicKey), wraps: [{ ...wrap, label: "Recovery key (local run)" }] }, privateKey };
   }
   const pair = (await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"])) as CryptoKeyPair;
   const publicKey = new Uint8Array((await crypto.subtle.exportKey("raw", pair.publicKey)) as ArrayBuffer);
@@ -49,8 +49,10 @@ async function enrolment(mbx: string) {
   const wrapped = new Uint8Array(61);
   wrapped[0] = 1;
   return {
-    publicKey: base64urlFromBytes(publicKey),
-    wraps: [{ id: testId("wrp"), keyId, kind: "recovery", label: "Placeholder (S1 not merged)", wrapped: base64urlFromBytes(wrapped) }],
+    request: {
+      publicKey: base64urlFromBytes(publicKey),
+      wraps: [{ id: testId("wrp"), keyId, kind: "recovery", label: "Placeholder (S1 not merged)", wrapped: base64urlFromBytes(wrapped) }],
+    },
   };
 }
 
@@ -66,8 +68,12 @@ export default {
     const mbx = url.searchParams.get("mbx") ?? "";
     try {
       if (url.pathname === "/enroll" && request.method === "POST") {
-        const enrolled = await env.MAIL.enroll(await capability(tenant, mbx), await enrolment(mbx));
-        return enrolled.ok ? Response.json(enrolled.value) : refusal(enrolled.error);
+        const { request: enrolRequest, privateKey } = await enrolment(mbx);
+        const enrolled = await env.MAIL.enroll(await capability(tenant, mbx), enrolRequest);
+        if (!enrolled.ok) return refusal(enrolled.error);
+        // Kept only now: a refused enrolment must not replace the key of the one that was accepted.
+        if (privateKey !== undefined) privateKeys.set(mbx, privateKey);
+        return Response.json(enrolled.value);
       }
       if (url.pathname === "/list") {
         const page = await env.MAIL.list(await capability(tenant, mbx), { folder: url.searchParams.get("folder") ?? "inbox" });
@@ -98,8 +104,9 @@ export default {
       }
       return new Response("not found", { status: 404 });
     } catch (err) {
-      // Only the binding or the runtime failing lands here; Mail itself answers with values.
-      return Response.json({ bindingFailed: (err as Error).name }, { status: 502 });
+      // Mail answers with values, so an exception here is this driver's own (opening a
+      // message) or the binding failing: its name only, never its message.
+      return Response.json({ failed: (err as Error).name }, { status: 500 });
     }
   },
 };
