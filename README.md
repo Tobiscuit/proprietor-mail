@@ -129,19 +129,21 @@ hand. To check them:
 
 ```sh
 REPO=Tobiscuit/platform-mail
-V=0.1.0   # the version you are checking
+PKG=@platform-mail/crypto
+V=0.1.0                                   # the version you are checking
+TGZ="$(echo "${PKG#@}" | tr / -)-$V.tgz"  # the tarball's file name
 
 # The release's files were built by this repository's release workflow, from that tag.
 gh release download "mail-crypto-v$V" --repo "$REPO"
-for f in SHA256SUMS "platform-mail-crypto-$V.tgz"; do
+for f in SHA256SUMS "$TGZ"; do
   gh attestation verify "$f" --repo "$REPO" \
     --signer-workflow "$REPO/.github/workflows/release-mail-crypto.yml" \
     --source-ref "refs/tags/mail-crypto-v$V" --deny-self-hosted-runners
 done
 
 # The package on npm is that same tarball.
-mkdir -p npm-copy && npm pack "@platform-mail/crypto@$V" --pack-destination npm-copy
-cmp "npm-copy/platform-mail-crypto-$V.tgz" "platform-mail-crypto-$V.tgz"
+mkdir -p npm-copy && npm pack "$PKG@$V" --pack-destination npm-copy
+cmp "npm-copy/$TGZ" "$TGZ"
 
 # SHA256SUMS is what the tagged source hashes to, and your copy matches it.
 git clone "https://github.com/$REPO" src-copy && git -C src-copy checkout "mail-crypto-v$V"
@@ -165,9 +167,9 @@ so the first release takes one manual step:
    `@platform-mail/crypto@0.0.0-reserved`, from a maintainer's machine with
    2FA, and deprecate it.
 2. Add the trusted publisher, staging only, and refuse tokens (npm 11.15.0 or
-   later; `$REPO` as above):
-   `npm trust github @platform-mail/crypto --file release-mail-crypto.yml --repo "$REPO" --env npm-publish --allow-stage-publish`
-   and `npm access set mfa=publish @platform-mail/crypto`.
+   later; `$REPO` and `$PKG` as above):
+   `npm trust github "$PKG" --file release-mail-crypto.yml --repo "$REPO" --env npm-publish --allow-stage-publish`
+   and `npm access set mfa=publish "$PKG"`.
 3. Create the `npm-publish` environment and allow only `mail-crypto-v*` tags
    to deploy to it.
 
