@@ -196,7 +196,7 @@ export async function sealMessage(
 
 // ---- API: the browser --------------------------------------------------------
 
-export async function generateMailboxKey(): Promise<{ publicKey: MailboxPublicKey; privateKey: MailboxPrivateKey }> {
+export async function generateMailboxKey(): Promise<{ publicKey: MailboxPublicKey; privateKey: MailboxPrivateKey }> { // pragma: allowlist secret (a type)
   const scalar = randomBytes(32);
   try {
     const privateKey = await importPrivateScalar(scalar);
@@ -281,20 +281,20 @@ export async function prfInput(mailboxId: string, wrapId: string): Promise<Uint8
 
 export async function wrapPrivateKey(
   priv: MailboxPrivateKey,
-  ctx: { mailboxId: string; wrapId: string; kind: WrapKind; secret: Uint8Array },
+  ctx: { mailboxId: string; wrapId: string; kind: WrapKind; secret: Uint8Array }, // pragma: allowlist secret (a type)
 ): Promise<KeyWrap> {
   return wrapWithSecret(priv, ctx);
 }
 
 export async function unwrapPrivateKey(
   wrap: KeyWrap,
-  ctx: { mailboxId: string; secret: Uint8Array },
+  ctx: { mailboxId: string; secret: Uint8Array }, // pragma: allowlist secret (a type)
 ): Promise<MailboxPrivateKey> {
   return unwrapWithSecret(wrap, ctx);
 }
 
 /** A new 32-byte recovery secret and the 55-character display form (11 groups of 5). */
-export function newRecoveryKey(): { secret: Uint8Array; display: string } {
+export function newRecoveryKey(): { secret: Uint8Array; display: string } { // pragma: allowlist secret (a type)
   return newRecovery();
 }
 
