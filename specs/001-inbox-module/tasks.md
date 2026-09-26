@@ -199,7 +199,7 @@ sender (header-injection handling, quoted display names).
 
 ## S4 — Integration  *(architect, after S1–S3 are audited)* — 2026-09-26
 
-- [x] S1, S2 and S3 merged on `feat/s4-integration`, the lockfile regenerated
+- [x] S1, S2 and S3 merged on an integration branch, the lockfile regenerated
   (`npm ci` works), NOTICE lists the adapted files; 409 passed, 8 skipped (all
   intended), typecheck clean. The one seam found (mail-crypto did not
   typecheck under workers-types) went back to S1 and was fixed there.
