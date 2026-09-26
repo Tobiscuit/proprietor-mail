@@ -14,9 +14,22 @@
  *     mailbox private key.
  */
 
-import { randomBytes, toHex } from "./bytes";
+import { base64url, copy, fromBase64url, randomBytes } from "./bytes";
 import { crockfordEncode } from "./crockford";
+import {
+  aesKey,
+  BODY_OBJECT,
+  context,
+  failClosed,
+  HEADER_BLOCK,
+  openBlock,
+  openKeyEnvelope,
+  sealBlock,
+  sealKeyEnvelope,
+} from "./envelope";
 import { NotImplemented } from "./errors";
+import { importPrivateScalar, importPublicKey, keyIdOf as keyIdOfPublicKey, materialOf } from "./keys";
+import { parseHeader, serializeHeader } from "./plaintext";
 
 /** False until S1 replaces the stubs. Tests that need real crypto skip on it. */
 export const IMPLEMENTED: boolean = false;
@@ -135,11 +148,7 @@ export function newId(prefix: IdPrefix): string {
 }
 
 export async function keyIdOf(publicKey: Uint8Array): Promise<string> {
-  if (!(publicKey instanceof Uint8Array) || publicKey.length !== 32) {
-    throw new TypeError("an X25519 public key is exactly 32 bytes");
-  }
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(publicKey)));
-  return toHex(digest.subarray(0, 16));
+  return keyIdOfPublicKey(publicKey);
 }
 
 /** keyId in groups of four, for people to compare. */
@@ -156,14 +165,37 @@ export async function sealMessage(
   header: MessageHeader,
   raw: Uint8Array,
 ): Promise<SealedMessage> {
-  void pub, ids, header, raw;
-  throw new NotImplemented("sealMessage");
+  if (!(raw instanceof Uint8Array)) throw new TypeError("raw is the message's bytes (a Uint8Array)");
+  const recipient = await importPublicKey(pub);
+  const headerJson = serializeHeader(header);
+  const headerAad = context("header", ids.mailboxId, ids.messageId);
+  const bodyAad = context("body", ids.mailboxId, ids.messageId);
+  const dek = randomBytes(32);
+  try {
+    const keyEnvelope = await sealKeyEnvelope(recipient, ids.mailboxId, ids.messageId, dek);
+    const key = await aesKey(dek, "encrypt");
+    return {
+      keyId: pub.keyId,
+      keyEnvelope: base64url(keyEnvelope),
+      header: base64url(await sealBlock(HEADER_BLOCK, key, headerAad, headerJson)),
+      body: await sealBlock(BODY_OBJECT, key, bodyAad, copy(raw)),
+    };
+  } finally {
+    dek.fill(0);
+  }
 }
 
 // ---- API: the browser --------------------------------------------------------
 
 export async function generateMailboxKey(): Promise<{ publicKey: MailboxPublicKey; privateKey: MailboxPrivateKey }> {
-  throw new NotImplemented("generateMailboxKey");
+  const scalar = randomBytes(32);
+  try {
+    const privateKey = await importPrivateScalar(scalar);
+    const { keyId, publicKey } = materialOf(privateKey);
+    return { publicKey: { keyId, publicKey: copy(publicKey) }, privateKey };
+  } finally {
+    scalar.fill(0);
+  }
 }
 
 export async function openHeader(
@@ -171,8 +203,12 @@ export async function openHeader(
   ids: { mailboxId: string; messageId: string },
   sealed: Pick<SealedMessage, "keyEnvelope" | "header">,
 ): Promise<MessageHeader> {
-  void priv, ids, sealed;
-  throw new NotImplemented("openHeader");
+  const { keyPair } = materialOf(priv);
+  return failClosed(async () => {
+    const key = await openMessageKey(keyPair, ids.mailboxId, ids.messageId, sealed.keyEnvelope);
+    const aad = context("header", ids.mailboxId, ids.messageId);
+    return parseHeader(await openBlock(HEADER_BLOCK, key, aad, decodeBlock(sealed.header)));
+  });
 }
 
 export async function openBody(
@@ -180,8 +216,13 @@ export async function openBody(
   ids: { mailboxId: string; messageId: string },
   sealed: Pick<SealedMessage, "keyEnvelope" | "body">,
 ): Promise<Uint8Array> {
-  void priv, ids, sealed;
-  throw new NotImplemented("openBody");
+  const { keyPair } = materialOf(priv);
+  return failClosed(async () => {
+    const key = await openMessageKey(keyPair, ids.mailboxId, ids.messageId, sealed.keyEnvelope);
+    const aad = context("body", ids.mailboxId, ids.messageId);
+    if (!(sealed.body instanceof Uint8Array)) throw new TypeError("body is a Uint8Array");
+    return openBlock(BODY_OBJECT, key, aad, copy(sealed.body));
+  });
 }
 
 export async function sealDraft(
@@ -239,4 +280,27 @@ export function newRecoveryKey(): { secret: Uint8Array; display: string } {
 export function parseRecoveryKey(display: string): Uint8Array {
   void display;
   throw new NotImplemented("parseRecoveryKey");
+}
+
+// ---- Internals ---------------------------------------------------------------
+
+function decodeBlock(encoded: string): Uint8Array<ArrayBuffer> {
+  const bytes = fromBase64url(encoded);
+  if (bytes === null) throw new TypeError("not base64url");
+  return bytes;
+}
+
+/** Opens a key envelope (step 2) into an AES-256-GCM key for the blocks. */
+async function openMessageKey(
+  keyPair: CryptoKeyPair,
+  mailboxId: string,
+  objectId: string,
+  keyEnvelope: string,
+): Promise<CryptoKey> {
+  const dek = await openKeyEnvelope(keyPair, mailboxId, objectId, decodeBlock(keyEnvelope));
+  try {
+    return await aesKey(dek, "decrypt");
+  } finally {
+    dek.fill(0);
+  }
 }
