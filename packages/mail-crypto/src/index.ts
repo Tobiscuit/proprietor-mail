@@ -2,11 +2,9 @@
  * @platform-mail/crypto - envelope v1 and key wrapping.
  *
  * The contract is contracts/envelope-v1.md; this file is its API in code form.
- * Until slice S1 lands, every function below throws `NotImplemented` and
- * `IMPLEMENTED` is false, so the Worker (slice S2) can compile against the real
- * signatures and inject a fake in its unit tests. S1 owns this package and may
- * add exports; it must not change a signature below without changing the
- * contract first.
+ * The signatures are the ones the stub published for slices S2 and S3; S1
+ * implemented them without changing any (see README.md for the decisions).
+ * A signature changes only with the contract.
  *
  * Two audiences:
  *   - the Mail Worker, which only ever SEALS (it holds public keys only);
@@ -28,7 +26,6 @@ import {
   sealBlock,
   sealKeyEnvelope,
 } from "./envelope";
-import { NotImplemented } from "./errors";
 import {
   importPrivateScalar,
   importPublicKey,
@@ -36,18 +33,17 @@ import {
   materialOf,
   publicKeyMatches as materialMatches,
 } from "./keys";
-
-export { x25519Supported } from "./keys";
 import { parseDraft, parseHeader, serializeDraft, serializeHeader } from "./plaintext";
 import { newRecoveryKey as newRecovery, parseRecoveryKey as parseRecovery } from "./recovery";
 import { prfInput as prfInputFor, unwrapPrivateKey as unwrapWithSecret, wrapPrivateKey as wrapWithSecret } from "./wrap";
 
-/** False until S1 replaces the stubs. Tests that need real crypto skip on it. */
-export const IMPLEMENTED: boolean = false;
+/** True since S1 replaced the stubs. Tests that need real crypto used to skip on it. */
+export const IMPLEMENTED: boolean = true;
 
 export const ENVELOPE_VERSION = 1 as const;
 
 export { DecryptionFailed, NotImplemented, RecoveryKeyTypo } from "./errors";
+export { x25519Supported } from "./keys";
 
 // ---- Plaintext shapes (contracts/envelope-v1.md) ----------------------------
 
@@ -108,9 +104,11 @@ export interface MailboxPublicKey {
 }
 
 /**
- * A mailbox private key held in the browser. Opaque on purpose: S1 decides
- * whether it wraps a non-extractable CryptoKey or raw bytes behind a closure.
- * It is never serialized except inside a wrap.
+ * A mailbox private key held in the browser. Opaque on purpose: a frozen
+ * `{ keyId }` handle whose key material (a non-extractable X25519 CryptoKey
+ * and the raw scalar, read only by wrapPrivateKey) lives in a module-private
+ * WeakMap. It is never serialized except inside a wrap; a clone or a forged
+ * object is refused with a TypeError.
  */
 export interface MailboxPrivateKey {
   readonly keyId: string;
