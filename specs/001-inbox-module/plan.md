@@ -23,24 +23,56 @@ the client's own site — the inbox UI uses only the shell's theme tokens
 hard-coded colour or font. The final token contract is still coming from the
 design agent.
 
-### Seams this plan opens (for the SEO-engine session)
+### Seams this plan opened, and the answers (settled 2026-09-26)
 
-1. **Minting.** The shell's module contract needs a way for a module to get a
-   Mail capability for the current session and tenant, e.g.
-   `mailCapability({ mailboxId })` inside the shell, signing with
-   `MAIL_CAPABILITY_KEYS`. It must pass `contracts/capability-v1.vectors.json`.
-2. **How the route group gets `mail-crypto`.** It is code the browser runs to
-   handle keys, so it must be byte-for-byte the tested package. Proposal: a
-   vendored copy under the route group with a test that compares its hash
-   with a tagged release of this repo; alternatively a private package on
-   GitHub Packages. Their call, since it is their build.
-3. **Streaming ciphertext to the browser.** Bodies can be up to 25 MiB. A
-   server action returning that much is awkward; proposal: one route handler
-   in the route group that streams `MailService.body()` after checking the
-   session, same trust rules as the actions.
-4. **Web Push.** When spec 007 step 3 builds the per-business Agent, Mail
-   needs its `script_name` binding (or an entrypoint) to send
-   `{ tenantId, mailboxId, unread }`.
+1. **Minting.** A server-only `mailCapability({ mailboxId? })` in the shell:
+   `sub` from `currentSession()`, tenant and role from the already-checked
+   acting membership, HS256 with the `kid` header, `exp = iat + 60`, a random
+   `jti` that both Workers log. Internals are a pure
+   `mint({ key, kid, now, jti }, claims)` tested against
+   `contracts/capability-v1.vectors.json`. The contract now makes `jti`
+   required and fixes the serialization order (conformance is "verifies and
+   decodes to these claims", not byte identity).
+2. **How the route group gets `mail-crypto`.** A vendored copy at
+   `apps/dashboard/app/(modules)/inbox/_vendor/mail-crypto/` with `VERSION`
+   and `SHA256SUMS`, a test that recomputes the sums, and a script that pulls a
+   tagged platform-mail release through `gh` and refuses to copy when the sums
+   differ. **Our side:** each release tag `mail-crypto-vX.Y.Z` gets a GitHub
+   release whose `SHA256SUMS` asset is produced by a workflow from the tagged
+   tree (slice S1r), so their script checks against something other than the
+   copy itself; the tag is also signed if the maintainer has a signing key set up.
+3. **Streaming ciphertext.** Agreed and added to their module contract: route
+   handlers are allowed inside a module's group, GET only, behind the same
+   entry gate; the handler resolves the acting tenant through the shell,
+   mints its own capability, pipes `MailService.body()`'s stream through
+   without buffering, and always sends `cache-control: private, no-store`,
+   `content-type: application/octet-stream` and
+   `x-content-type-options: nosniff`.
+4. **Web Push.** Not a `script_name` Durable Object binding (that would expose
+   the whole per-business Agent). At spec 007 step 3 the dashboard Worker
+   exports a narrow `MailSignals` entrypoint with one method,
+   `unread({ tenantId, mailboxId, unread })`; Mail binds it by service and
+   entrypoint. Until then Mail's `NewMailSignal` port has a no-op adapter.
+
+**Also agreed:** D7 (one SES tenant per client; Mail's own SNS/SQS feed, so
+client recipients and subjects never reach the engine's `mail_events`), D3
+(one `srcdoc` frame with `sandbox` and neither `allow-scripts` nor
+`allow-same-origin`), and D5 (the RP ID is the dashboard's exact host, so the
+rename is on the critical path before any key is enrolled). These remain
+the maintainer's decisions; both sessions use the recommendations as working defaults
+until he answers.
+
+**The shell's commitments from step 0**, each with a test, because every
+dashboard deploy is inside the key's trust boundary (D2): a strict nonce CSP
+(`script-src 'nonce-…' 'strict-dynamic'; object-src 'none'; base-uri 'none';
+frame-ancestors 'none'; connect-src 'self'`), Trusted Types enforced, zero
+third-party scripts or analytics, and the inbox's client code (mail-crypto
+included) split so it loads on inbox routes only. Consequences here:
+`mail-crypto` and every runtime dependency use no `eval`, no `new Function`,
+no WebAssembly and no DOM sink (S1 tests this); the inbox UI (S6) sets the
+frame's `srcdoc` only through a named Trusted Types policy that returns
+DOMPurify's `TrustedHTML`, loads nothing cross-origin, and uses no Web Worker
+unless the shell adds a `worker-src` for it.
 
 ## 2. Repository layout and who owns what
 

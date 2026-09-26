@@ -64,6 +64,10 @@ contract. **Owns:** `packages/mail-crypto/**`,
 - [ ] S1f `contracts/envelope-v1.vectors.json` and a test that opens every
   vector and refuses every negative case
 - [ ] S1g `IMPLEMENTED = true`
+- [ ] S1h runs under the dashboard's strict CSP and Trusted Types: no `eval`,
+  no `new Function`, no WebAssembly, no DOM sink, no network, in the package
+  or any runtime dependency — with a test that scans the shipped JS
+  (`plan.md` §1); self-contained so the dashboard can vendor `src/` as is
 
 **Acceptance tests:**
 - round trips: seal → open returns the exact header and the exact raw bytes,
@@ -96,7 +100,10 @@ envelope v1 via `sealMessage` only.
   and a Node project for the packages; `npm test` runs everything
 - [ ] S2b Directory: migration 0001, repository, provisioning script that
   prints SQL (never runs it against a remote)
-- [ ] S2c capability verification (jose, HS256 only) + the vectors file
+- [ ] S2c capability verification (jose, HS256 only) + the vectors file:
+  `jti` required and logged with the method and outcome on every call; the
+  canonical vector in the contract's serialization order; conformance worded
+  as "verifies and decodes to these claims"
 - [ ] S2d `Mailbox` Agent: schema, identity copy from the Directory, folders
   seeded, policy defaults, audit
 - [ ] S2e inbound: `email()` → `routeAgentEmail` with a Directory resolver →
@@ -107,6 +114,8 @@ envelope v1 via `sealMessage` only.
 - [ ] S2g `send` through ports (`MimeBuilder`, `RawMailer`): M6, M7
   (limits + idempotency), Sent copy sealed and stored
 - [ ] S2h trash purge after 30 days (M9); orphan R2 cleanup on failed insert
+- [ ] S2i′ `NewMailSignal` port shaped as the dashboard's future `MailSignals`
+  entrypoint, `unread({ tenantId, mailboxId, unread })`, no-op adapter now
 - [ ] S2i `MailAdmin` entrypoint (suspend, resume, set delivery mode and
   forward target — M10), exported but bound to nothing
 - [ ] S2j wiring: the real `sealMessage`, `buildMime` and `sesRawMailer`
@@ -171,6 +180,13 @@ injection handling, quoted display names).
   once if a Vault token is valid, with the credential read into the
   environment; otherwise say it was not run.
 
+## S1r — mail-crypto releases  *(after S1 merges)*
+
+- [ ] a workflow on tags `mail-crypto-vX.Y.Z` that computes `SHA256SUMS` over
+  `packages/mail-crypto/src/**` from the tagged tree and attaches it to a
+  GitHub release, so the dashboard's vendoring script checks against CI's
+  record rather than the copy; sign the tag if the maintainer has a signing key
+
 ## S4 — Integration  *(architect, after S1–S3 are audited)*
 
 - [ ] stack or rebase S1 and S3 under S2, regenerate the lockfile, run the
@@ -184,8 +200,14 @@ injection handling, quoted display names).
 
 ## S6 — The inbox screens  *[H: spec 007 step 0 (shell, session, module contract) and the theme-token contract]*
 
-- [H] `plan.md` §10, as a PR to the SEO-engine repo's route group, after the
-  seams in `plan.md` §1 "Seams this plan opens" are answered
+- [H] `plan.md` §10, as a PR to the SEO-engine repo's route group
+  (`apps/dashboard/app/(modules)/inbox/`), with the vendored mail-crypto at
+  `_vendor/mail-crypto/` and the GET-only streaming route handler (`plan.md`
+  §1). Works under the shell's CSP and Trusted Types: the frame's `srcdoc` is
+  set only through a named Trusted Types policy returning DOMPurify's
+  `TrustedHTML`; verify in a real browser (Playwright) that the `srcdoc`
+  document, which inherits the page's CSP, renders under it, and that the
+  inherited `frame-ancestors 'none'` does not block it
 
 ## S7 — The assistant  *[H: Decision D1]*
 
