@@ -20,6 +20,7 @@ import {
   aesKey,
   BODY_OBJECT,
   context,
+  DRAFT_BLOCK,
   failClosed,
   HEADER_BLOCK,
   openBlock,
@@ -29,7 +30,7 @@ import {
 } from "./envelope";
 import { NotImplemented } from "./errors";
 import { importPrivateScalar, importPublicKey, keyIdOf as keyIdOfPublicKey, materialOf } from "./keys";
-import { parseHeader, serializeHeader } from "./plaintext";
+import { parseDraft, parseHeader, serializeDraft, serializeHeader } from "./plaintext";
 
 /** False until S1 replaces the stubs. Tests that need real crypto skip on it. */
 export const IMPLEMENTED: boolean = false;
@@ -230,8 +231,21 @@ export async function sealDraft(
   ids: { mailboxId: string; draftId: string },
   draft: Draft,
 ): Promise<SealedDraft> {
-  void pub, ids, draft;
-  throw new NotImplemented("sealDraft");
+  const recipient = await importPublicKey(pub);
+  const json = serializeDraft(draft);
+  const aad = context("draft", ids.mailboxId, ids.draftId);
+  const dek = randomBytes(32);
+  try {
+    const keyEnvelope = await sealKeyEnvelope(recipient, ids.mailboxId, ids.draftId, dek);
+    const key = await aesKey(dek, "encrypt");
+    return {
+      keyId: pub.keyId,
+      keyEnvelope: base64url(keyEnvelope),
+      sealed: base64url(await sealBlock(DRAFT_BLOCK, key, aad, json)),
+    };
+  } finally {
+    dek.fill(0);
+  }
 }
 
 export async function openDraft(
@@ -239,8 +253,12 @@ export async function openDraft(
   ids: { mailboxId: string; draftId: string },
   sealed: SealedDraft,
 ): Promise<Draft> {
-  void priv, ids, sealed;
-  throw new NotImplemented("openDraft");
+  const { keyPair } = materialOf(priv);
+  return failClosed(async () => {
+    const key = await openMessageKey(keyPair, ids.mailboxId, ids.draftId, sealed.keyEnvelope);
+    const aad = context("draft", ids.mailboxId, ids.draftId);
+    return parseDraft(await openBlock(DRAFT_BLOCK, key, aad, decodeBlock(sealed.sealed)));
+  });
 }
 
 /** True when the private key's public half equals the advertised public key (domain-model G7). */
