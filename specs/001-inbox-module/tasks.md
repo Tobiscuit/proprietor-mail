@@ -180,9 +180,9 @@ injection handling, quoted display names).
   once if a Vault token is valid, with the credential read into the
   environment; otherwise say it was not run.
 
-## S1r — mail-crypto releases  *(after S1 merges)*
+## S1r — mail-crypto releases  *(built on PR #3; first real release after S1 merges)*
 
-- [ ] a workflow on tags `mail-crypto-vX.Y.Z` that computes `SHA256SUMS` over
+- [x] a workflow on tags `mail-crypto-vX.Y.Z` that computes `SHA256SUMS` over
   `packages/mail-crypto/src/**` from the tagged tree and attaches it to a
   GitHub release, so the dashboard's vendoring script checks against CI's
   record rather than the copy; sign the tag if the maintainer has a signing key
@@ -194,27 +194,27 @@ injection handling, quoted display names).
   intended), typecheck clean. The one seam found (mail-crypto did not
   typecheck under workers-types) went back to S1 and was fixed in `4a81d60`.
 
-## S2r — Refusals as values, and a suite that fails on escapes  *(builder, 2026-09-26)*
+## S2r — Refusals as values, and a suite that fails on escapes  *(builder, 2026-09-26)* — done on PR #4, audited
 
-- [ ] `MailService` and the `Mailbox` answer with `MailResult` values
+- [x] `MailService` and the `Mailbox` answer with `MailResult` values
   (`contracts/mail-service-v1.md`); no expected refusal is thrown across either
   RPC hop
-- [ ] a harness guard: `npm test` fails when workerd logs an uncaught exception
+- [x] a harness guard: `npm test` fails when workerd logs an uncaught exception
   or a "hung" cancellation, except where a test declares the one deliberate
   throw (`email()` in `store` mode when storing fails)
-- [ ] a floating-promise audit of `src/` (type-aware lint if it runs under
+- [x] a floating-promise audit of `src/` (type-aware lint if it runs under
   TypeScript 7, otherwise a reviewed list), with each finding fixed
 
-## CI and S1r  *(builder, 2026-09-26)*
+## CI and S1r  *(builder, 2026-09-26)* — done: CI on PRs #1–#5, S1r on PR #3, audited
 
-- [ ] `.github/workflows/ci.yml`: `npm ci`, `npm run typecheck`, `npm test` on
+- [x] `.github/workflows/ci.yml`: `npm ci`, `npm run typecheck`, `npm test` on
   every pull request and on push to `main`; read-only token, actions pinned to
   full commit SHAs
-- [ ] S1r (below) on the S1 branch
+- [x] S1r (below) on the S1 branch
 
-## S2k — Housekeeping found in the S2 audit  *(small, after S4)*
+## S2k — Housekeeping found in the S2 audit — done on PR #4, audited
 
-- [ ] prune `sends` (idempotency and rate-limit rows) after 30 days and the
+- [x] prune `sends` (idempotency and rate-limit rows) after 30 days and the
   audit table after one year, in the same daily alarm as the Trash purge;
   today both grow without limit
 
