@@ -69,7 +69,7 @@ export async function importPrivateScalar(raw: Uint8Array): Promise<MailboxPriva
       keyPair: { privateKey, publicKey: publicCryptoKey },
       scalar,
     };
-    const handle: MailboxPrivateKey = Object.freeze({ keyId: material.keyId });
+    const handle: MailboxPrivateKey = Object.freeze({ keyId: material.keyId }); // pragma: allowlist secret (a type annotation, not a secret)
     materials.set(handle, material);
     return handle;
   } finally {
