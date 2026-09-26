@@ -13,9 +13,28 @@
  * implementation of the id format. Until slice S1 lands that is a stub, and
  * `--id` must be given.
  */
+import { registerHooks } from "node:module";
 import { parseArgs } from "node:util";
-import { newId } from "@platform-mail/crypto";
 import { provisionMailboxSql } from "../src/directory/provision.ts";
+
+// The workspace packages are TypeScript written for a bundler: their relative
+// imports carry no extension, which Node's ESM loader refuses. Retry such an
+// import with ".ts", and touch nothing else. (registerHooks: Node >= 22.15.)
+registerHooks({
+  resolve(specifier, context, nextResolve) {
+    try {
+      return nextResolve(specifier, context);
+    } catch (err) {
+      const relative = specifier.startsWith("./") || specifier.startsWith("../");
+      if ((err as { code?: string }).code === "ERR_MODULE_NOT_FOUND" && relative && !/\.[cm]?[jt]s$/.test(specifier)) {
+        return nextResolve(`${specifier}.ts`, context);
+      }
+      throw err;
+    }
+  },
+});
+// Loaded after the hook, so that the package's own imports resolve.
+const { newId } = await import("@platform-mail/crypto");
 
 function fail(message: string, code = 1): never {
   process.stderr.write(`provision-mailbox: ${message}\n`);

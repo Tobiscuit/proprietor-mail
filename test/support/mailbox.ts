@@ -4,6 +4,7 @@ import { env } from "cloudflare:workers";
 import type { Role } from "../../src/capability";
 import type { MailboxStatus } from "../../src/directory/directory";
 import type { CallContext, Mailbox } from "../../src/mailbox/mailbox";
+import type { MailboxPorts } from "../../src/ports";
 import { base64urlFromBytes, canonicalClaims, canonicalHeader, randomJti, signToken } from "./capability-tokens";
 import { type FakePorts, fakePorts } from "./fakes";
 import { freshMailboxId, freshTenantId, testId } from "./ids";
@@ -63,8 +64,8 @@ export async function mailboxStub(id: string): Promise<DurableObjectStub<Mailbox
   return getAgentByName(env.Mailbox, id);
 }
 
-/** Replaces the live Mailbox object's ports with fakes. The object stays in memory for the test. */
-export async function injectPorts(stub: DurableObjectStub<Mailbox>, ports: FakePorts): Promise<void> {
+/** Replaces the live Mailbox object's ports (fakes, or a mix with real ones). The object stays in memory for the test. */
+export async function injectPorts(stub: DurableObjectStub<Mailbox>, ports: MailboxPorts): Promise<void> {
   await runInDurableObject(stub, (instance: Mailbox) => {
     instance.ports = ports;
   });

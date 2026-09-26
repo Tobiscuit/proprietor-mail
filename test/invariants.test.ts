@@ -119,10 +119,11 @@ describe("the scanner finds what it claims to (so the invariant tests cannot pas
     await runInDurableObject(mb.stub, (instance: Mailbox) => {
       (instance as unknown as { observability: unknown }).observability = genericObservability;
     });
-    const email = incomingEmail(markedMessage(m, mb.address), { to: mb.address, headers: [["subject", m.subject]] });
+    // Email Routing hands over header values as they arrived: RFC 2047-encoded.
+    const email = incomingEmail(markedMessage(m, mb.address), { to: mb.address, headers: [["subject", `=?UTF-8?Q?${qp(m.subject)}?=`]] });
     await worker.email!(email.message, env, createExecutionContext());
     const findings = search(diagnostics.messages, { subject: m.subject });
-    expect(findings).toContainEqual({ target: "subject", form: "plain", where: "diagnostics agents:email" });
+    expect(findings).toContainEqual({ target: "subject", form: "quoted-printable", where: "diagnostics agents:email" });
   });
 });
 
@@ -136,7 +137,7 @@ describe("M1: no plaintext at rest, and none in a log", () => {
       from: m.senderAddress,
       headers: [
         ["subject", `=?UTF-8?Q?${qp(m.subject)}?=`],
-        ["from", `${m.senderName} <${m.senderAddress}>`],
+        ["from", `=?UTF-8?B?${b64(m.senderName)}?= <${m.senderAddress}>`],
       ],
     });
     await worker.email!(email.message, env, createExecutionContext());
@@ -172,7 +173,7 @@ describe("M1: no plaintext at rest, and none in a log", () => {
     const mb = await provisionMailbox();
     const m = markers();
     const raw = crlf([`X-Filler: ${"a".repeat(300 * 1024)}`, `Subject: ${m.subject}`, "", m.body]);
-    await worker.email!(incomingEmail(raw, { to: mb.address, headers: [["subject", m.subject]] }).message, env, createExecutionContext());
+    await worker.email!(incomingEmail(raw, { to: mb.address, headers: [["subject", `=?UTF-8?Q?${qp(m.subject)}?=`]] }).message, env, createExecutionContext());
     expect(search(await everything(mb, captured, diagnostics.messages), m)).toEqual([]);
   });
 });
