@@ -6,8 +6,8 @@ platform cannot read at rest**. Every arriving message is encrypted to the
 mailbox's public key before it is stored, and only the owner's own devices
 hold the private key.
 
-This repository is public so that claim can be checked. It holds everything
-that touches message plaintext or key material on the server side:
+This repository is public so that claim can be checked. It holds the code
+that receives, stores and sends mail, and the code that handles the keys:
 
 | Path | What it is |
 |---|---|
@@ -17,17 +17,19 @@ that touches message plaintext or key material on the server side:
 | `contracts/` | The byte formats and RPC contracts, with test vectors: `envelope-v1`, `capability-v1`, `mail-service-v1` |
 | `specs/001-inbox-module/` | The spec (what and why, and the decisions), the domain model, the plan, the task list |
 
-The dashboard (sign-in, the inbox screens) is a separate application and is
-not published here; `contracts/` is the interface between the two.
+The dashboard is a separate application and is not published here: sign-in,
+the inbox screens, and the server actions that pass requests (and, for
+sending, the composed message) to the Worker. `contracts/` is the interface
+between the two.
 
 **Status:** built and tested, not deployed. Nothing here has handled real
 mail yet.
 
 ## The promise, and its limits
 
-**What the operator cannot do:** read stored mail. Subjects, senders, bodies,
-attachments, drafts, threads and search exist on the server only as
-ciphertext. The key that opens them is generated in the owner's browser and
+**What the operator cannot do:** read stored mail without first changing the
+code (see the limits below). Subjects, senders, bodies, attachments, drafts,
+threads and search exist on the server only as ciphertext. The key that opens them is generated in the owner's browser and
 stored on the server only in wrapped form: once per passkey (under a key
 derived from the passkey's WebAuthn PRF output) and once under a recovery key
 that is shown to the owner once and never stored. Whoever has the database,
@@ -42,7 +44,7 @@ and so does anyone who asks the operator for a client's mail.
 | Folder, read and starred flags | Mailbox storage | Set by the owner's own actions |
 | Envelope sender and recipient of arriving mail | Email Routing, in transit | That is how SMTP delivery works |
 | The full message, for the moment it arrives | Mail Worker memory | It is encrypted there, immediately |
-| Recipients, subject and full message of mail the owner sends, for the moment of sending | Mail Worker memory; SES delivery events include the subject | SES needs the message to send it |
+| Recipients, subject and full message of mail the owner sends, for the moment of sending | Mail Worker memory (and the dashboard's, which passes it on); SES delivery events include the subject | SES needs the message to send it |
 | That new mail arrived (a count, never content) | The dashboard, for push notifications | So the phone can buzz |
 | Which devices and recovery keys exist (labels and times, not secrets) | The mailbox's key ring | So the owner can manage devices |
 
@@ -55,9 +57,10 @@ than hidden (spec §2):
    plaintext, and a changed version of that code could copy it.
 2. **The code in the browser comes from the operator.** Decryption happens in
    JavaScript the dashboard serves. A changed version of it could read the key
-   after the owner unlocks. Publishing this code, and a hash manifest of every
-   dashboard deploy, puts such a change on the public record; no mainstream
-   browser can check a page against that record yet.
+   after the owner unlocks. The plan (Decision D2) is to publish a hash
+   manifest of every dashboard deploy before the first client mailbox, so that
+   such a change would be on the public record. That is not in place yet, and
+   no mainstream browser can check a page against such a record today.
 
 A mailbox's AI assistant is **off**, and v1 cannot turn it on: nothing on the
 server can decrypt, so a server-side assistant would break the promise
