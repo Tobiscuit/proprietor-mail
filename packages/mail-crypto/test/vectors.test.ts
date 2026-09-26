@@ -91,7 +91,7 @@ async function contractMessageKey(objectId: string, keyEnvelopeB64url: string): 
   return new Uint8Array(dek);
 }
 
-async function contractBlock(lead: Uint8Array, dek: Uint8Array, aad: string, block: Uint8Array): Promise<Uint8Array> {
+async function contractBlock(lead: Uint8Array, dek: Uint8Array, aad: string, block: Uint8Array<ArrayBuffer>): Promise<Uint8Array> {
   expect(hex(block.subarray(0, lead.length))).toBe(hex(lead));
   const key = await crypto.subtle.importKey("raw", new Uint8Array(dek), "AES-GCM", false, ["decrypt"]);
   const iv = block.subarray(lead.length, lead.length + 12);
