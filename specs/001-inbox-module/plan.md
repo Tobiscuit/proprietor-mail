@@ -62,11 +62,11 @@ rename is on the critical path before any key is enrolled). These remain
 the maintainer's decisions; both sessions use the recommendations as working defaults
 until he answers.
 
-**Found in the S2 audit, for the dashboard Worker:** its compatibility date
-must be 2026-04-21 or later (or it must set the
-`enhanced_error_serialization` flag). Otherwise the fields Mail's errors carry
-across RPC (`reason`, `retryAfterSeconds`, `retryable`) are lost and only the
-error's name survives.
+**Found in the S2 audit:** refusals crossing RPC as thrown errors were logged
+as uncaught exceptions and cancelled invocations, and lost their name and
+fields between two processes. `MailService` therefore answers every call with a
+plain result value (`contracts/mail-service-v1.md`), so the dashboard depends
+on no error-serialization flag or compatibility date.
 
 **The shell's commitments from step 0**, each with a test, because every
 dashboard deploy is inside the key's trust boundary (D2): a strict nonce CSP
@@ -182,10 +182,14 @@ holding the sealed raw message. Nothing else is written to R2.
 
 ## 4. `MailService` — the RPC surface
 
-Every method takes the capability string first. Errors cross RPC as `Error`s
-whose `name` is one of: `CapabilityRejected` (reason `invalid` | `expired`),
-`NotFound`, `Forbidden`, `InvalidRequest`, `MailboxNotActive`, `RateLimited`
-(`retryAfterSeconds`), `SendFailed` (`retryable`), `AssistantUnavailable`.
+Every method takes the capability string first and resolves to a
+`MailResult` (`contracts/mail-service-v1.md`): `{ ok: true, value }`, or
+`{ ok: false, error }` whose `error.name` is one of `CapabilityRejected` (reason
+`invalid` | `expired`), `NotFound`, `Forbidden`, `InvalidRequest`,
+`MailboxNotActive`, `RateLimited` (`retryAfterSeconds`), `SendFailed`
+(`retryable`), `AssistantUnavailable` or `InternalError`. Refusals are values,
+never thrown exceptions (changed after the S2 audit; the contract file says
+why). The "Returns" column below is the `value` of an `ok` result.
 
 | Method | Needs `mbx` | Role | Returns / does |
 |---|---|---|---|
