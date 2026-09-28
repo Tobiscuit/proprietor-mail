@@ -31,7 +31,7 @@ async function expectDecryptionFailed(p: Promise<unknown>) {
 async function referenceKek(ikm: Uint8Array<ArrayBuffer>, wrapId: string, kind: string): Promise<CryptoKey> {
   const base = await crypto.subtle.importKey("raw", ikm, "HKDF", false, ["deriveBits"]);
   const bits = await crypto.subtle.deriveBits(
-    { name: "HKDF", hash: "SHA-256", salt: utf8(wrapId), info: utf8(`platform-mail/v1/kek/${kind}`) }, // pragma: allowlist secret (HKDF parameter names)
+    { name: "HKDF", hash: "SHA-256", salt: utf8(wrapId), info: utf8(`proprietor-mail/v1/kek/${kind}`) }, // pragma: allowlist secret (HKDF parameter names)
     base,
     256,
   );
@@ -39,12 +39,12 @@ async function referenceKek(ikm: Uint8Array<ArrayBuffer>, wrapId: string, kind: 
 }
 
 const wrapAad = (mbx: string, wrapId: string, kind: string, keyId: string) =>
-  utf8(`platform-mail/v1/wrap|${mbx}|${wrapId}|${kind}|${keyId}`);
+  utf8(`proprietor-mail/v1/wrap|${mbx}|${wrapId}|${kind}|${keyId}`);
 
 describe("S1d prfInput", () => {
-  test('prf.eval.first = SHA-256("platform-mail/v1/prf|" + mailboxId + "|" + wrapId), 32 bytes', async () => {
+  test('prf.eval.first = SHA-256("proprietor-mail/v1/prf|" + mailboxId + "|" + wrapId), 32 bytes', async () => {
     const wrapId = newId("wrp");
-    const expected = await sha256(utf8(`platform-mail/v1/prf|${mailboxId}|${wrapId}`));
+    const expected = await sha256(utf8(`proprietor-mail/v1/prf|${mailboxId}|${wrapId}`));
     const input = await prfInput(mailboxId, wrapId);
     expect(input.length).toBe(32);
     expect(hex(input)).toBe(hex(expected));

@@ -13,7 +13,7 @@ const suite = new CipherSuite({
   aead: new Aes256Gcm(),
 });
 
-const MESSAGE_KEY_INFO = utf8("platform-mail/v1/message-key");
+const MESSAGE_KEY_INFO = utf8("proprietor-mail/v1/message-key");
 export const KEY_ENVELOPE_BYTES = 80; // enc (32) || ct (32 + 16)
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
@@ -25,7 +25,7 @@ export const WRAP_BLOCK = Uint8Array.of(0x01);
 export const BODY_OBJECT = utf8("PMB1");
 
 /**
- * `"platform-mail/v1/" + label + "|" + parts.join("|")`. Ids never contain
+ * `"proprietor-mail/v1/" + label + "|" + parts.join("|")`. Ids never contain
  * "|" (they are prefix_ + Crockford base32), and one that does is refused, so
  * two different id tuples can never produce the same associated data.
  */
@@ -35,10 +35,10 @@ export function context(label: string, ...parts: string[]): Uint8Array<ArrayBuff
       throw new TypeError(`an id must be a non-empty string without "|": ${JSON.stringify(part)}`);
     }
   }
-  return utf8(`platform-mail/v1/${label}|${parts.join("|")}`);
+  return utf8(`proprietor-mail/v1/${label}|${parts.join("|")}`);
 }
 
-/** Step 2: `enc || ct = HPKE.Seal(pkR, info, aad = "platform-mail/v1/message-key|" + mailboxId + "|" + objectId, dek)`. */
+/** Step 2: `enc || ct = HPKE.Seal(pkR, info, aad = "proprietor-mail/v1/message-key|" + mailboxId + "|" + objectId, dek)`. */
 export async function sealKeyEnvelope(
   recipientPublicKey: CryptoKey,
   mailboxId: string,

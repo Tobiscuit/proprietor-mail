@@ -40,16 +40,16 @@ AES-256-GCM** (KEM 0x0020, KDF 0x0001, AEAD 0x0002).
 1. **Message key.** `dek` = 32 random bytes. A new one for every message and
    every draft save.
 2. **Key envelope.** `(enc, ct) = HPKE.Seal(pkR = mailbox public key,
-   info = "platform-mail/v1/message-key",
-   aad = "platform-mail/v1/message-key|" + mailboxId + "|" + objectId,
+   info = "proprietor-mail/v1/message-key",
+   aad = "proprietor-mail/v1/message-key|" + mailboxId + "|" + objectId,
    pt = dek)`. Stored bytes: `enc (32) || ct (48)` = 80 bytes, base64url.
    `objectId` is the message id or the draft id.
 3. **Header block.** `iv` = 12 random bytes;
-   `aad = "platform-mail/v1/header|" + mailboxId + "|" + messageId`;
+   `aad = "proprietor-mail/v1/header|" + mailboxId + "|" + messageId`;
    bytes = `0x01 || iv || AES-256-GCM(dek, iv, aad, UTF-8 JSON of MessageHeader)`
    (the 16-byte tag is at the end, as Web Crypto produces it). Stored base64url.
 4. **Body object** (R2, key `mbx/<mailboxId>/msg/<messageId>`). `iv` = 12
-   random bytes; `aad = "platform-mail/v1/body|" + mailboxId + "|" + messageId`;
+   random bytes; `aad = "proprietor-mail/v1/body|" + mailboxId + "|" + messageId`;
    bytes = `"PMB1" || iv || AES-256-GCM(dek, iv, aad, raw RFC 5322 message)`.
    The raw message is exactly the bytes that arrived, or exactly the bytes
    handed to SES.
@@ -59,7 +59,7 @@ moves a header or a body to another message or another mailbox produces a
 decryption failure in the browser, not a quietly wrong message.
 
 **Drafts** use steps 1 and 2 with the draft id, and one block like step 3 with
-`aad = "platform-mail/v1/draft|" + mailboxId + "|" + draftId` over the UTF-8
+`aad = "proprietor-mail/v1/draft|" + mailboxId + "|" + draftId` over the UTF-8
 JSON of a Draft.
 
 ## MessageHeader (the plaintext inside the header block)
@@ -114,12 +114,12 @@ a decryption failure.
 A wrap is the mailbox private key encrypted under a key-encryption key (KEK)
 that only an owner's device or recovery key can reproduce.
 
-- `kek = HKDF-SHA256(ikm = secret, salt = wrapId, info = "platform-mail/v1/kek/" + kind)`,
+- `kek = HKDF-SHA256(ikm = secret, salt = wrapId, info = "proprietor-mail/v1/kek/" + kind)`,
   32 bytes, used as an AES-256-GCM key.
 - `kind = "passkey-prf"`: `secret` is the 32-byte WebAuthn PRF output for the
-  input `prf.eval.first = SHA-256("platform-mail/v1/prf|" + mailboxId + "|" + wrapId)`.
+  input `prf.eval.first = SHA-256("proprietor-mail/v1/prf|" + mailboxId + "|" + wrapId)`.
 - `kind = "recovery"`: `secret` is the 32-byte recovery secret.
-- `aad = "platform-mail/v1/wrap|" + mailboxId + "|" + wrapId + "|" + kind + "|" + keyId`.
+- `aad = "proprietor-mail/v1/wrap|" + mailboxId + "|" + wrapId + "|" + kind + "|" + keyId`.
 - Stored bytes: `0x01 || iv (12) || AES-256-GCM(kek, iv, aad, private key raw 32 bytes)`, base64url.
 
 ## The recovery key as people see it

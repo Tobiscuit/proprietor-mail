@@ -27,9 +27,9 @@ import { b64urlDecode, b64urlEncode, hex, sha256, utf8 } from "./reference";
 const vectorsPath = resolve(dirname(fileURLToPath(import.meta.url)), "../../../contracts/envelope-v1.vectors.json");
 
 const LABELS = {
-  mailboxKey: "platform-mail/v1 test vectors: mailbox private key (never use for real mail)",
-  prfOutput: "platform-mail/v1 test vectors: passkey PRF output (never use for real mail)",
-  recoveryKey: "platform-mail/v1 test vectors: recovery secret (never use for real mail)",
+  mailboxKey: "proprietor-mail/v1 test vectors: mailbox private key (never use for real mail)",
+  prfOutput: "proprietor-mail/v1 test vectors: passkey PRF output (never use for real mail)",
+  recoveryKey: "proprietor-mail/v1 test vectors: recovery secret (never use for real mail)",
 };
 
 test("write contracts/envelope-v1.vectors.json", async () => {

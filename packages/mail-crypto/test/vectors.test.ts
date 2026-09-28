@@ -84,9 +84,9 @@ async function contractMessageKey(objectId: string, keyEnvelopeB64url: string): 
   expect(envelope.length).toBe(80);
   const recipientKey = await suite.kem.deserializePrivateKey(fromHex(mailboxKey.skRm));
   const dek = await suite.open(
-    { recipientKey, enc: envelope.slice(0, 32), info: utf8("platform-mail/v1/message-key") },
+    { recipientKey, enc: envelope.slice(0, 32), info: utf8("proprietor-mail/v1/message-key") },
     envelope.slice(32),
-    utf8("platform-mail/v1/message-key|" + mailboxId + "|" + objectId),
+    utf8("proprietor-mail/v1/message-key|" + mailboxId + "|" + objectId),
   );
   return new Uint8Array(dek);
 }
@@ -103,7 +103,7 @@ async function contractUnwrap(v: WrapVector, ikm: Uint8Array<ArrayBuffer>): Prom
   const { id, kind, keyId, wrapped } = v.wrap;
   const base = await crypto.subtle.importKey("raw", ikm, "HKDF", false, ["deriveKey"]);
   const kek = await crypto.subtle.deriveKey(
-    { name: "HKDF", hash: "SHA-256", salt: utf8(id), info: utf8("platform-mail/v1/kek/" + kind) }, // pragma: allowlist secret (HKDF parameter names)
+    { name: "HKDF", hash: "SHA-256", salt: utf8(id), info: utf8("proprietor-mail/v1/kek/" + kind) }, // pragma: allowlist secret (HKDF parameter names)
     base,
     { name: "AES-GCM", length: 256 },
     false,
@@ -112,7 +112,7 @@ async function contractUnwrap(v: WrapVector, ikm: Uint8Array<ArrayBuffer>): Prom
   const block = b64urlDecode(wrapped);
   expect(block.length).toBe(61);
   expect(block[0]).toBe(0x01);
-  const aad = "platform-mail/v1/wrap|" + mailboxId + "|" + id + "|" + kind + "|" + keyId;
+  const aad = "proprietor-mail/v1/wrap|" + mailboxId + "|" + id + "|" + kind + "|" + keyId;
   return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: block.subarray(1, 13), additionalData: utf8(aad) }, kek, block.subarray(13)));
 }
 
@@ -167,9 +167,9 @@ describe("S1f vectors: every positive vector opens", () => {
     // From the contract's text:
     const dek = await contractMessageKey(m.messageId, m.sealed.keyEnvelope);
     expect(hex(dek)).toBe(m.dek);
-    const headerJson = await contractBlock(Uint8Array.of(0x01), dek, "platform-mail/v1/header|" + mailboxId + "|" + m.messageId, b64urlDecode(m.sealed.header));
+    const headerJson = await contractBlock(Uint8Array.of(0x01), dek, "proprietor-mail/v1/header|" + mailboxId + "|" + m.messageId, b64urlDecode(m.sealed.header));
     expect(JSON.parse(new TextDecoder().decode(headerJson))).toStrictEqual(m.header);
-    const raw = await contractBlock(utf8("PMB1"), dek, "platform-mail/v1/body|" + mailboxId + "|" + m.messageId, body);
+    const raw = await contractBlock(utf8("PMB1"), dek, "proprietor-mail/v1/body|" + mailboxId + "|" + m.messageId, body);
     expect(hex(raw)).toBe(hex(utf8(m.raw)));
   });
 
@@ -177,14 +177,14 @@ describe("S1f vectors: every positive vector opens", () => {
     expect(await openDraft(priv, { mailboxId, draftId: d.draftId }, d.sealed)).toStrictEqual(d.draft);
     const dek = await contractMessageKey(d.draftId, d.sealed.keyEnvelope);
     expect(hex(dek)).toBe(d.dek);
-    const json = await contractBlock(Uint8Array.of(0x01), dek, "platform-mail/v1/draft|" + mailboxId + "|" + d.draftId, b64urlDecode(d.sealed.sealed));
+    const json = await contractBlock(Uint8Array.of(0x01), dek, "proprietor-mail/v1/draft|" + mailboxId + "|" + d.draftId, b64urlDecode(d.sealed.sealed));
     expect(JSON.parse(new TextDecoder().decode(json))).toStrictEqual(d.draft);
   });
 
   test("passkey wrap (fixed PRF output): prf input, unwrap, public key check", async () => {
     const v = vectors.wraps.find((w) => w.wrap.kind === "passkey-prf")!;
     expect(v.prfOutput).toBe(hex(await sha256(utf8(v.secretLabel))));
-    expect(v.prfInput).toBe(hex(await sha256(utf8("platform-mail/v1/prf|" + mailboxId + "|" + v.wrap.id))));
+    expect(v.prfInput).toBe(hex(await sha256(utf8("proprietor-mail/v1/prf|" + mailboxId + "|" + v.wrap.id))));
     expect(hex(await prfInput(mailboxId, v.wrap.id))).toBe(v.prfInput);
     const unwrapped = await unwrapPrivateKey(v.wrap, { mailboxId, secret: fromHex(v.prfOutput!) }); // pragma: allowlist secret (a test vector field)
     expect(unwrapped.keyId).toBe(mailboxKey.keyId);
