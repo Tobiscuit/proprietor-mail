@@ -30,8 +30,8 @@ export function productionPorts(env: Env): MailboxPorts {
 }
 
 /**
- * The new-mail signal until spec 007 step 3 gives the dashboard a `MailSignals`
- * entrypoint to bind (wrangler.jsonc has the sketch). Deliberately silent: it
+ * The new-mail signal until the dashboard exports a `MailSignals` entrypoint
+ * to bind (wrangler.jsonc has the sketch). Deliberately silent: it
  * receives a count and drops it.
  */
 export const noNewMailSignal: NewMailSignal = {

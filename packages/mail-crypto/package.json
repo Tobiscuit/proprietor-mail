@@ -1,14 +1,21 @@
 {
   "name": "@platform-mail/crypto",
   "version": "0.0.0",
-  "private": true,
   "description": "Envelope v1 and key wrapping for platform-mail (contracts/envelope-v1.md). Runs in the browser and in Workers.",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Tobiscuit/platform-mail.git",
+    "directory": "packages/mail-crypto"
+  },
   "type": "module",
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts"
   },
+  "files": [
+    "src/"
+  ],
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.workers.json && tsc -p tsconfig.test.json",
@@ -20,5 +27,9 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260926.1"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }

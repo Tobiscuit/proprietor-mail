@@ -1,9 +1,9 @@
 Date: Sat, 26 Sep 2026 15:04:05 +0000
-From: "Operator" <hello@operator.example>
+From: "Example" <hello@example.com>
 To: ana@example.com
 Subject: Your appointment on Monday, 28 September 2026 at 09:30 has been
  confirmed by our team
-Message-ID: <000102030405060708090a0b0c0d0e0f@operator.example>
+Message-ID: <000102030405060708090a0b0c0d0e0f@example.com>
 MIME-Version: 1.0
 Content-Type: multipart/alternative; boundary="=_101112131415161718191a1b"
 

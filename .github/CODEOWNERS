@@ -1,0 +1,12 @@
+# Every change is reviewed by the maintainer. The paths below are listed on
+# their own because a change there changes what the promise rests on: the
+# key handling, the byte formats, the Worker's storage and the release path.
+*                          @Tobiscuit
+
+/packages/mail-crypto/     @Tobiscuit
+/contracts/                @Tobiscuit
+/src/                      @Tobiscuit
+/migrations/               @Tobiscuit
+/.github/                  @Tobiscuit
+/LICENSE                   @Tobiscuit
+/NOTICE                    @Tobiscuit

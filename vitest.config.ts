@@ -4,7 +4,7 @@ import { defineConfig } from "vitest/config";
 import { escapeGuard } from "./test/harness/escape-guard.ts";
 import { TEST_CAPABILITY_KEYS } from "./test/support/test-keys.ts";
 
-// THREE KINDS OF PROJECT, one `npm test` (the SEO engine's harness, adapted).
+// THREE KINDS OF PROJECT, one `npm test`.
 //
 // `worker` runs inside workerd, not Node: a real D1 with the real migrations
 // applied, real SQLite-backed Durable Objects, a real R2 simulation. What passes

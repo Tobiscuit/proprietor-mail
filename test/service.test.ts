@@ -364,8 +364,8 @@ describe("policy and audit", () => {
 
   it("sets the display name, and audits the change without its value", async () => {
     const mb = await provisionMailbox();
-    const policy = valueOf(await mail().setPolicy(await capFor(mb), { displayName: "Operator", assistant: "off" }));
-    expect(policy).toMatchObject({ displayName: "Operator", assistant: "off" });
+    const policy = valueOf(await mail().setPolicy(await capFor(mb), { displayName: "Example", assistant: "off" }));
+    expect(policy).toMatchObject({ displayName: "Example", assistant: "off" });
     const [latest] = valueOf(await mail().audit(await capFor(mb), {}));
     expect(latest).toMatchObject({ actor: "acc_owner", action: "policy-changed", detail: { fields: "displayName,assistant" } });
     expect(refusalOf(await mail().setPolicy(await capFor(mb), { displayName: "a\r\nBcc: x@y.test" }))).toMatchObject({ name: "InvalidRequest" });

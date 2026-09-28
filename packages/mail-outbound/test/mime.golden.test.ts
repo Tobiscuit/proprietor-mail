@@ -22,7 +22,7 @@ describe("buildMime: one golden file per MIME shape", () => {
   it.each(cases)("%s.eml", (name, msg) => {
     const built = buildMime(msg, goldenOptions());
     expect(new TextDecoder().decode(built.raw)).toBe(golden(name));
-    expect(built.messageId).toBe("000102030405060708090a0b0c0d0e0f@operator.example");
+    expect(built.messageId).toBe("000102030405060708090a0b0c0d0e0f@example.com");
   });
 
   it("returns to + cc + bcc as the envelope, lower-cased and de-duplicated", () => {

@@ -16,7 +16,7 @@
 export interface ProvisionInput {
   /** `mbx_` + 26 lowercase Crockford base32 characters (contracts/envelope-v1.md). */
   id: string;
-  /** The engine's tenant id. */
+  /** The platform's tenant id. */
   tenantId: string;
   address: string;
   sesTenant?: string | null;

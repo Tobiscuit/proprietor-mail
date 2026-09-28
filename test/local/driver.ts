@@ -9,7 +9,7 @@ import { TEST_KEY_B64URL, TEST_KID } from "../support/test-keys";
  * The dashboard's part in a LOCAL end-to-end run (test/README.md), nothing
  * more: it mints capabilities with the public TEST key (the one in
  * contracts/capability-v1.vectors.json) and calls MailService over a real
- * service binding, as spec 007's server actions will.
+ * service binding, as the dashboard's server actions will.
  *
  *   POST /enroll?tenant=…&mbx=…   the owner's setup: a key pair and a recovery wrap
  *   GET  /list?tenant=…&mbx=…     what MailService returns: ids, sizes, ciphertext

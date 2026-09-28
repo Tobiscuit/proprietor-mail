@@ -1,8 +1,8 @@
 Date: Sat, 26 Sep 2026 15:04:05 +0000
-From: hello@operator.example
+From: hello@example.com
 To: "Ana" <ana@example.com>
 Subject: Invoice 2026-041
-Message-ID: <000102030405060708090a0b0c0d0e0f@operator.example>
+Message-ID: <000102030405060708090a0b0c0d0e0f@example.com>
 MIME-Version: 1.0
 Content-Type: multipart/mixed; boundary="=_101112131415161718191a1b"
 
@@ -23,14 +23,14 @@ Content-Type: multipart/related; type="text/html";
 Content-Type: text/html; charset=utf-8
 Content-Transfer-Encoding: quoted-printable
 
-<p>Your invoice is attached.</p><img src=3D"cid:logo.0001@operator.example" alt=
-=3D"Operator">
+<p>Your invoice is attached.</p><img src=3D"cid:logo.0001@example.com" alt=
+=3D"Example">
 
 --=_28292a2b2c2d2e2f30313233
 Content-Type: image/png; name="logo.png"
 Content-Transfer-Encoding: base64
 Content-Disposition: inline; filename="logo.png"
-Content-ID: <logo.0001@operator.example>
+Content-ID: <logo.0001@example.com>
 
 iVBORw0KGgo=
 --=_28292a2b2c2d2e2f30313233--

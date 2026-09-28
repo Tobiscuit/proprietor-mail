@@ -18,12 +18,12 @@ describe("scripts/provision-mailbox.ts", () => {
   it("prints one INSERT for a provisioned mailbox, with the address lower-cased", () => {
     const out = execFileSync(
       process.execPath,
-      [script, "--tenant", "tnt_operator", "--address", "Hello@Operator.dev", "--id", ID, "--ses-tenant", "client-operator", "--configuration-set", "send-operator-mail"],
+      [script, "--tenant", "tnt_example", "--address", "Hello@Example.com", "--id", ID, "--ses-tenant", "client-example", "--configuration-set", "send-example-mail"],
       { cwd: root, encoding: "utf8" },
     );
     const statements = out.split("\n").filter((l) => l.trim() !== "" && !l.startsWith("--"));
     expect(statements.join(" ")).toMatch(
-      /^INSERT INTO mailboxes .* VALUES \('mbx_0123456789abcdefghjkmnpqrs', 'tnt_operator', 'hello@operator\.dev', 'provisioned', 'client-operator', 'send-operator-mail', '\d{4}-\d\d-\d\dT[\d:.]+Z'\);$/,
+      /^INSERT INTO mailboxes .* VALUES \('mbx_0123456789abcdefghjkmnpqrs', 'tnt_example', 'hello@example\.com', 'provisioned', 'client-example', 'send-example-mail', '\d{4}-\d\d-\d\dT[\d:.]+Z'\);$/,
     );
     // It tells the operator how to run it, and that it has not been run.
     expect(out).toMatch(/^-- .*wrangler d1 execute platform-mail/m);

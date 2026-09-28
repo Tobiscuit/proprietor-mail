@@ -1,29 +1,11 @@
 platform-mail
-Copyright (c) 2026 Operator
+Copyright 2026 Operator
 
-This repository adapts parts of Agentic Inbox:
-  https://github.com/cloudflare/agentic-inbox (commit 48039bb)
-  Copyright (c) 2026 Cloudflare, Inc.
-  Licensed under the Apache License, Version 2.0 (LICENSES/Apache-2.0.txt).
+This product includes software adapted from Agentic Inbox
+(https://github.com/cloudflare/agentic-inbox, commit 48039bb),
+Copyright (c) 2026 Cloudflare, Inc.,
+licensed under the Apache License, Version 2.0.
 
-Every file that adapts Agentic Inbox code keeps Cloudflare's copyright header
-and adds a line stating that it was modified, when, and what changed. The list
-of adapted files is maintained below; a file not listed contains no Agentic
-Inbox code.
-
-Adapted files:
-  src/mailbox/folders.ts   from shared/folders.ts
-                           (drafts folder id is `drafts`; six fixed system
-                           folders; display helpers and tool descriptions
-                           removed)
-  src/mailbox/schema.ts    the migration runner, from
-                           workers/durableObject/migrations.ts
-                           (tracking table renamed mailbox_migrations; every
-                           migration inside transactionSync; BEGIN/COMMIT
-                           stripping removed)
-  src/mail/html-text.ts    stripHtmlToText, from workers/lib/email-helpers.ts
-                           (also decodes common HTML entities; used only for
-                           the snippet sealed inside a message header)
-
-packages/mail-crypto and packages/mail-outbound contain no Agentic Inbox
-code.
+The adapted files are src/mailbox/folders.ts, src/mailbox/schema.ts and
+src/mail/html-text.ts. Each keeps Cloudflare's copyright notice and states
+what was changed.

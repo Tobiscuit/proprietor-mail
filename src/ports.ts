@@ -37,8 +37,8 @@ export interface RawMailer {
 /**
  * "A new message arrived" to the business's dashboard Agent: a count, never
  * content (plan.md §1 seam 4). The dashboard will export an entrypoint
- * `MailSignals` with exactly this method, bound as MAIL_SIGNALS once spec 007
- * step 3 exists.
+ * `MailSignals` with exactly this method, bound as MAIL_SIGNALS once the
+ * dashboard ships it.
  */
 export interface NewMailSignal {
   unread(event: { tenantId: string; mailboxId: string; unread: number }): Promise<void>;

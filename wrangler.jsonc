@@ -19,7 +19,7 @@
   // Logs carry ids, sizes and outcomes only (domain-model M1, spec D8).
   "observability": { "enabled": true },
 
-  // The Mail Directory: Mail's own D1, never the engine's.
+  // The Mail Directory: Mail's own D1, never another application's.
   // PLACEHOLDER database_id. Nothing remote has been created and nothing here
   // creates it: `wrangler d1 create` is part of plan.md §6, applied by nobody
   // yet. Local runs (`wrangler dev --local`, the tests) never read this id.
@@ -49,13 +49,13 @@
     "SES_REGION": "us-east-1"
   }
 
-  // Secrets (Vault → process environment → `wrangler secret put`, never argv
-  // and never a kept file):
-  //   MAIL_CAPABILITY_KEYS   Vault secret/platform-mail/capability, field `keys`
-  //   SES_ACCESS_KEY_ID      Vault secret/aws/ses-send-mail
-  //   SES_SECRET_ACCESS_KEY  Vault secret/aws/ses-send-mail
+  // Secrets (the operator's secret store → process environment →
+  // `wrangler secret put` reading stdin; never argv and never a kept file):
+  //   MAIL_CAPABILITY_KEYS   the capability keys (contracts/capability-v1.md)
+  //   SES_ACCESS_KEY_ID      the client-mail IAM principal (plan.md §6)
+  //   SES_SECRET_ACCESS_KEY  the client-mail IAM principal
   //
-  // The new-mail signal (spec 007 step 3). Until the dashboard Worker exports
+  // The new-mail signal (plan.md §1, seam 4). Until the dashboard Worker exports
   // `MailSignals`, the NewMailSignal port has a no-op adapter; then:
   //   "services": [
   //     { "binding": "MAIL_SIGNALS", "service": "<dashboard worker>", "entrypoint": "MailSignals" }

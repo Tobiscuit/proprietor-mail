@@ -13,7 +13,7 @@ const text = (raw: Uint8Array) => new TextDecoder().decode(raw);
 const headerBlock = (raw: string) => raw.slice(0, raw.indexOf("\r\n\r\n") + 2);
 
 const base: ComposedMessage = {
-  from: { name: "Mailbox", address: "hello@operator.example" },
+  from: { name: "Mailbox", address: "hello@example.com" },
   to: [{ address: "ana@example.com" }],
   subject: "Hello",
   text: "Hi.\n",
@@ -47,19 +47,19 @@ describe("buildMime: wire format invariants", () => {
   });
 
   it("writes the Date and a Message-ID from the injected clock and randomness", () => {
-    const built = buildMime(base, { messageIdDomain: "operator.example", now: new Date("2027-02-03T04:05:06Z"), random: counterRandom(0xf0) });
+    const built = buildMime(base, { messageIdDomain: "example.com", now: new Date("2027-02-03T04:05:06Z"), random: counterRandom(0xf0) });
     const headers = headerBlock(text(built.raw));
     expect(headers).toContain("Date: Wed, 03 Feb 2027 04:05:06 +0000\r\n");
-    expect(built.messageId).toBe("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff@operator.example");
+    expect(built.messageId).toBe("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff@example.com");
     expect(headers).toContain(`Message-ID: <${built.messageId}>\r\n`);
     expect(headers).toContain("MIME-Version: 1.0\r\n");
   });
 
   it("defaults to the real clock and crypto.getRandomValues", () => {
     const before = Date.now();
-    const a = buildMime(base, { messageIdDomain: "operator.example" });
-    const b = buildMime(base, { messageIdDomain: "operator.example" });
-    expect(a.messageId).toMatch(/^[0-9a-f]{32}@operator\.dev$/);
+    const a = buildMime(base, { messageIdDomain: "example.com" });
+    const b = buildMime(base, { messageIdDomain: "example.com" });
+    expect(a.messageId).toMatch(/^[0-9a-f]{32}@example\.com$/);
     expect(a.messageId).not.toBe(b.messageId);
     const date = /^Date: (.+)$/m.exec(text(a.raw))![1]!;
     expect(Math.abs(Date.parse(date) - before)).toBeLessThan(5000);
@@ -68,7 +68,7 @@ describe("buildMime: wire format invariants", () => {
   it("puts inline images with a Content-ID into multipart/related under the HTML", () => {
     const s = text(buildMime(MIXED, goldenOptions()).raw);
     expect(s).toContain('Content-Type: multipart/related; type="text/html";');
-    expect(s).toContain("Content-ID: <logo.0001@operator.example>\r\n");
+    expect(s).toContain("Content-ID: <logo.0001@example.com>\r\n");
     expect(s).toContain("Content-Disposition: inline; filename=\"logo.png\"\r\n");
   });
 
@@ -173,11 +173,11 @@ describe("buildMime: header injection and malformed input", () => {
     replyTo: [{ name: "R", address: "r@example.com" }],
     inReplyTo: "parent@mail.example.com",
     references: ["root@mail.example.com"],
-    attachments: [{ filename: "a.png", mimeType: "image/png", content: utf8("x"), inline: true, contentId: "a@operator.example" }],
+    attachments: [{ filename: "a.png", mimeType: "image/png", content: utf8("x"), inline: true, contentId: "a@example.com" }],
   });
   const fields: [string, (p: string) => Mutator][] = [
     ["from.name", (p) => (m) => (m.from = { ...m.from, name: `x${p}y` })],
-    ["from.address", (p) => (m) => (m.from = { ...m.from, address: `x${p}@operator.example` })],
+    ["from.address", (p) => (m) => (m.from = { ...m.from, address: `x${p}@example.com` })],
     ["to[0].name", (p) => (m) => (m.to = [{ name: `x${p}y`, address: "ana@example.com" }])],
     ["to[0].address", (p) => (m) => (m.to = [{ address: `ana@example.com${p}` }])],
     ["cc[0].name", (p) => (m) => (m.cc = [{ name: `x${p}y`, address: "c@example.com" }])],
@@ -191,7 +191,7 @@ describe("buildMime: header injection and malformed input", () => {
     ["references[0]", (p) => (m) => (m.references = [`root${p}@mail.example.com`])],
     ["attachments[0].filename", (p) => (m) => (m.attachments![0] = { ...m.attachments![0]!, filename: `a${p}.png` })],
     ["attachments[0].mimeType", (p) => (m) => (m.attachments![0] = { ...m.attachments![0]!, mimeType: `image/png${p}` })],
-    ["attachments[0].contentId", (p) => (m) => (m.attachments![0] = { ...m.attachments![0]!, contentId: `a${p}@operator.example` })],
+    ["attachments[0].contentId", (p) => (m) => (m.attachments![0] = { ...m.attachments![0]!, contentId: `a${p}@example.com` })],
   ];
 
   it("the unmodified message is valid", () => {
@@ -211,7 +211,7 @@ describe("buildMime: header injection and malformed input", () => {
   }
 
   it("refuses CR, LF or NUL in the Message-ID domain", () => {
-    for (const payload of PAYLOADS) expectInvalid(base, { ...goldenOptions(), messageIdDomain: `operator.example${payload}` });
+    for (const payload of PAYLOADS) expectInvalid(base, { ...goldenOptions(), messageIdDomain: `example.com${payload}` });
   });
 
   it.each([
