@@ -174,6 +174,48 @@ messages, pull request titles and bodies, comments and specs.
 | **D9** | **Who may open a mailbox.** The operator is an editor member of client businesses (so they can support clients in the dashboard). Business membership must not mean mail access. | **Only owners open a mailbox by default** (`openRoles: ["owner"]`), and the key ceremony runs on the owner's own device. The operator never enrolls a key for a client, never sees a client's recovery key, and never sets a client's mailbox up "to save them time". |
 | **D10** | **The repository's license, when opened.** | **Apache-2.0**, matching the upstream the adapted code comes from, and allowing anyone to verify builds. |
 
+### Round 2 (2026-09-28): what changed, and what is open
+
+The operator said go on finishing the module so that the operator's own
+mailbox can go live, and then preparing the first client's.
+
+**Updated decisions:**
+
+- **D3, amended.** The frame's `sandbox` also carries `allow-popups` and
+  `allow-popups-to-escape-sandbox`, so that a link can open in a new tab;
+  still no `allow-scripts`, `allow-same-origin`, `allow-forms` or top
+  navigation. **No remote content at all in v1** (domain-model G17): the page's
+  policy forbids remote images, and loosening it on the page that holds the
+  key is not worth a feature, so there is no "show images" button. Inline
+  images are shown as `data:` URLs. An email's own styles are kept by stamping
+  the page's nonce on its sanitised `<style>` elements (G18). Agreed with the
+  dashboard's maintainers on 2026-09-28.
+- **D4, updated.** The first mailbox is the operator's own, with a primary
+  address and two further addresses delivering into the SAME mailbox (G12).
+  One of them is also the address the platform's notification mail is sent
+  from, so owners' replies to that mail arrive in this mailbox (G14).
+- **D5, decided.** The dashboard's final host is chosen, and that exact host
+  is the WebAuthn RP ID. The dashboard that carries the inbox must be serving
+  that host before anyone enrolls (G19).
+
+**Open, each with a recommendation.** Only the operator decides these.
+
+| # | Decision | Recommendation |
+|---|---|---|
+| **D11** | **The rename** to `proprietor-mail`, `@proprietor/*`, and "business" for "tenant" (protocol labels, capability issuer, audience and claim, Worker, D1 and R2 names). Free only until the first mailbox enrolls or the repository is published. | **Merge it first.** Then rename the repository on GitHub, and create the npm organization before the first package release. |
+| **D12** | **Enroll before the new dashboard reaches its final host?** WebAuthn lets a page on a host UNDER the RP ID use that RP ID. | **Wait for the cutover.** If it is more than two weeks away and the mailbox is wanted sooner, serve the new dashboard's preview on one host under the RP ID, behind the same access gate, and enroll there. Do this only if nothing except the dashboard is ever served on any host under the RP ID. The passkey keeps working after the cutover. |
+| **D13** | **The operator's first weeks in dual delivery.** | **Yes.** Two weeks in `store-and-forward` to the address the routing forwards to today, then `store` on the operator's word: `plan.md` §8's procedure, run first on the operator's own mail. |
+| **D14** | **Sending as any of the mailbox's addresses** (M6 as amended). | **Yes.** The sending principal's policy lists exactly those addresses and pins the SES tenant (`ses:TenantName`). |
+| **D15** | **Suppression kept as keyed hashes** (M11), rather than plaintext addresses as D8 would allow. | **Yes.** The bounce itself still reaches the owner as a sealed message, through SES feedback forwarding. |
+| **D16** | **The copyright holder's name** in `NOTICE` and in the modification notices. | The operator's choice. Nothing in the code depends on it; the rename leaves it untouched. |
+| **D17** | **Restrict the platform's notification sender to its own `From` addresses** (D7's second half). Today that principal has no `ses:FromAddress` condition. | **Yes**, in that application's own (hand-managed) policy. Until then, D7 holds by configuration set only. |
+| **D18** | **Create the operator's own business on the platform** (G20). | **Yes**, before the mailbox is provisioned. |
+| **D19** | **No remote images in v1** (D3 as amended). | **Yes.** Both applications' maintainers agree. |
+| **D20** | **Workers Logs for the Mail Worker.** | **Keep the Worker's own id-only log lines, and turn invocation logs off** (G25). The throwaway probe in `tasks.md` S8 confirms what is left. |
+| **D21** | **PKCS #8 wraps opened with `unwrapKey`** (K1). The raw private key then never exists as bytes in JavaScript. This is a change to envelope v1's wrap bytes, free before the first enrollment. | **Yes.** The architect recommends it; it can be reverted until the first enrollment. |
+| **D22** | **Attachments above the dashboard's server-action body limit** (1 MB by default in its framework). | Raise the limit for the inbox's send action only. If the framework cannot do that per action, allow the inbox module one `POST` route for sending, behind the same gate. For the dashboard's maintainers and the operator. |
+| **D23** | **The SES tenant for each mailbox's business**, with suppression scoped to the tenant and the `standard` reputation policy. | **Yes**, the operator's own business included. |
+
 ## 4. What the platform can see, even under Option A
 
 This is the list D8 accepts and publishes. "Can see" means the operator could
@@ -291,8 +333,9 @@ for this spec and are listed as future work, not as a plan.
 
 ## 7. Out of scope for v1
 
-- Aliases (several addresses on one mailbox) and several mailboxes per
-  business. The Directory allows one of each per business for now.
+- Several mailboxes per business. (Several addresses on one mailbox arrived
+  in round 2: D4, domain-model G12.)
+- Remote images, and any remote content in a message (D3 as amended).
 - Full-text search of bodies (v1 searches decrypted headers and snippets in
   the browser).
 - Spam filtering beyond what Email Routing does before delivery; a `spam`
@@ -318,6 +361,25 @@ for this spec and are listed as future work, not as a plan.
 | agentic-inbox stores bodies in plaintext in the mailbox Durable Object's SQLite and attachments in R2, searches with SQL, drafts on every arrival, and exposes an MCP server with no per-mailbox authorization | its source at commit 48039bb (read, not assumed) |
 | The operator's business domain has no MX and no DMARC record, and its DNS is on Cloudflare | `dig @1.1.1.1` |
 
+**Round 2 (checked 2026-09-28):**
+
+| Fact | Source |
+|---|---|
+| `message.to` is a single envelope recipient, so one message to two routed addresses reaches the Worker once per address; `setReject` is a permanent SMTP failure; `forward()` needs a verified destination | Cloudflare Email Workers docs, workers-types |
+| Workers Logs' invocation log for an email names the recipient; `observability.logs.invocation_logs: false` turns those off | Cloudflare Workers Logs docs |
+| wrangler 4.141 resolves a D1 binding by `database_name` when `database_id` is omitted (and creates one when the lookup fails, so the runbook checks first); `wrangler secret put` reads standard input | wrangler source and docs |
+| SES tenants: `aws_sesv2_tenant` and `aws_sesv2_tenant_resource_association` exist (hashicorp/aws 6.28 and 6.29); tenant suppression scope and reputation policy are API/CLI only; a send with `TenantName` succeeds only when its identity and configuration set are associated with that tenant; under `TENANT` suppression scope the account-level list does not apply | AWS SES API reference and developer guide; the provider's changelog |
+| `ses:TenantName` is a condition key of `ses:SendEmail`; tenant is not a resource type of `SendEmail` | AWS Service Authorization Reference |
+| SES message tags: ASCII letters, digits, `_` and `-`, at most 256 characters; SES events carry no tenant field; bounce subtypes include `OnAccountSuppressionList` and `OnTenantSuppressionList` | SES API reference, event-publishing examples |
+| A configuration set named on the send overrides the identity's default one; email feedback forwarding is on by default | SES developer guide |
+| SQS speaks the AWS JSON protocol (`X-Amz-Target: AmazonSQS.<Op>`), SigV4-signed; with raw delivery the message body is the SES event itself | SQS API reference, SNS docs |
+| WebAuthn PRF: the salt is SHA-256("WebAuthn PRF" ‖ 0x00 ‖ input); `evalByCredential` is not allowed at creation; results at creation depend on the authenticator (Chromium's virtual authenticator with `hasPrf` returns them at both) | WebAuthn Level 3; reproduced in Chromium 153 |
+| X25519 in Web Crypto: Chrome 133, Firefox 130, Safari 17; importing a private scalar as `raw` silently yields a PUBLIC key; `unwrapKey("pkcs8", …, AES-GCM)` yields a non-extractable private key; `@hpke/core` 1.9.0 opens with a non-extractable `CryptoKey` and has no fallback without native X25519 | MDN; reproduced in Chromium 153 and Firefox 155; its source |
+| An `about:srcdoc` document inherits the embedder's policy container, sandboxed or not: `<style>` needs the nonce, remote images are blocked, `frame-ancestors` does not block it, `frame-src` does not apply | HTML and CSP3 specifications; web-platform-tests results |
+| `srcdoc` is a Trusted Types sink; React 19.3 passes the value through unchanged; Trusted Types ship in Chrome 83, Firefox 148, Safari 26 | Trusted Types specification; React source |
+| DOMPurify 3.4.16 is the minimum version without a 2026 advisory; postal-mime 3.0.1 has the linear-time parsing fixes (4.0.0 is a rewrite without security fixes) | their advisories and changelogs |
+| The dashboard's framework caps a server action's body at 1 MB by default | its source (vinext 1.0.0-beta.12) |
+
 **Not verified**, and where it gets checked:
 
 - Whether an exception thrown from the `email()` handler makes Email Routing
@@ -326,8 +388,13 @@ for this spec and are listed as future work, not as a plan.
   move from forwarding (`plan.md` §8) forwards before it stores. Checked
   before any address is routed to the Worker (`tasks.md` S8).
 - Which fields Email Routing's activity log shows the account owner.
-- Whether Terraform's AWS provider has SES tenant resources yet (otherwise the
-  AWS CLI).
+- Whether a page's `blob:` URL loads inside the opaque-origin frame (the
+  reason `mail-client` uses `data:`), and React under ENFORCED Trusted Types:
+  S6a's browser tests.
+- Whether SES v2 forwards a bounce notification to the `From` address when no
+  feedback address is given: the S8 simulator send.
+- The exact errors for a send through an unassociated or paused SES tenant:
+  S5's tests treat both as a non-retryable refusal until seen.
 - Browser support for X25519 in Web Crypto. `mail-crypto` uses `@hpke/core`
   and carries its pure-JavaScript X25519 fallback until the builder confirms
   the browsers that matter support it natively.

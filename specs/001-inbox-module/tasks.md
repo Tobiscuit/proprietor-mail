@@ -228,43 +228,95 @@ sender (header-injection handling, quoted display names).
   audit table after one year, in the same daily alarm as the Trash purge;
   today both grow without limit
 
-## S5 — Deliverability feed  *[H: needs the §6 AWS resources]*
+## Round 2 (2026-09-28): to the operator's mailbox going live
 
-- [H] pull `proprietor-mail-events` from SQS on a schedule; per-mailbox
-  suppression checked before `send`; events kept 90 days with only the
-  recipient address, the event type and the time (D8)
+Base: the rename (R0) on `main`, then the round-2 spec. Each slice branches
+from the round-2 spec branch and opens its pull request against it. A slice
+touches only the files it owns; `package-lock.json` is regenerated at
+integration. Every rule for builders above still holds.
 
-## S6 — The inbox screens  *[H: the dashboard's first step (shell, session, module contract) and the theme-token contract]*
+### R0 — The rename (D11) — builder
 
-- [H] `plan.md` §10, as a change to the dashboard's inbox route group (a
-  separate application), with the vendored mail-crypto at
-  `_vendor/mail-crypto/` and the GET-only streaming route handler (`plan.md`
-  §1). Works under the shell's CSP and Trusted Types: the frame's `srcdoc` is
-  set only through a named Trusted Types policy returning DOMPurify's
-  `TrustedHTML`; verify in a real browser (Playwright) that the `srcdoc`
-  document, which inherits the page's CSP, renders under it, and that the
-  inherited `frame-ancestors 'none'` does not block it
+- [~] `platform-mail` → `proprietor-mail`, `@platform-mail/*` →
+  `@proprietor/*`, capability issuer, audience and claim (`business`),
+  "tenant" → "business" in Mail's own vocabulary; both vector files
+  regenerated; a fitness test that fails on the old names outside `specs/`.
 
-## S7 — The assistant  *[H: Decision D1]*
+### S2b — Addresses (G12, G13, M6 amended) — [ ] not started
 
-- [H] `plan.md` §9
+**Contract:** `plan.md` §12; `mail-service-v1` (`addresses`, `from`);
+envelope v1 `envelopeTo`. **Owns:** `migrations/0002_addresses.sql`,
+`src/directory/**`, `src/inbound/**`, `src/mail/header.ts`,
+`scripts/provision-mailbox.ts`, in `src/mailbox/mailbox.ts` the hunks for
+`describe`, `parseSendRequest` and the `From` in `sendReserved`, in
+`src/service.ts` `mailboxes()`, in `packages/mail-crypto` the MessageHeader
+type, its parse/serialise and the vectors.
+**Acceptance:** an alias routes to its mailbox; an unknown address is
+rejected; the primary is always one of the addresses (D-1, D-2); `from`
+outside the mailbox's addresses is refused, inside is used; `envelopeTo` is
+sealed (the M1 marker scan still passes) and opens in the browser; the vectors
+regenerate and verify.
 
-## S8 — Activation of the operator's own mailbox  *[H: D4, D5, D7, the §6 resources]*
+### S5 — Deliverability feed (M11, M12) — [ ] not started
 
-- [H] verify what Email Routing does when the `email()` handler throws, on a
-  throwaway address the operator approves, before routing a real one
-- [H] on that same throwaway deployment, read what Workers Logs and a Tail
-  Worker record for an email invocation. If it is more than spec §4 lists,
-  turn `observability` off for this Worker before any real address is routed.
-  (The Agents SDK's own email diagnostics channel, which publishes each
-  arriving message's from, to and subject, is already disabled in the
-  Mailbox, and a test fails if that changes on an SDK upgrade.)
-- [H] create the resources, deploy, route the address, the operator enrolls
-  on their own devices, send from the simulator first
+**Contract:** `plan.md` §13; `mail-service-v1` (`RecipientSuppressed`).
+**Owns:** `src/deliverability/**`, `scheduled()` in `src/index.ts`, `src/env.ts`,
+the cron and observability lines of `wrangler.jsonc`, the Mailbox's
+`recordDeliveryEvent`, its suppression check in `send` and the schema
+migration for it, the `EmailTags` option in `packages/mail-outbound`.
+**Acceptance:** fixtures of each SES event type (AWS's documented shapes, with
+example.com addresses); a permanent bounce and a complaint suppress; a
+transient bounce does not; a second delivery of the same event changes
+nothing; a suppressed recipient is refused before any reservation; no address
+is stored or logged in the clear (the marker scan extended to recipients);
+SQS requests signed and shaped as the SQS JSON protocol documents; a batch
+with a failed delete is retried, not lost.
 
-## S9 — The first client mailbox  *[H: `plan.md` §8 prerequisites]*
+### S6a — `@proprietor/mail-client` (K1, G17, G18, G23) — [ ] not started
 
-- [H] the reversible move to dual delivery in `plan.md` §8, run from the
+**Contract:** `contracts/mail-client-v1.md`; the stub in
+`packages/mail-client`. **Owns:** `packages/mail-client/**`; in
+`packages/mail-crypto` the PKCS #8 wrap (D21: `wrap.ts`, `keys.ts`, the
+unwrap signature, vectors) and envelope v1's wrap section; the wrap length
+check in `src/mailbox/mailbox.ts` (`parseWrap`); the browser job in
+`.github/workflows/ci.yml`.
+**Acceptance:** everything under "Tests this contract requires" in the
+contract, in Chromium, Firefox and WebKit under the dashboard's exact policy
+with Trusted Types enforced; PRF through Chromium's virtual authenticator
+(`hasPrf`) and through an injected double elsewhere; the mutations named
+there make the tests fail.
+
+### S6b — The inbox screens, a pull request into the dashboard — [ ] not started
+
+**Contract:** `plan.md` §14; `mail-client-v1`; `mail-service-v1`. **Owns**,
+in the dashboard's repository only: `app/(modules)/inbox/**`,
+`modules/inbox.ts`, its one line in the module list, the `MAIL` binding, the
+vendored copies with `SHA256SUMS`. Never its control plane, manifest,
+migrations or site kit.
+**Acceptance:** render tests against the built Worker with a fake
+`MailService` (every `MailResult` branch, including `CapabilityRejected:
+expired` → re-mint once); the key ceremony end to end in Chromium with a
+virtual authenticator; the frame under the shell's policy.
+
+### S8 — Activation kit (`plan.md` §15) — runbook and Terraform: architect; scripts: [ ] not started
+
+- [ ] the operator's private runbook with the real values and commands
+  (architect)
+- [ ] parked Terraform in the operator's infrastructure checkout: Mail's D1
+  and R2, configuration set, events feed, SES tenant and associations, the
+  sending principal's policy, the probe's rule, and the routing switch as a
+  full replacement of today's rules file (architect)
+- [ ] scripts (builder): secrets from the secret store into `wrangler secret
+  put` through standard input; the throwaway probe Worker; the provisioning
+  printer's address rows (with S2b)
+
+### S7 — The assistant, "ask about one message" only  *[H: after the above; D1]*
+
+- [H] `plan.md` §9, the one-message form only
+
+### S9 — The first client mailbox  *[H: `plan.md` §8 prerequisites]*
+
+- [H] the reversible move to dual delivery in `plan.md` §8, from the
   operator's private runbook for that client
 
 ## P — Publication  *(2026-09-26)*
