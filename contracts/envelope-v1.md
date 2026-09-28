@@ -7,6 +7,12 @@ verified independently against its vectors, 2026-09-26. Any change to a byte
 below is a new version (`v2`), never an edit of `v1`: stored mail must stay
 readable.
 
+**Amended 2026-09-28, before the first enrollment** (so still v1: nothing
+was ever stored under it). Two changes lead the code, spec-first:
+`envelopeTo` in the MessageHeader (slice S2b) and PKCS #8 wraps (D21, slice
+S6a). Until each slice lands, the code and the vectors produce the earlier
+form, and the vectors are regenerated with each change.
+
 All strings are UTF-8. `||` is byte concatenation. "base64url" is RFC 4648 §5
 without padding. Random bytes come from `crypto.getRandomValues`.
 
@@ -69,6 +75,7 @@ JSON of a Draft.
   "v": 1,
   "direction": "in",                 // "in" | "out"
   "envelopeFrom": "bounce@x.example", // SMTP MAIL FROM; null for sent mail
+  "envelopeTo": "hello@example.com",   // SMTP RCPT TO: which of the mailbox's addresses it arrived for; null for sent mail
   "from": { "name": "Ana Ruiz", "address": "ana@example.com" },   // or null
   "to": [{ "name": "", "address": "hello@example.com" }],
   "cc": [],
@@ -94,7 +101,7 @@ Every key is always present. The serialized JSON is at most 64 KiB: if it
 would be larger, `references` keeps its last 20 entries and `snippet` is
 shortened. If it is still larger (thousands of recipients or attachments),
 the writer stores a **minimal header** instead: `v`, `direction`,
-`envelopeFrom`, `date`, `messageId` and `inReplyTo` kept; `from` kept when its
+`envelopeFrom`, `envelopeTo`, `date`, `messageId` and `inReplyTo` kept; `from` kept when its
 JSON is under 1 KiB; `to`, `cc`, `bcc`, `replyTo`, `references` and
 `attachments` empty; `subject` cut to 200 characters; `snippet` empty. The
 full headers are always in the sealed body, so nothing is lost and the browser
@@ -120,7 +127,14 @@ that only an owner's device or recovery key can reproduce.
   input `prf.eval.first = SHA-256("proprietor-mail/v1/prf|" + mailboxId + "|" + wrapId)`.
 - `kind = "recovery"`: `secret` is the 32-byte recovery secret.
 - `aad = "proprietor-mail/v1/wrap|" + mailboxId + "|" + wrapId + "|" + kind + "|" + keyId`.
-- Stored bytes: `0x01 || iv (12) || AES-256-GCM(kek, iv, aad, private key raw 32 bytes)`, base64url.
+- Stored bytes: `0x01 || iv (12) || AES-256-GCM(kek, iv, aad, pkcs8)`, base64url,
+  where `pkcs8` is the key's PKCS #8 PrivateKeyInfo (RFC 8410): the 16-byte
+  prefix `302e020100300506032b656e04220420` followed by the 32-byte private
+  key, 48 bytes; 77 bytes in all. The browser opens it with
+  `unwrapKey("pkcs8", …, AES-GCM, X25519, extractable = false)`, so the
+  private key never exists as bytes in JavaScript (K1). A writer produces
+  exactly these 48 bytes; a reader refuses any other length. (Amended
+  2026-09-28, D21; the first form wrapped the raw 32 bytes.)
 
 ## The recovery key as people see it
 

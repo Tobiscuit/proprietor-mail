@@ -15,12 +15,14 @@ interface MailError {
   name:
     | "CapabilityRejected" | "NotFound" | "Forbidden" | "InvalidRequest"
     | "MailboxNotActive" | "RateLimited" | "SendFailed" | "AssistantUnavailable"
-    | "InternalError";
+    | "RecipientSuppressed" | "InternalError";
   /** Safe to log and to show: never mail content, never an address. */
   message: string;
   reason?: "invalid" | "expired";   // CapabilityRejected
   retryAfterSeconds?: number;       // RateLimited
   retryable?: boolean;              // SendFailed
+  /** RecipientSuppressed: which recipients, by position; never an address. */
+  suppressed?: { field: "to" | "cc" | "bcc"; index: number; reason: "bounce" | "complaint"; since: string }[];
 }
 ```
 
@@ -67,3 +69,17 @@ The `email()` handler (not an RPC method) still throws in two cases, both from
 The test suite fails on any other uncaught exception or "hung" cancellation
 that workerd prints. A test that exercises one of these two throws declares it
 by name.
+
+## Amended 2026-09-28 (round 2)
+
+- `RecipientSuppressed` (domain-model M11): `send` refuses before anything is
+  reserved or sent when a recipient bounced permanently or complained, and
+  names each one by its position in `to`, `cc` or `bcc`. The dashboard shows
+  which recipient it was from its own copy of the request. Implemented by
+  slice S5.
+- `mailboxes()` and `mailbox()` return `addresses` (the primary first), and
+  `send` takes an optional `from`, one of those addresses (M6 as amended,
+  `plan.md` §12). Implemented by slice S2b.
+- Nine error names become ten. A caller that meets a name it does not know
+  treats it as `InternalError`.
+
