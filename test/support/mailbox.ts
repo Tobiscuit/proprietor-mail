@@ -7,14 +7,14 @@ import type { CallContext, Mailbox } from "../../src/mailbox/mailbox";
 import type { MailboxPorts } from "../../src/ports";
 import { base64urlFromBytes, canonicalClaims, canonicalHeader, randomJti, signToken } from "./capability-tokens";
 import { type FakePorts, fakePorts } from "./fakes";
-import { freshMailboxId, freshTenantId, testId } from "./ids";
+import { freshMailboxId, freshBusinessId, testId } from "./ids";
 import { valueOf } from "./results";
 import { TEST_KEY_B64URL, TEST_KID } from "./test-keys";
 import { bytesFromBase64url } from "./capability-tokens";
 
 export interface TestMailbox {
   id: string;
-  tenantId: string;
+  businessId: string;
   address: string;
   stub: DurableObjectStub<Mailbox>;
   ports: FakePorts;
@@ -31,18 +31,18 @@ export interface TestKey {
 
 export async function insertMailboxRow(row: {
   id: string;
-  tenantId: string;
+  businessId: string;
   address: string;
   status: MailboxStatus;
   sesTenant?: string | null;
   sesConfigurationSet?: string | null;
 }): Promise<void> {
   await env.DIRECTORY.prepare(
-    "INSERT INTO mailboxes (id, tenant_id, address, status, ses_tenant, ses_configuration_set, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO mailboxes (id, business_id, address, status, ses_tenant, ses_configuration_set, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
   )
     .bind(
       row.id,
-      row.tenantId,
+      row.businessId,
       row.address,
       row.status,
       row.sesTenant === undefined ? "client-test" : row.sesTenant,
@@ -98,7 +98,7 @@ export function callContext(mb: TestMailbox, opts: { role?: Role; accountId?: st
   return {
     mailbox: {
       id: mb.id,
-      tenantId: mb.tenantId,
+      businessId: mb.businessId,
       address: mb.address,
       status: opts.status ?? "active",
       sesTenant: "client-test",
@@ -121,11 +121,11 @@ export async function provisionMailbox(
 ): Promise<TestMailbox> {
   const status = opts.status ?? "active";
   const id = freshMailboxId();
-  const tenantId = freshTenantId();
+  const businessId = freshBusinessId();
   const address = `hello.${id.slice(4, 12)}@mail.test`;
   await insertMailboxRow({
     id,
-    tenantId,
+    businessId,
     address,
     status: "provisioned",
     ...(opts.sesConfigurationSet === undefined ? {} : { sesConfigurationSet: opts.sesConfigurationSet }),
@@ -133,7 +133,7 @@ export async function provisionMailbox(
   const stub = await mailboxStub(id);
   const ports = fakePorts();
   await injectPorts(stub, ports);
-  const mb: TestMailbox = { id, tenantId, address, stub, ports };
+  const mb: TestMailbox = { id, businessId, address, stub, ports };
   if (opts.enroll ?? status !== "provisioned") {
     const key = await newKeyPair();
     valueOf(
@@ -153,10 +153,10 @@ export function nowSeconds(): number {
 }
 
 /** A capability as the dashboard would mint it (contracts/capability-v1.md), signed with the test key. */
-export async function mint(opts: { tenant: string; mbx?: string; role?: Role; sub?: string; iat?: number; jti?: string }): Promise<string> {
+export async function mint(opts: { business: string; mbx?: string; role?: Role; sub?: string; iat?: number; jti?: string }): Promise<string> {
   const claims = canonicalClaims({
     sub: opts.sub ?? "acc_owner",
-    tenant: opts.tenant,
+    business: opts.business,
     ...(opts.mbx === undefined ? {} : { mbx: opts.mbx }),
     role: opts.role ?? "owner",
     iat: opts.iat ?? nowSeconds(),
@@ -166,4 +166,4 @@ export async function mint(opts: { tenant: string; mbx?: string; role?: Role; su
 }
 
 export const capFor = (mb: TestMailbox, opts: { role?: Role; sub?: string; jti?: string } = {}) =>
-  mint({ tenant: mb.tenantId, mbx: mb.id, ...opts });
+  mint({ business: mb.businessId, mbx: mb.id, ...opts });

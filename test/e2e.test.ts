@@ -131,7 +131,7 @@ describe.skipIf(!CRYPTO || !OUTBOUND)("with the real @proprietor/mail-outbound (
     expect(header).toMatchObject({ direction: "out", messageId: `${result.providerMessageId}@email.amazonses.com`, bcc: [{ name: "", address: "archive@example.net" }] });
   });
 
-  it("the production RawMailer is sesRawMailer: SES v2 raw send for the mailbox's configuration set and tenant (fetch never leaves the isolate)", async () => {
+  it("the production RawMailer is sesRawMailer: SES v2 raw send for the mailbox's configuration set and SES tenant (fetch never leaves the isolate)", async () => {
     const mb = await provisionMailbox();
     const requests: { url: string; body: Record<string, unknown> }[] = [];
     const realFetch = globalThis.fetch;

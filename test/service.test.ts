@@ -95,7 +95,7 @@ describe("answers are values (contracts/mail-service-v1.md)", () => {
 describe("capability checks on every call (contracts/capability-v1.md)", () => {
   it("refuses an expired token as CapabilityRejected{expired}", async () => {
     const mb = await provisionMailbox();
-    const cap = await mint({ tenant: mb.tenantId, mbx: mb.id, iat: nowSeconds() - 120 });
+    const cap = await mint({ business: mb.businessId, mbx: mb.id, iat: nowSeconds() - 120 });
     expect(refusalOf(await mail().list(cap, { folder: "inbox" }))).toEqual({
       name: "CapabilityRejected",
       message: "capability rejected: expired",
@@ -106,7 +106,7 @@ describe("capability checks on every call (contracts/capability-v1.md)", () => {
   it("logs the jti, the method and the outcome of every call, and nothing else", async () => {
     const mb = await provisionMailbox();
     await mail().unread(await capFor(mb, { jti: "trace-jti-accepted" }));
-    const expired = await mint({ tenant: mb.tenantId, mbx: mb.id, iat: nowSeconds() - 120, jti: "trace-jti-expired" });
+    const expired = await mint({ business: mb.businessId, mbx: mb.id, iat: nowSeconds() - 120, jti: "trace-jti-expired" });
     await mail().unread(expired);
     await mail().unread(await capFor(mb, { role: "editor", jti: "trace-jti-forbidden" }));
     const lines = logs.filter((l) => l.includes('"mail-service"')).map((l) => JSON.parse(l) as Record<string, unknown>);
@@ -119,7 +119,7 @@ describe("capability checks on every call (contracts/capability-v1.md)", () => {
 
   it("asks for a mailbox in the capability for every mailbox method", async () => {
     const mb = await provisionMailbox();
-    const noMailbox = await mint({ tenant: mb.tenantId });
+    const noMailbox = await mint({ business: mb.businessId });
     for (const [method, call] of everyMethod(noMailbox).filter(([m]) => m !== "mailboxes")) {
       expect([method, await call()]).toEqual([
         method,
@@ -129,24 +129,24 @@ describe("capability checks on every call (contracts/capability-v1.md)", () => {
   });
 });
 
-describe("M4: a mailbox belongs to one tenant for life", () => {
-  it("answers a capability for tenant A naming tenant B's mailbox exactly as it answers a missing mailbox", async () => {
+describe("M4: a mailbox belongs to one business for life", () => {
+  it("answers a capability for business A naming business B's mailbox exactly as it answers a missing mailbox", async () => {
     const a = await provisionMailbox();
     const b = await provisionMailbox();
-    const crossTenant = await mail().list(await mint({ tenant: a.tenantId, mbx: b.id }), { folder: "inbox" });
-    const missing = await mail().list(await mint({ tenant: a.tenantId, mbx: testId("mbx") }), { folder: "inbox" });
-    expect(crossTenant).toEqual(NOT_FOUND);
-    expect(crossTenant).toStrictEqual(missing);
+    const crossBusiness = await mail().list(await mint({ business: a.businessId, mbx: b.id }), { folder: "inbox" });
+    const missing = await mail().list(await mint({ business: a.businessId, mbx: testId("mbx") }), { folder: "inbox" });
+    expect(crossBusiness).toEqual(NOT_FOUND);
+    expect(crossBusiness).toStrictEqual(missing);
     // And B's own mailbox never learned anything: nothing was touched.
-    expect((await directoryRow(b.id))?.tenant_id).toBe(b.tenantId);
+    expect((await directoryRow(b.id))?.business_id).toBe(b.businessId);
   });
 
-  it("answers the same NotFound when the Mailbox itself refuses a Directory row that changed tenant", async () => {
+  it("answers the same NotFound when the Mailbox itself refuses a Directory row that changed business", async () => {
     const mb = await provisionMailbox();
-    await env.DIRECTORY.prepare("UPDATE mailboxes SET tenant_id = 'tnt_moved' WHERE id = ?").bind(mb.id).run();
-    // The Directory now says tnt_moved, and the capability agrees; the Mailbox remembers its first tenant.
-    const moved = await mail().list(await mint({ tenant: "tnt_moved", mbx: mb.id }), { folder: "inbox" });
-    const missing = await mail().list(await mint({ tenant: "tnt_moved", mbx: testId("mbx") }), { folder: "inbox" });
+    await env.DIRECTORY.prepare("UPDATE mailboxes SET business_id = 'biz_moved' WHERE id = ?").bind(mb.id).run();
+    // The Directory now says biz_moved, and the capability agrees; the Mailbox remembers its first business.
+    const moved = await mail().list(await mint({ business: "biz_moved", mbx: mb.id }), { folder: "inbox" });
+    const missing = await mail().list(await mint({ business: "biz_moved", mbx: testId("mbx") }), { folder: "inbox" });
     expect(moved).toEqual(NOT_FOUND);
     expect(moved).toStrictEqual(missing);
   });
@@ -158,10 +158,10 @@ describe("M4: a mailbox belongs to one tenant for life", () => {
     }
   });
 
-  it("lists only the capability's own tenant's mailboxes, to any member role", async () => {
+  it("lists only the capability's own business's mailboxes, to any member role", async () => {
     const a = await provisionMailbox({ status: "provisioned" });
     await provisionMailbox();
-    const list = await mail().mailboxes(await mint({ tenant: a.tenantId, role: "editor" }));
+    const list = await mail().mailboxes(await mint({ business: a.businessId, role: "editor" }));
     expect(list).toEqual({ ok: true, value: [{ id: a.id, address: a.address, status: "provisioned" }] });
   });
 });

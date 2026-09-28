@@ -11,10 +11,10 @@ import { TEST_KEY_B64URL, TEST_KID } from "../support/test-keys";
  * contracts/capability-v1.vectors.json) and calls MailService over a real
  * service binding, as the dashboard's server actions will.
  *
- *   POST /enroll?tenant=…&mbx=…   the owner's setup: a key pair and a recovery wrap
- *   GET  /list?tenant=…&mbx=…     what MailService returns: ids, sizes, ciphertext
- *   GET  /open?tenant=…&mbx=…     the browser's part: decrypt the newest message
- *   GET  /refuse?tenant=…&mbx=…   an expired capability: the refusal, as the value it arrives as
+ *   POST /enroll?business=…&mbx=…   the owner's setup: a key pair and a recovery wrap
+ *   GET  /list?business=…&mbx=…     what MailService returns: ids, sizes, ciphertext
+ *   GET  /open?business=…&mbx=…     the browser's part: decrypt the newest message
+ *   GET  /refuse?business=…&mbx=…   an expired capability: the refusal, as the value it arrives as
  *
  * Mail answers with MailResult values (contracts/mail-service-v1.md); a
  * refusal is shown as `{ refused: { name, message, … } }` with status 409.
@@ -29,8 +29,8 @@ interface Env {
 
 const privateKeys = new Map<string, mailCrypto.MailboxPrivateKey>();
 
-async function capability(tenant: string, mbx: string): Promise<string> {
-  const claims = canonicalClaims({ sub: "acc_local_owner", tenant, mbx, role: "owner", iat: Math.floor(Date.now() / 1000), jti: randomJti() });
+async function capability(business: string, mbx: string): Promise<string> {
+  const claims = canonicalClaims({ sub: "acc_local_owner", business, mbx, role: "owner", iat: Math.floor(Date.now() / 1000), jti: randomJti() });
   return signToken(canonicalHeader(TEST_KID), claims, bytesFromBase64url(TEST_KEY_B64URL));
 }
 
@@ -64,33 +64,33 @@ function refusal(error: MailError): Response {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    const tenant = url.searchParams.get("tenant") ?? "";
+    const business = url.searchParams.get("business") ?? "";
     const mbx = url.searchParams.get("mbx") ?? "";
     try {
       if (url.pathname === "/enroll" && request.method === "POST") {
         const { request: enrolRequest, privateKey } = await enrolment(mbx);
-        const enrolled = await env.MAIL.enroll(await capability(tenant, mbx), enrolRequest);
+        const enrolled = await env.MAIL.enroll(await capability(business, mbx), enrolRequest);
         if (!enrolled.ok) return refusal(enrolled.error);
         // Kept only now: a refused enrolment must not replace the key of the one that was accepted.
         if (privateKey !== undefined) privateKeys.set(mbx, privateKey);
         return Response.json(enrolled.value);
       }
       if (url.pathname === "/list") {
-        const page = await env.MAIL.list(await capability(tenant, mbx), { folder: url.searchParams.get("folder") ?? "inbox" });
+        const page = await env.MAIL.list(await capability(business, mbx), { folder: url.searchParams.get("folder") ?? "inbox" });
         if (!page.ok) return refusal(page.error);
         return Response.json(page.value.items.map((i) => ({ id: i.id, folder: i.folder, size: i.size, receivedAt: i.receivedAt, keyId: i.keyId, sealedHeaderChars: i.header.length })));
       }
       if (url.pathname === "/open") {
         const ownerKey = privateKeys.get(mbx);
         if (ownerKey === undefined) return Response.json({ error: "no private key in this process (S1 not merged, or not enrolled here)" }, { status: 409 });
-        const page = await env.MAIL.list(await capability(tenant, mbx), { folder: "inbox" });
+        const page = await env.MAIL.list(await capability(business, mbx), { folder: "inbox" });
         if (!page.ok) return refusal(page.error);
         const [item] = page.value.items;
         if (item === undefined) return Response.json({ error: "inbox is empty" }, { status: 404 });
         const ids = { mailboxId: mbx, messageId: item.id };
         const header = await mailCrypto.openHeader(ownerKey, ids, item);
         // The body arrives as the value of an ok answer: a ReadableStream inside the result.
-        const body = await env.MAIL.body(await capability(tenant, mbx), item.id);
+        const body = await env.MAIL.body(await capability(business, mbx), item.id);
         if (!body.ok) return refusal(body.error);
         const sealed = new Uint8Array(await new Response(body.value).arrayBuffer());
         const raw = await mailCrypto.openBody(ownerKey, ids, { keyEnvelope: item.keyEnvelope, body: sealed });
@@ -98,7 +98,7 @@ export default {
       }
       if (url.pathname === "/refuse") {
         // A refusal across two processes: an expired capability comes back as a value, name and reason intact.
-        const expired = canonicalClaims({ sub: "acc_local_owner", tenant, mbx, role: "owner", iat: Math.floor(Date.now() / 1000) - 120, jti: randomJti() });
+        const expired = canonicalClaims({ sub: "acc_local_owner", business, mbx, role: "owner", iat: Math.floor(Date.now() / 1000) - 120, jti: randomJti() });
         const answer = await env.MAIL.list(await signToken(canonicalHeader(TEST_KID), expired, bytesFromBase64url(TEST_KEY_B64URL)), { folder: "inbox" });
         return Response.json(answer);
       }

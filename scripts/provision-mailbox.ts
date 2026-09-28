@@ -4,7 +4,7 @@
  * never runs anything. The operator reviews the output and runs it with
  * `wrangler d1 execute`, the way every Directory change is made in v1.
  *
- *   node scripts/provision-mailbox.ts --tenant <tenant id> --address <address> \
+ *   node scripts/provision-mailbox.ts --business <business id> --address <address> \
  *     [--id mbx_…] [--ses-tenant <name>] [--configuration-set <name>] > provision.sql
  *
  * Node 22.18+ runs this TypeScript file directly (type stripping).
@@ -43,7 +43,7 @@ function fail(message: string, code = 1): never {
 
 const { values } = parseArgs({
   options: {
-    tenant: { type: "string" },
+    business: { type: "string" },
     address: { type: "string" },
     id: { type: "string" },
     "ses-tenant": { type: "string" },
@@ -52,7 +52,7 @@ const { values } = parseArgs({
   strict: true,
 });
 
-if (values.tenant === undefined) fail("--tenant is required");
+if (values.business === undefined) fail("--business is required");
 if (values.address === undefined) fail("--address is required");
 
 let id = values.id;
@@ -71,7 +71,7 @@ let sql: string;
 try {
   sql = provisionMailboxSql({
     id,
-    tenantId: values.tenant,
+    businessId: values.business,
     address: values.address,
     sesTenant: values["ses-tenant"] ?? null,
     sesConfigurationSet: values["configuration-set"] ?? null,

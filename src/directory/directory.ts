@@ -1,7 +1,7 @@
 /**
  * The Mail Directory (plan.md §3), Mail's own D1: which mailbox an address
- * belongs to, which tenant a mailbox belongs to, and where it is in its
- * lifecycle. The authority for existence, tenant and status; each Mailbox
+ * belongs to, which business a mailbox belongs to, and where it is in its
+ * lifecycle. The authority for existence, business and status; each Mailbox
  * object is the authority for its keys, messages and policy.
  *
  * Lifecycle: provisioned → active → suspended ⇄ active → closed (terminal).
@@ -11,7 +11,7 @@ export type MailboxStatus = "provisioned" | "active" | "suspended" | "closed";
 
 export interface DirectoryEntry {
   id: string;
-  tenantId: string;
+  businessId: string;
   /** Lower-case. */
   address: string;
   status: MailboxStatus;
@@ -24,7 +24,7 @@ export interface DirectoryEntry {
 
 interface Row {
   id: string;
-  tenant_id: string;
+  business_id: string;
   address: string;
   status: MailboxStatus;
   ses_tenant: string | null;
@@ -35,12 +35,12 @@ interface Row {
 }
 
 const COLUMNS =
-  "id, tenant_id, address, status, ses_tenant, ses_configuration_set, created_at, activated_at, closed_at";
+  "id, business_id, address, status, ses_tenant, ses_configuration_set, created_at, activated_at, closed_at";
 
 function toEntry(row: Row): DirectoryEntry {
   return {
     id: row.id,
-    tenantId: row.tenant_id,
+    businessId: row.business_id,
     address: row.address,
     status: row.status,
     sesTenant: row.ses_tenant,
@@ -68,11 +68,11 @@ export class Directory {
     return row === null ? null : toEntry(row);
   }
 
-  /** A tenant's mailboxes, for `mailboxes()`. A closed mailbox is gone as far as the tenant is concerned. */
-  async forTenant(tenantId: string): Promise<DirectoryEntry[]> {
+  /** A business's mailboxes, for `mailboxes()`. A closed mailbox is gone as far as the business is concerned. */
+  async forBusiness(businessId: string): Promise<DirectoryEntry[]> {
     const { results } = await this.db
-      .prepare(`SELECT ${COLUMNS} FROM mailboxes WHERE tenant_id = ? AND status != 'closed' ORDER BY created_at, id`)
-      .bind(tenantId)
+      .prepare(`SELECT ${COLUMNS} FROM mailboxes WHERE business_id = ? AND status != 'closed' ORDER BY created_at, id`)
+      .bind(businessId)
       .all<Row>();
     return results.map(toEntry);
   }

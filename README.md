@@ -96,7 +96,7 @@ spec §2 and plan §9.
   is `{ ok: true, value }` or `{ ok: false, error }`.
 
 The invariants the Worker keeps (no plaintext at rest, no key no mail, no
-private key on the server, one tenant per mailbox for life, and more) are
+private key on the server, one business per mailbox for life, and more) are
 listed in `specs/001-inbox-module/domain-model.md` §3, each with a test.
 
 ## Running the tests

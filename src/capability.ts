@@ -3,7 +3,7 @@ import { CapabilityRejected } from "./errors";
 
 /**
  * Verifies a Mail capability (contracts/capability-v1.md): a ≤ 60-second HS256
- * JWT the dashboard mints for one person, one tenant and (usually) one
+ * JWT the dashboard mints for one person, one business and (usually) one
  * mailbox. Mail never sees how the person logged in; it sees this statement
  * and checks it. The rule numbers below are the contract's.
  *
@@ -18,7 +18,7 @@ export interface Capability {
   aud: typeof AUDIENCE;
   /** The dashboard's account id of the person acting. */
   sub: string;
-  tenant: string;
+  business: string;
   /** Absent only for `mailboxes()`. */
   mbx?: string;
   role: Role;
@@ -30,8 +30,8 @@ export interface Capability {
 
 export type CapabilityKeys = ReadonlyMap<string, Uint8Array>;
 
-const ISSUER = "platform-dashboard";
-const AUDIENCE = "platform-mail";
+const ISSUER = "proprietor-dashboard";
+const AUDIENCE = "proprietor-mail";
 const TOLERANCE_SECONDS = 5;
 const MAX_LIFETIME_SECONDS = 60;
 
@@ -114,8 +114,8 @@ export async function verifyCapability(token: string, keys: CapabilityKeys, nowS
   if (lifetime < 1 || lifetime > MAX_LIFETIME_SECONDS) throw new CapabilityRejected("invalid");
 
   // Rule 6, plus the required jti (contract amendment, 2026-09-26).
-  const { sub, tenant, mbx, role, jti } = payload;
-  if (!isNonEmptyString(sub) || !isNonEmptyString(tenant) || !isNonEmptyString(jti)) {
+  const { sub, business, mbx, role, jti } = payload;
+  if (!isNonEmptyString(sub) || !isNonEmptyString(business) || !isNonEmptyString(jti)) {
     throw new CapabilityRejected("invalid");
   }
   if (role !== "owner" && role !== "editor") throw new CapabilityRejected("invalid");
@@ -123,8 +123,8 @@ export async function verifyCapability(token: string, keys: CapabilityKeys, nowS
 
   // Exactly the claims that were checked, in the contract's order.
   return mbx === undefined
-    ? { iss: ISSUER, aud: AUDIENCE, sub, tenant, role, iat, exp, jti }
-    : { iss: ISSUER, aud: AUDIENCE, sub, tenant, mbx, role, iat, exp, jti };
+    ? { iss: ISSUER, aud: AUDIENCE, sub, business, role, iat, exp, jti }
+    : { iss: ISSUER, aud: AUDIENCE, sub, business, mbx, role, iat, exp, jti };
 }
 
 /**

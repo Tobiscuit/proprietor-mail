@@ -86,7 +86,7 @@ export class CapabilityRejected extends Refusal {
   }
 }
 
-/** Also the answer for a mailbox of another tenant (domain-model M4): identical, so existence does not leak. */
+/** Also the answer for a mailbox of another business (domain-model M4): identical, so existence does not leak. */
 export class NotFound extends Refusal {
   constructor() {
     super({ name: "NotFound", message: "not found" });

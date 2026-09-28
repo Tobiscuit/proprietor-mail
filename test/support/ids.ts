@@ -26,6 +26,6 @@ export function testId(prefix: "mbx" | "msg" | "drf" | "wrp"): string {
 
 export const freshMailboxId = () => testId("mbx");
 
-export function freshTenantId(): string {
-  return `tnt_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+export function freshBusinessId(): string {
+  return `biz_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
 }

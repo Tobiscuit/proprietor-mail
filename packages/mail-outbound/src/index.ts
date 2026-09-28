@@ -249,7 +249,7 @@ export interface RawSendRequest {
   fromAddress: string;
   recipients: string[];
   configurationSet: string;
-  /** The SES tenant of the business (spec D7); omitted until the tenant exists. */
+  /** The SES tenant of the business (spec D7); omitted until the SES tenant exists. */
   tenantName?: string;
 }
 
@@ -351,7 +351,7 @@ const AWS_REGION = /^[a-z]{2}(?:-[a-z]+)+-\d{1,2}$/;
 
 /**
  * Configuration set names: "up to 64 alphanumeric characters … hyphens (-)
- * and underscores (_)" (SES quotas page). Tenant names: "up to 64
+ * and underscores (_)" (SES quotas page). SES tenant names: "up to 64
  * alphanumeric characters, including letters, numbers, hyphens (-) and
  * underscores (_) only" (TenantName in the SES v2 service model).
  */

@@ -30,10 +30,10 @@ In scope, including anything in `main` that is not yet released:
 
 - `packages/mail-crypto`: the envelope, key wrapping, recovery keys, and the
   byte formats in `contracts/envelope-v1.md`;
-- the Mail Worker (`src/`): capability verification, tenant isolation, the
+- the Mail Worker (`src/`): capability verification, isolation between businesses, the
   storage invariants in `specs/001-inbox-module/domain-model.md` §3 (for
   example, anything that stores or logs message content in plaintext, or lets
-  one tenant reach another tenant's mailbox);
+  one business reach another business's mailbox);
 - `packages/mail-outbound`: header injection, or anything that lets a
   request choose the sender;
 - the release path: `.github/workflows/` and anything that could make a

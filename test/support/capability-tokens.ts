@@ -5,7 +5,7 @@
  * claim) is exactly the bytes the vector says, and so that the header and
  * claims keep the canonical order the contract names:
  *   header  alg, typ, kid
- *   claims  iss, aud, sub, tenant, mbx, role, iat, exp, jti
+ *   claims  iss, aud, sub, business, mbx, role, iat, exp, jti
  *
  * Self-contained (Web Crypto only, no relative imports) so that the Node
  * script can load it directly.
@@ -44,7 +44,7 @@ export async function signToken(header: Json, claims: Json, key: Uint8Array): Pr
 /** The canonical claims, in the contract's order, with `exp = iat + 60`. */
 export function canonicalClaims(opts: {
   sub: string;
-  tenant: string;
+  business: string;
   mbx?: string;
   role: "owner" | "editor";
   iat: number;
@@ -52,10 +52,10 @@ export function canonicalClaims(opts: {
   lifetime?: number;
 }): Json {
   const claims: Json = {
-    iss: "platform-dashboard",
-    aud: "platform-mail",
+    iss: "proprietor-dashboard",
+    aud: "proprietor-mail",
     sub: opts.sub,
-    tenant: opts.tenant,
+    business: opts.business,
   };
   if (opts.mbx !== undefined) claims.mbx = opts.mbx;
   claims.role = opts.role;

@@ -15,7 +15,7 @@ const { providerMessageId } = await mailer.send({
   fromAddress: "hello@example.com",
   recipients: built.recipients,
   configurationSet: "send-example-mail",
-  tenantName: "client-example", // omit until the tenant exists
+  tenantName: "client-example", // omit until the SES tenant exists
 });
 ```
 
@@ -55,7 +55,7 @@ npm ci && npm test -w @proprietor/mail-outbound && npm run typecheck -w @proprie
 | `POST https://email.{region}.amazonaws.com/v2/email/outbound-emails`, JSON; SigV4 signing name `ses` (the host prefix is `email`) | [API_SendEmail](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_SendEmail.html); SES v2 Smithy model (`aws.auth#sigv4 {name: "ses"}`, `endpointPrefix: "email"`, `aws.protocols#restJson1`) |
 | Raw content is `"Content": {"Raw": {"Data": "<base64 of the whole message>"}}` | [API_RawMessage](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_RawMessage.html) ("needs to be base64-encoded if you are accessing Amazon SES directly through the HTTPS interface"); `RawMessageData` is a blob in the model |
 | Only `Content` is required. `Destination` is optional; with raw content it is the SMTP envelope, and the headers come from the message | API_SendEmail; [send-email-raw](https://docs.aws.amazon.com/ses/latest/dg/send-email-raw.html): "the addresses you specify in the Source and Destinations parameters define the envelope sender and recipients" |
-| `TenantName`: string, min length 1, "up to 64 alphanumeric characters … hyphens (-) and underscores (_)"; the send succeeds only if every referenced identity and configuration set is associated with the tenant | API_SendEmail; model `TenantName` |
+| `TenantName`: string, min length 1, "up to 64 alphanumeric characters … hyphens (-) and underscores (_)"; the send succeeds only if every referenced identity and configuration set is associated with the SES tenant | API_SendEmail; model `TenantName` |
 | Max message size: 40 MB after base64 for the v2 API (10 MB for v1); max 50 recipients across To, CC and BCC | [quotas](https://docs.aws.amazon.com/ses/latest/dg/quotas.html) |
 | Lines at most 1,000 characters; local parts 7-bit ASCII only (no SMTPUTF8), IDN domains as punycode | API_RawMessage; [API_Destination](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_Destination.html) |
 | Errors: the type is in `x-amzn-errortype` (else the body's `__type` or `code`), sanitized by dropping what follows `:` and what precedes `#`; the message is in the body's `message` | Smithy `aws-restjson1-protocol`, "Operation error serialization"; a fake-key call to the real endpoint answered `403`, `x-amzn-errortype: UnrecognizedClientException`, `{"message": "…"}` |
@@ -77,13 +77,13 @@ ses:SendRawEmail",
 Two consequences for the policy sketched in `plan.md` §6:
 
 - `ses:SendRawEmail` can be dropped (this package never uses SMTP).
-- `tenant` is not a resource type of `SendEmail`, so
+- An SES tenant is not one of `SendEmail`'s resource types, so
   `arn:aws:ses:…:tenant/*` in `Resource` neither grants nor restricts
-  anything for this action. The tenant ARN is
+  anything for this action. An SES tenant's ARN is
   `arn:${Partition}:ses:${Region}:${Account}:tenant/${TenantName}/${TenantId}`;
-  to pin the tenant, use the condition key. `StringEquals` on a key the request
+  to pin the SES tenant, use the condition key. `StringEquals` on a key the request
   does not carry fails closed, so add `ses:TenantName` together with the
-  tenant, when sends start carrying `TenantName`:
+  SES tenant, when sends start carrying `TenantName`:
 
 ```json
 {
@@ -124,7 +124,7 @@ address.
   with it and sends once. A retry after a 5xx or a timeout can deliver twice,
   and the caller holds the idempotency key (M7). A contact form's sender
   may drop the configuration set on failure so that a visitor's enquiry is
-  not lost; here the configuration set carries the tenant's
+  not lost; here the configuration set carries the SES tenant's
   suppression list and Mail's own event feed, and the sender is a person who
   sees the error, so a failure stays a failure.
 - **`retryable` is true only for throttling and 5xx.** A timeout

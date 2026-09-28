@@ -67,7 +67,7 @@ const TOO_LARGE = "Message too large";
 
 interface IdentityRow {
   mailbox_id: string;
-  tenant_id: string;
+  business_id: string;
   address: string;
   display_name: string;
 }
@@ -326,7 +326,7 @@ export class Mailbox extends Agent<Env> {
 
   private async signalUnread(entry: DirectoryEntry): Promise<void> {
     try {
-      await this.ports.signal.unread({ tenantId: entry.tenantId, mailboxId: entry.id, unread: this.inboxUnread() });
+      await this.ports.signal.unread({ businessId: entry.businessId, mailboxId: entry.id, unread: this.inboxUnread() });
     } catch (err) {
       // A count that did not reach the dashboard is not worth failing mail for.
       logEvent("new-mail-signal", { mailbox: entry.id, outcome: "failed", error: errorName(err) });
@@ -860,14 +860,14 @@ export class Mailbox extends Agent<Env> {
 
   /**
    * Identity is copied from the Directory the first time the mailbox is
-   * touched and never changes: a call carrying another tenant or address is
+   * touched and never changes: a call carrying another business or address is
    * refused as NotFound (M4) and raised to the operator.
    */
   private async ensureIdentity(entry: DirectoryEntry, actor: string): Promise<void> {
     if (entry.id !== this.name || entry.status === "closed") throw new NotFound();
     const existing = this.identityRow();
     if (existing !== null) {
-      if (existing.tenant_id !== entry.tenantId || existing.address !== entry.address) {
+      if (existing.business_id !== entry.businessId || existing.address !== entry.address) {
         logAlert("identity-conflict", { mailbox: this.name });
         throw new NotFound();
       }
@@ -876,9 +876,9 @@ export class Mailbox extends Agent<Env> {
     const at = this.now();
     this.ctx.storage.transactionSync(() => {
       this.ctx.storage.sql.exec(
-        "INSERT INTO identity (only, mailbox_id, tenant_id, address) VALUES (1, ?, ?, ?)",
+        "INSERT INTO identity (only, mailbox_id, business_id, address) VALUES (1, ?, ?, ?)",
         entry.id,
-        entry.tenantId,
+        entry.businessId,
         entry.address,
       );
       this.ctx.storage.sql.exec("INSERT INTO policy (only, updated_at, updated_by) VALUES (1, ?, ?)", at, actor);
@@ -899,7 +899,7 @@ export class Mailbox extends Agent<Env> {
   }
 
   private identityRow(): IdentityRow | null {
-    return this.rows<IdentityRow>("SELECT mailbox_id, tenant_id, address, display_name FROM identity")[0] ?? null;
+    return this.rows<IdentityRow>("SELECT mailbox_id, business_id, address, display_name FROM identity")[0] ?? null;
   }
 
   private policyRow(): PolicyRow {

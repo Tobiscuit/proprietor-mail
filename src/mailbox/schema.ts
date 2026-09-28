@@ -23,7 +23,7 @@ export const mailboxMigrations: Migration[] = [
     name: "0001_mailbox",
     sql: `
       CREATE TABLE identity (only INTEGER PRIMARY KEY CHECK (only = 1), mailbox_id TEXT NOT NULL,
-        tenant_id TEXT NOT NULL, address TEXT NOT NULL, display_name TEXT NOT NULL DEFAULT '');
+        business_id TEXT NOT NULL, address TEXT NOT NULL, display_name TEXT NOT NULL DEFAULT '');
       CREATE TABLE keys (key_id TEXT PRIMARY KEY, public_key BLOB NOT NULL, created_at TEXT NOT NULL,
         created_by TEXT NOT NULL, retired_at TEXT);
       CREATE TABLE key_wraps (id TEXT PRIMARY KEY, key_id TEXT NOT NULL REFERENCES keys(key_id),

@@ -41,7 +41,7 @@ export interface RawMailer {
  * dashboard ships it.
  */
 export interface NewMailSignal {
-  unread(event: { tenantId: string; mailboxId: string; unread: number }): Promise<void>;
+  unread(event: { businessId: string; mailboxId: string; unread: number }): Promise<void>;
 }
 
 export interface Clock {

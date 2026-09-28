@@ -99,9 +99,9 @@ export class FakeMailer implements RawMailer {
 }
 
 export class FakeSignal implements NewMailSignal {
-  readonly events: { tenantId: string; mailboxId: string; unread: number }[] = [];
+  readonly events: { businessId: string; mailboxId: string; unread: number }[] = [];
   failWith: Error | undefined;
-  async unread(event: { tenantId: string; mailboxId: string; unread: number }): Promise<void> {
+  async unread(event: { businessId: string; mailboxId: string; unread: number }): Promise<void> {
     if (this.failWith !== undefined) throw this.failWith;
     this.events.push({ ...event });
   }

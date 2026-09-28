@@ -205,8 +205,8 @@ describe("arrival: what a stored message is", () => {
       await deliver(incomingEmail(sampleMessage({ to: mb.address }), { to: mb.address }).message);
     }
     expect(mb.ports.signal.events).toEqual([
-      { tenantId: mb.tenantId, mailboxId: mb.id, unread: 1 },
-      { tenantId: mb.tenantId, mailboxId: mb.id, unread: 2 },
+      { businessId: mb.businessId, mailboxId: mb.id, unread: 1 },
+      { businessId: mb.businessId, mailboxId: mb.id, unread: 2 },
     ]);
   });
 
@@ -255,10 +255,10 @@ describe("arrival: what a stored message is", () => {
     expect((await stored(mb)).rows).toHaveLength(1);
   });
 
-  it("M4: a Directory row altered after first contact (another tenant) gets mail refused, not stored, and an alert", async () => {
+  it("M4: a Directory row altered after first contact (another business) gets mail refused, not stored, and an alert", async () => {
     const mb = await provisionMailbox();
     await deliver(incomingEmail(sampleMessage({ to: mb.address }), { to: mb.address }).message);
-    await env.DIRECTORY.prepare("UPDATE mailboxes SET tenant_id = 'tnt_someone_else' WHERE id = ?").bind(mb.id).run();
+    await env.DIRECTORY.prepare("UPDATE mailboxes SET business_id = 'biz_someone_else' WHERE id = ?").bind(mb.id).run();
     const email = incomingEmail(sampleMessage({ to: mb.address }), { to: mb.address });
     await deliver(email.message);
     expect(email.rejects).toEqual(["This mailbox is not accepting mail"]);

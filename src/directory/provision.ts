@@ -16,8 +16,8 @@
 export interface ProvisionInput {
   /** `mbx_` + 26 lowercase Crockford base32 characters (contracts/envelope-v1.md). */
   id: string;
-  /** The platform's tenant id. */
-  tenantId: string;
+  /** The platform's business id. */
+  businessId: string;
   address: string;
   sesTenant?: string | null;
   sesConfigurationSet?: string | null;
@@ -43,7 +43,7 @@ function quote(value: string | null): string {
 
 export function provisionMailboxSql(input: ProvisionInput): string {
   if (!MAILBOX_ID.test(input.id)) invalid("mailbox id");
-  if (!NAME.test(input.tenantId)) invalid("tenant id");
+  if (!NAME.test(input.businessId)) invalid("business id");
   const address = input.address.trim().toLowerCase();
   if (address.length > 254 || !ADDRESS.test(address)) invalid("address");
   const sesTenant = input.sesTenant ?? null;
@@ -53,8 +53,8 @@ export function provisionMailboxSql(input: ProvisionInput): string {
   if (Number.isNaN(input.now.getTime())) invalid("time");
 
   return (
-    "INSERT INTO mailboxes (id, tenant_id, address, status, ses_tenant, ses_configuration_set, created_at)\n" +
-    `VALUES (${quote(input.id)}, ${quote(input.tenantId)}, ${quote(address)}, 'provisioned', ` +
+    "INSERT INTO mailboxes (id, business_id, address, status, ses_tenant, ses_configuration_set, created_at)\n" +
+    `VALUES (${quote(input.id)}, ${quote(input.businessId)}, ${quote(address)}, 'provisioned', ` +
     `${quote(sesTenant)}, ${quote(configurationSet)}, ${quote(input.now.toISOString())});\n`
   );
 }

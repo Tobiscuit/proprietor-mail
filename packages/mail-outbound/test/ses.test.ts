@@ -141,10 +141,10 @@ describe("sesRawMailer: the signed request", () => {
     );
   });
 
-  it("leaves TenantName out until the tenant exists", async () => {
+  it("leaves TenantName out until the SES tenant exists", async () => {
     const { impl, calls } = fakeFetch(() => sesAnswer(200, { MessageId: "m" }));
-    const { tenantName: _omit, ...withoutTenant } = request();
-    await sesRawMailer(CREDS, { fetch: impl }).send(withoutTenant);
+    const { tenantName: _omit, ...withoutTenantName } = request();
+    await sesRawMailer(CREDS, { fetch: impl }).send(withoutTenantName);
     expect(JSON.parse(calls[0]!.body)).not.toHaveProperty("TenantName");
   });
 
@@ -252,7 +252,7 @@ describe("sesRawMailer: refuses before calling SES", () => {
     ["an empty message", { raw: new Uint8Array(0) }],
     ["an oversized message", { raw: new Uint8Array(LIMITS.maxRawBytes + 1) }],
     ["no configuration set", { configurationSet: "" }],
-    ["an invalid tenant name", { tenantName: "client example" }],
+    ["an invalid SES tenant name", { tenantName: "client example" }],
   ] as const)("%s", async (_what, overrides) => {
     const { impl, calls } = fakeFetch(() => sesAnswer(200, { MessageId: "m" }));
     await expect(sesRawMailer(CREDS, { fetch: impl }).send(request(overrides as Partial<RawSendRequest>))).rejects.toBeInstanceOf(

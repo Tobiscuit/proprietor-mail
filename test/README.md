@@ -117,7 +117,7 @@ Everything is `--local`; nothing touches an account. From the repository root:
 
 ```sh
 npx wrangler d1 migrations apply proprietor-mail --local
-node scripts/provision-mailbox.ts --tenant tnt_local --address hello@example.test > /tmp/provision.sql
+node scripts/provision-mailbox.ts --business biz_local --address hello@example.test > /tmp/provision.sql
 npx wrangler d1 execute proprietor-mail --local --file /tmp/provision.sql
 
 # The capability key is the public TEST key from contracts/capability-v1.vectors.json, not a secret.
@@ -126,11 +126,11 @@ npx wrangler dev --local --port 8787 --inspector-port 9231 --env-file /tmp/mail-
 npx wrangler dev --local -c test/local/driver.wrangler.jsonc --port 8788 --inspector-port 9232   # a second terminal
 
 M=<the mbx_ id from /tmp/provision.sql>
-curl -s -X POST "http://localhost:8788/enroll?tenant=tnt_local&mbx=$M"
+curl -s -X POST "http://localhost:8788/enroll?business=biz_local&mbx=$M"
 curl -s -X POST "http://localhost:8787/cdn-cgi/local/email?from=ana@example.com&to=hello@example.test&format=json" --data-binary @test/local/sample.eml
-curl -s "http://localhost:8788/list?tenant=tnt_local&mbx=$M"
-curl -s "http://localhost:8788/open?tenant=tnt_local&mbx=$M"
-curl -s "http://localhost:8788/refuse?tenant=tnt_local&mbx=$M"   # a refusal, across two processes, as a value
+curl -s "http://localhost:8788/list?business=biz_local&mbx=$M"
+curl -s "http://localhost:8788/open?business=biz_local&mbx=$M"
+curl -s "http://localhost:8788/refuse?business=biz_local&mbx=$M"   # a refusal, across two processes, as a value
 ```
 
 The driver prints Mail's answers as the dashboard will branch on them: an ok
@@ -149,7 +149,7 @@ ports 8797/8798 because 8787 was already in use):
 unknown address  → {"outcome":"ok","rejectReason":"No such mailbox",…}
 provisioned      → {"outcome":"ok","rejectReason":"This mailbox is not accepting mail",…}
 /refuse          → {"ok":false,"error":{"name":"CapabilityRejected","message":"capability rejected: expired","reason":"expired"}}
-/list, tenant_x  → {"refused":{"name":"NotFound","message":"not found"}}
+/list, business_x  → {"refused":{"name":"NotFound","message":"not found"}}
 /enroll          → {"keyId":"dcb51e21bad5f954d952328b3398f464"}
 /enroll again    → {"refused":{"name":"InvalidRequest","message":"invalid request: the mailbox is not awaiting enrolment"}}
 deliver          → {"outcome":"ok","forwards":[],"replies":[],"events":[{"type":"received",…}]}
