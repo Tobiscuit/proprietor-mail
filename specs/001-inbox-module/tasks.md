@@ -237,7 +237,7 @@ integration. Every rule for builders above still holds.
 
 ### R0 — The rename (D11) — builder
 
-- [~] `platform-mail` → `proprietor-mail`, `@platform-mail/*` →
+- [x] (#8, audited: 484 passed, four mutations caught) `platform-mail` → `proprietor-mail`, `@platform-mail/*` →
   `@proprietor/*`, capability issuer, audience and claim (`business`),
   "tenant" → "business" in Mail's own vocabulary; both vector files
   regenerated; a fitness test that fails on the old names outside `specs/`.
@@ -307,8 +307,14 @@ virtual authenticator; the frame under the shell's policy.
   sending principal's policy, the probe's rule, and the routing switch as a
   full replacement of today's rules file (architect)
 - [ ] scripts (builder): secrets from the secret store into `wrangler secret
-  put` through standard input; the throwaway probe Worker; the provisioning
-  printer's address rows (with S2b)
+  put` through standard input; the provisioning printer's address rows (with
+  S2b); and **an operator CLI for `MailAdmin`** (`setDelivery`, `suspend`,
+  `resume`). `MailAdmin` is bound to nothing on purpose, so without this CLI
+  `plan.md` §15 step 8 has no caller. Proposed: a local `wrangler dev` with a
+  remote service binding to the deployed Worker's `MailAdmin` entrypoint, so
+  that nothing new is deployed. Whether remote bindings reach a named
+  entrypoint is checked with context7 first. The probe is a throwaway in the
+  operator's runbook, not code in this repository.
 
 ### S7 — The assistant, "ask about one message" only  *[H: after the above; D1]*
 
