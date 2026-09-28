@@ -1,0 +1,11 @@
+platform-mail
+Copyright 2026 Operator
+
+This product includes software adapted from Agentic Inbox
+(https://github.com/cloudflare/agentic-inbox, commit 48039bb),
+Copyright (c) 2026 Cloudflare, Inc.,
+licensed under the Apache License, Version 2.0.
+
+The adapted files are src/mailbox/folders.ts, src/mailbox/schema.ts and
+src/mail/html-text.ts. Each keeps Cloudflare's copyright notice and states
+what was changed.
