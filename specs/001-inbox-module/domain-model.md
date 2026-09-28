@@ -9,17 +9,17 @@ not as migrations. It found eleven; they come first.
 
 | # | Gap | What happens if it is missed | Resolution |
 |---|---|---|---|
-| G1 | **Zero-access and a server-side AI assistant conflict.** Whatever can decrypt on the server can be made to decrypt for the operator. | A promise ("the maintainer can't read it") that the architecture does not keep. | Decision D1; the assistant is off and cannot be turned on in v1. |
-| G2 | **Tenant membership is not mail access.** the maintainer is an accepted editor member of client tenants, so "any member may open the tenant's mailbox" would hand him ciphertext and metadata, and a setup flow he could run would hand him keys. | Zero-access broken by a convenience. | Read access is key possession, and keys are enrolled only on the owner's device. `openRoles` defaults to owners (D9). |
+| G1 | **Zero-access and a server-side AI assistant conflict.** Whatever can decrypt on the server can be made to decrypt for the operator. | A promise ("the operator can't read it") that the architecture does not keep. | Decision D1; the assistant is off and cannot be turned on in v1. |
+| G2 | **Tenant membership is not mail access.** The operator is an editor member of client tenants (to support them), so "any member may open the tenant's mailbox" would hand the operator ciphertext and metadata, and a setup flow the operator could run would hand over keys. | Zero-access broken by a convenience. | Read access is key possession, and keys are enrolled only on the owner's device. `openRoles` defaults to owners (D9). |
 | G3 | **Passkeys are bound to a domain, and the dashboard is being renamed.** | Every enrolled passkey stops working at the rename; owners are locked out until they find their recovery key. | D5: fix the host before the first enrollment; the recovery key always works. |
 | G4 | **With no iframes, the key lives in the whole dashboard's page.** | The promise would imply that only the inbox code handles keys. | D2: disclosed in the promise; publication of bundle hashes before the first client mailbox. |
 | G5 | **Email HTML is hostile input in the same page as the key.** | One sanitizer bypass is a key theft. | D3: a script-less sandboxed frame for bodies; no remote content by default. |
 | G6 | **Search and threading cannot run on the server** once headers are encrypted. | A server-side search API that could only work by keeping plaintext. | Both move to the browser over decrypted headers; bodies are searched later from a local index. |
 | G7 | **A malicious server can substitute the mailbox public key** and receive future mail encrypted to a key it controls. | Silent interception after a key swap. | The browser checks the advertised public key against the unwrapped private key at every unlock and shows a blocking warning on a mismatch; key changes are audited. |
 | G8 | **A mailbox with no key yet has nowhere safe to put mail.** | "Store it readable until they set up" — a plaintext backlog. | A mailbox is `provisioned` until keys are enrolled and never stores mail in that state; routing is pointed at the Worker only after activation. |
-| G9 | **operator.example receives no mail today**, by a recorded decision (`cloudflare-infra/mail.tf`, 2026-09-06). | The "first mailbox" has no address to receive at. | D4. |
+| G9 | **The operator's own domain receives no mail today**, by an earlier decision (it was kept for sending only). | The "first mailbox" has no address to receive at. | D4. |
 | G10 | **The operator controls routing.** Whoever controls Email Routing can add a forward of future mail to themselves, outside this module entirely. | A promise that ignores the routing layer. | Covered by the promise's first limit (mail in transit). The mailbox's own forwarding setting is always shown to the owner and every change is audited. |
-| G11 | **Dual delivery can duplicate or drop.** During Alex's migration a Worker error after forwarding could make Email Routing retry and forward twice; an error before forwarding could lose the copy in his Gmail. | Duplicate or missing mail for a real business. | Forward first; never throw after a successful forward; failures to store are counted and alerted. `plan.md` §8. |
+| G11 | **Dual delivery can duplicate or drop.** While a forwarded address moves to the inbox, a Worker error after forwarding could make Email Routing retry and forward twice; an error before forwarding could lose the copy in the owner's existing mailbox. | Duplicate or missing mail for a real business. | Forward first; never throw after a successful forward; failures to store are counted and alerted. `plan.md` §8. |
 
 ## 1. Bounded contexts
 
@@ -30,10 +30,10 @@ not as migrations. It found eleven; they come first.
 | **Inbound Delivery** | Accepting or refusing an arriving message; forwarding during migration | `platform-mail` Worker: `email()` handler + `Mailbox.onEmail` | "arrival", "reject", "forward" |
 | **Outbound Sending** | Turning a composed message into MIME and handing it to SES; rate limits; idempotency | `packages/mail-outbound` (the MIME builder and the SES adapter) + `Mailbox.send` | "send", "tenant", "configuration set" |
 | **Key Custody** | Generating mailbox keys, wrapping and unwrapping them, sealing and opening messages and drafts | `packages/mail-crypto`, running in the owner's browser (and, for sealing only, in the Worker) | "wrap", "unlock", "recovery key", "seal/open" |
-| **Identity & Access** | Accounts, memberships, the session, the tenant chooser; minting Mail capabilities | the dashboard shell (spec 007, SEO-engine repo) | "session", "membership", "capability" |
-| **Business Catalogue** | The site manifest and `has.email` | the SEO engine | "module", "manifest" |
-| **Presence** | Live state and Web Push for a business | the per-business Agent (spec 007) | "new mail count" |
-| **Deliverability** | Bounces, complaints and suppression for client mail | `platform-mail` (a later slice), fed by the `send-clients` event destination | "bounce", "suppressed" |
+| **Identity & Access** | Accounts, memberships, the session, the tenant chooser; minting Mail capabilities | the dashboard shell (a separate application) | "session", "membership", "capability" |
+| **Business Catalogue** | The site manifest and `has.email` | the platform's site catalogue (a separate application) | "module", "manifest" |
+| **Presence** | Live state and Web Push for a business | the dashboard's per-business Agent | "new mail count" |
+| **Deliverability** | Bounces, complaints and suppression for client mail | `platform-mail` (a later slice), fed by the client-mail configuration sets' event destination | "bounce", "suppressed" |
 | **Assistant** (held) | AI help over one mailbox's mail, only when the owner opted in | a separate Durable Object class in `platform-mail`, never instantiated in v1 | "ask", "draft", "opt-in" |
 
 ## 2. Context map
@@ -57,8 +57,9 @@ not as migrations. It found eleven; they come first.
 ```
 
 Mail is deliberately **independent of the auth provider**: it verifies a
-capability, not an Access token and not a Better Auth session, so spec 008's
-swap from Access to Better Auth does not touch it. And a Worker that merely
+capability, not an Access token and not a Better Auth session, so the
+dashboard's planned swap from Cloudflare Access to Better Auth does not touch
+it. And a Worker that merely
 has a binding to Mail cannot open a mailbox, because it cannot mint a
 capability without the key.
 

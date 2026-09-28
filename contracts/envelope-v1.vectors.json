@@ -1,0 +1,252 @@
+{
+  "contract": "contracts/envelope-v1.md",
+  "about": "Test vectors for envelope v1, written by packages/mail-crypto (npm run write-vectors -w @platform-mail/crypto) and checked by its test/vectors.test.ts. Every key and secret is SHA-256 of the public label next to it: test values only, never used for real mail. Byte strings are lowercase hex, except the stored forms (keyEnvelope, header, sealed, wrapped) and fields ending in B64url, which are base64url without padding (RFC 4648 §5). Strings are UTF-8; raw is the message's exact bytes as a UTF-8 string (CRLF line ends).",
+  "suite": {
+    "mode": "base",
+    "kem": "0x0020 DHKEM(X25519, HKDF-SHA256)",
+    "kdf": "0x0001 HKDF-SHA256",
+    "aead": "0x0002 AES-256-GCM"
+  },
+  "mailboxKey": {
+    "label": "platform-mail/v1 test vectors: mailbox private key (never use for real mail)",
+    "derivation": "skRm = SHA-256(UTF-8(label)), clamped (RFC 7748 decodeScalar25519); pkRm = X25519(skRm, 9)",
+    "skRm": "685808a4c98900ff08d7b600d7180f9e88c3bcb36acd28e8bb13e1d7fb4cfe56",
+    "pkRm": "00649e467a5f3ffc027b45b1601e7b5bd95bbdbfd45fb630323beef5bdb22170",
+    "keyId": "62c6eb95be66371a345e17a0cb77b33e",
+    "fingerprint": "62c6 eb95 be66 371a 345e 17a0 cb77 b33e"
+  },
+  "mailboxId": "mbx_040ewg61x43hyc8dayjy8vfh74",
+  "messages": [
+    {
+      "name": "small message",
+      "messageId": "msg_27ksjpr1xzdwk07gs3tte41wt6",
+      "dek": "c45ee02958ac3d8062b85f494b14e557a41902e2d1a55673c530aaa4a1dbb395",
+      "sealed": {
+        "keyId": "62c6eb95be66371a345e17a0cb77b33e",
+        "keyEnvelope": "4TRsZal2p5zHWj8P6GhS_kMcBJA1mo_iiODuyHiquAfD96K7jmzkr5DUCBSOFIE4RH_y-IyvJhPHc2eLQvvMXJ3iJKRK38SXkcLMdO3LpxM",
+        "header": "Achwf4JF_I1r0Do1N-jIjFaSlsYwxsc5AmLf-SwAsjV28uvSnvuyATXdTolnBiLRet_qGQWGBOgqi1S4_p3PHi6dq2tqbJTJ_brC5ryiravYuI_ENnk2_uM52ZGzmK-qk35lPcx-vQanmmBaHsWKVtShpH6FCLJ4n7dfhuTZ9bIJlcW0J3HhTrVGVpSvb7DTesoZWqVUhncTsfUmY3uowCtM6LW-unoylO95JXgnsDQLlR4DH47PyFRnEX1aIvciBr6LH-gLKgef5DkdWWi8eOpFAaLmd6oPdfIKru8dagsXCNaCIYOXrw43--UabsdYX8i1oYoqoLMhYyBr4eyazC0WBpzXQcvmUT4AlcuqEBtIUfd2QX-2I1r3jAD39jVndHM0fPYdZ1_Tt7VDYVVYICLr-N7Q9xubCwE7o2F0b7b4fCJdCkAe7_5dEZU1EArvZsq94UYdbFcThBRJRm26JPIbOMvC3H5p-j6TYD4e8gbJipWeSdqdMa46noKtjkU3zOs3PBs_N53jNReZRW6R6ZgQIaQZSq01alosFRU",
+        "bodyB64url": "UE1CMdP4oHa4318C6Ax_gLAX9ekDBZBp6bIlPL327_gDYN5arh-_INItKjaRnczjQ1dQ0uP02VkkH2Bzt-sytTnnP3itiy3ti38A-qJNP17ncMrE4O-oUZOiiLY0QXY17fOm5Ou3GxKJxJBJBrefWuoE7G5O7RbrOUUhAbxiOATnbFcgMXvtGl0sM0TWF0ob-HLgNLgRrQaZXATMqX71zT2cltPIYxOdtl8BkPFHbYRzpXnBR8iYWxMpi5PRu0w2uqJ7IU7mORimtKkGL10KkEF3jOkcqoxJNOS7bTvDKm3S9aXEhjrWEk6bLH2L0eWe7hvkW8FJH1r6l9MXgrQH96xMQA4myVhz9IgNaTKX0Hz2QnaDTfwY5j25Wg27cIjVjpBskZvZMMp35O70ENaRzm4Hp8VAB5PwUmEE3cQ5hnnmtT1XUaTJNam3RgG1wVV07axepIo2IArWik9D77m94Yvj1CocgW-TKdQ"
+      },
+      "header": {
+        "v": 1,
+        "direction": "in",
+        "envelopeFrom": "bounce@x.example",
+        "from": {
+          "name": "Ana Ruiz",
+          "address": "ana@example.com"
+        },
+        "to": [
+          {
+            "name": "",
+            "address": "hello@example.com"
+          }
+        ],
+        "cc": [],
+        "bcc": [],
+        "replyTo": [],
+        "subject": "Kitchen remodel quote",
+        "date": "2026-09-26T15:04:05.000Z",
+        "messageId": "abc@example.com",
+        "inReplyTo": null,
+        "references": [],
+        "snippet": "Hi — we'd like a quote for…",
+        "attachments": []
+      },
+      "raw": "Return-Path: <bounce@x.example>\r\nFrom: Ana Ruiz <ana@example.com>\r\nTo: hello@example.com\r\nSubject: Kitchen remodel quote\r\nDate: Sat, 26 Sep 2026 15:04:05 +0000\r\nMessage-ID: <abc@example.com>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\nHi — we'd like a quote for the kitchen.\r\n"
+    },
+    {
+      "name": "non-ASCII subject and an attachment",
+      "messageId": "msg_5t9mktp2228ksgcfcdx445113g",
+      "dek": "de4e87be174f325d28e0c075c734e0fbc18498411726b02a01323592e1c52402",
+      "sealed": {
+        "keyId": "62c6eb95be66371a345e17a0cb77b33e",
+        "keyEnvelope": "sa2BPF5bMdKZpi7hfC1vmX_nzkeTRjxQiPKaBdcJlUbbYDLq8JZI7oJb9gYPBrJngQQFs5NrKLT-MWFyAGOq9jM3oV6iplzPJc7bnXaZbYw",
+        "header": "AZlOwymwmU7vFCkqhbAO6BYY5jNDL4ajJizF4Yx7ZnYFR-QymnKRKl6yVopYV-uXK6pv8kfIaJVBIrv60-cNOL7KsOKTZYM7RFEEHsYXcyp22R3sTUUhAaspZM_yUs6CrTvNaZsWvoDD-MwgpBYRUUTQf2jXSCcFQFLYzsv4y6cDGN4wmn3BOUn7RqPF0JcznwF-VRPQf5zoCRadRRLTEJCUraQd_Y8wqCyt25rp1QP4ayAYMGMVqnP1clqD9EtHEaAcw7hsQKay4sSN4t0WzhjuftDaaNFbY4dcSt1E6Driwrs5E_XdFcXxch3kB0ZgpqZvXnrlFIT3TkMOMcTDrw8_5DTQDCpWn-EBZp1oFdMTyMUnItUymFzVFitabNhCO12ug9wZ-z-FC_p4dZwFrM8w1xLzGG1umm05FomrkOuTtbMo6kUcjwx5Kj8XuxXga59yQBONlWj1FLjD66KrDbqdMqUzNGNCoEJdRWykRbTY0dRwAKoZ2RE554xFZCkbyz90OUSNQHC-mOX5oFbmQDP8XLrcv0WNgBU1XkOY1DOMHUo5lG5wiJ-8oyVNUKYiN-ku8I9fyAjh0tpypRM7QnZJrA6ATHqoAjdeJzotvAemnDqSBqYjlPbITNASbOmMogDQlxrMls-zl3BLOLCQLEPg-8NOt2gnikZKQBZPziS6azV-OJhqN50_z40b71ZNs_aGh3XxbOs-eF_ASQxmYmhWbQaF_aVdo4Lnh-5enhdPuS9ZWCALN4yJm0kCS2a7PMKa7G0rLfxoeaBRZUXtcjm2yNHXXCkpTch7o8BXq2mCrZienrlcAzwLW14tz8R-mQBPBDEb6hfKEhlnpegWg7ZXK3-wRTeu-Yp1LQ_4gToF2KX1ds68knqXnlQXha6f8xTCQNEEB6A7Cw7nwoaQny0s4NZY0dqTYUxLTjmCt3xpnxstZottfSkhSUU2PaLOY8EESX80fjsnDIU5pPib5p4PccX_9kjQ1HQ8urYy41aExHVNDpZBQEDyY_syaMrXlVZHQRLW4L85OYvdDqavjvee3ZtU3STDnx8Cz_xm",
+        "bodyB64url": "UE1CMcODVciIEbotfRhNYAP7RdwDYhzJe3HO8-pl0BJMSn3_MEiQonvaXNFNb-KUK_KYFEQx8wannkpnxV-NxR61BlgUHMd-oEN8RbzHlEVrS4Uz34lCVA3SXsAG6HyaFTmBP6TLlTcOfrP9ZZfp1FlgeYFhrt-hvQy1NakGhDoMz5f2y3XuSKizLNWNqKdhfOvsdy4wX1q9Gv8wX7xcKe1s6BAhwXZ4Dg1CWvT_mPdxgJQ_jum2l3RcPRdva4ZBXImrtU_lgR0ALk7ryZ2efGJSCXocPROkTLqRbh_2MJJO3iACFsdi1Z07MNSw6MOgD3UBlpuPBkCFRg5iSvpWWK980XNS6RtVslREdWoMypINir7TJ74LOENnfZqzMYefkMw9FrysQ5QRdgFl8LidnYPTbLIsaVxVhlStZlT5po-YLjKLd8e4frpcf1H7DHT70TZXokYBCsFhRxSR-t2OGb1XvpgxWDT1wtzaOSZreCizJD8zVJebhavspRAZFOBNqfamfolbwxPHs1ifuTecEPxksx7XCw9iL7D4W8QmhdOkyQc3ULerjYELP9XgvgU6HNuzuDrOu2pxeZd4CFaTK_w-Z0ZH_aSJ0tL47JW0C_sL4Kv5YxfwwuRq2uHJQ2XVnHlFZovsuKdDh3VCeDvaGT-KxdJ22hmXGtQs3EE_30MSNG7E8sNlbBRhY81DxRHL0xZIpdPur1EHKH_lqgPDYlrC1P5OyNmzfZhmLKZUPKNGY0z0iGmqJ0-Mljxx8DxYT-4TPvpzRDaLL7i2_nE70c98kRwbdWZdMQ0RKAxvaHBbQU5pXADLBsNCT1Zk_rlXYMNeQf_vGTZC0uZf6LaT_Y5HxecumrxwmBVPJIub8Hy3jXA412VSKDOOygy9-yV_RzDSWDFUf-zNfaGXkffPaBruzPA-R6x1wL7bBDfphpycB6osrnH2QYG7PW3QxGE2U2u8N-fuDiWCYdqGw78xoQVpM4wIl78r"
+      },
+      "header": {
+        "v": 1,
+        "direction": "in",
+        "envelopeFrom": "bounces+x@mail.example.com",
+        "from": {
+          "name": "José Nguyễn 🛠",
+          "address": "jose@example.com"
+        },
+        "to": [
+          {
+            "name": "Acme Remodeling, Inc.",
+            "address": "hello@acme.example"
+          }
+        ],
+        "cc": [
+          {
+            "name": "Zoë Ångström",
+            "address": "zoe@example.org"
+          }
+        ],
+        "bcc": [],
+        "replyTo": [
+          {
+            "name": "",
+            "address": "jose+replies@example.com"
+          }
+        ],
+        "subject": "Cotización: baño — ¿podemos vernos el 3/10? 見積もり 🛁",
+        "date": "2026-09-26T15:04:05.000Z",
+        "messageId": "20260926150405.1234@mail.example.com",
+        "inReplyTo": "prev@example.com",
+        "references": [
+          "first@example.com",
+          "prev@example.com"
+        ],
+        "snippet": "Hola, adjunto el plano del baño. ¿Pueden darme un precio? Gracias.",
+        "attachments": [
+          {
+            "filename": "plano-baño.pdf",
+            "mimeType": "application/pdf",
+            "size": 22,
+            "inline": false
+          }
+        ]
+      },
+      "raw": "From: =?UTF-8?Q?Jos=C3=A9_Nguy=E1=BB=85n_=F0=9F=9B=A0?= <jose@example.com>\r\nTo: \"Acme Remodeling, Inc.\" <hello@acme.example>\r\nSubject: =?UTF-8?B?Q290aXphY2nDs246IGJhw7FvIOKAlCDCv3BvZGVtb3MgdmVybm9zIGVsIDMv?=\r\n =?UTF-8?B?MTA/IOimi+epjeOCguOCiiDwn5uB?=\r\nMessage-ID: <20260926150405.1234@mail.example.com>\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"b1\"\r\n\r\n--b1\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\nHola, adjunto el plano del baño. ¿Pueden darme un precio? Gracias.\r\n--b1\r\nContent-Type: application/pdf; name=\"=?UTF-8?Q?plano-ba=C3=B1o.pdf?=\"\r\nContent-Disposition: attachment\r\nContent-Transfer-Encoding: base64\r\n\r\nJVBERi0xLjQKJcTl8uXrp/Og0MTGCg==\r\n--b1--\r\n"
+    }
+  ],
+  "drafts": [
+    {
+      "name": "draft",
+      "draftId": "drf_33nqhp4fz6wy4b4dmy4bwfzmfy",
+      "dek": "4bf819b8ce96f8269714a512d044a4a736b09c6892b9647556f2505557b5b896",
+      "sealed": {
+        "keyId": "62c6eb95be66371a345e17a0cb77b33e",
+        "keyEnvelope": "aiD_H1qYROj-2vXJor83KkZ0umCE4Ve25Qbux8XEHHGiwK1YN_PtcUsKkgaz0MuskO7FUweL6vtGfgHjvjOrV1O6qDpymQdNxEcht6lAoyA",
+        "sealed": "AXEjsSlUAMURhAYC1354fChkQ9OR2RZJYes6H_BBDDq-saJ6d99yyJkTmSDyJl25hh7nqDTbdQCsUUWVpQwAXbyrdc1cd9Xf1DJu5z6HB3JAbpdxhD3kO8E08CCrGcc5PEEJs4N6vauZtXfu_s-dl53l0C7h8TQ6q6XtjlfIqTayWde9_WauTxhC_FFgBmTwTQqZAcplXT3JigLHMNMFEMwQYIBX_ykZfEfRoXQAnbZSr9emAJYwQHxwBQVdCe5ZlKqYmbpRpxCBZh_xrms-KKpi2m1XuzJljwFyhqeS2izp-_MAzf4HaibZXWCV8V_U7c8qwOeFZ8MxIh0NdrQqT2GlzM-rruRipEpk5eH5Bhj8JLLOBZHnLg_DRbOuUjxUiRqwZNHqfN6EyoQ0MwqfqTvBaWLjE2_M2TpqdLgrL4dR-KxHQlz8qUgqlpJyv0Kuku5sLUeG3dKKR5UseLSZNjxJL8OnNt3rXGAPjrkXcFJyTXJaGAFY9ZTDaPkTbv7qF30xmEg2ie1BjGTosAiw02RxVDZiyhC567Mc3MiGVeReicLFaou4uJFjWDy81QAOxMBgnQYA4nzk6fPkLbjsxx5uLkml8S5dObNWpxgMiWeiLhU5"
+      },
+      "draft": {
+        "v": 1,
+        "to": [
+          {
+            "name": "José Nguyễn",
+            "address": "jose@example.com"
+          }
+        ],
+        "cc": [],
+        "bcc": [
+          {
+            "name": "",
+            "address": "archive@example.org"
+          }
+        ],
+        "subject": "Re: Cotización — baño",
+        "text": "Hola José,\n\nGracias por el plano. Le enviamos el precio mañana.\n\n— Acme",
+        "inReplyTo": "20260926150405.1234@mail.example.com",
+        "references": [
+          "first@example.com",
+          "prev@example.com",
+          "20260926150405.1234@mail.example.com"
+        ],
+        "updatedAt": "2026-09-26T15:04:05.000Z"
+      }
+    }
+  ],
+  "wraps": [
+    {
+      "name": "passkey wrap",
+      "secretLabel": "platform-mail/v1 test vectors: passkey PRF output (never use for real mail)",
+      "prfInput": "8bc9b11ddd5cf48bdfd999128a565cbac88836b47f3cc6ccfebb5bd2964df3b9",
+      "prfOutput": "e5a9d68172e49e0887964a73ec09bd076b664baf447c1bba69bf6a8c1fbb1dd9",
+      "wrap": {
+        "id": "wrp_7chkq471h795mcss1gkz2fe32s",
+        "keyId": "62c6eb95be66371a345e17a0cb77b33e",
+        "kind": "passkey-prf",
+        "wrapped": "AURi20pwVUe6PPrrXIpaQ0vOzSr-OCJWvatyPZRGOmRzFjP4R5GxZthoYl9laqP___474T3qHceqtEsHGg"
+      }
+    },
+    {
+      "name": "recovery wrap",
+      "secretLabel": "platform-mail/v1 test vectors: recovery secret (never use for real mail)",
+      "recoveryKey": "b0cc91d79ed3b075f9ab7487f6c4df6acaccd52694e20f3e8e44402b4b4ab321",
+      "recoveryDisplay": "2RCS4-EQKV9-V0XFS-NDT8F-XP4VX-NCNK6-N4TAE-43SYH-S240A-TB9AS-J2ACK",
+      "wrap": {
+        "id": "wrp_3c451n9j1s4z9rexea327rhzb4",
+        "keyId": "62c6eb95be66371a345e17a0cb77b33e",
+        "kind": "recovery",
+        "wrapped": "AVAjm84OCSq_CYdR_g3qnYi7AAHWCqOAFeI6I8E4Mxz_AvJ6C044QQw7N6WU3jsoyikm1g5hKxWcmO_NkA"
+      }
+    }
+  ],
+  "negative": [
+    {
+      "name": "header moved to another message id",
+      "open": "header",
+      "mailboxId": "mbx_040ewg61x43hyc8dayjy8vfh74",
+      "objectId": "msg_0s87v58e7yj7xjzh9ecnwvw7aa",
+      "sealed": {
+        "keyEnvelope": "4TRsZal2p5zHWj8P6GhS_kMcBJA1mo_iiODuyHiquAfD96K7jmzkr5DUCBSOFIE4RH_y-IyvJhPHc2eLQvvMXJ3iJKRK38SXkcLMdO3LpxM",
+        "header": "Achwf4JF_I1r0Do1N-jIjFaSlsYwxsc5AmLf-SwAsjV28uvSnvuyATXdTolnBiLRet_qGQWGBOgqi1S4_p3PHi6dq2tqbJTJ_brC5ryiravYuI_ENnk2_uM52ZGzmK-qk35lPcx-vQanmmBaHsWKVtShpH6FCLJ4n7dfhuTZ9bIJlcW0J3HhTrVGVpSvb7DTesoZWqVUhncTsfUmY3uowCtM6LW-unoylO95JXgnsDQLlR4DH47PyFRnEX1aIvciBr6LH-gLKgef5DkdWWi8eOpFAaLmd6oPdfIKru8dagsXCNaCIYOXrw43--UabsdYX8i1oYoqoLMhYyBr4eyazC0WBpzXQcvmUT4AlcuqEBtIUfd2QX-2I1r3jAD39jVndHM0fPYdZ1_Tt7VDYVVYICLr-N7Q9xubCwE7o2F0b7b4fCJdCkAe7_5dEZU1EArvZsq94UYdbFcThBRJRm26JPIbOMvC3H5p-j6TYD4e8gbJipWeSdqdMa46noKtjkU3zOs3PBs_N53jNReZRW6R6ZgQIaQZSq01alosFRU"
+      },
+      "expect": "DecryptionFailed"
+    },
+    {
+      "name": "header moved to another message id, with its message key re-sealed for that id (only the header's own associated data can refuse it)",
+      "open": "header",
+      "mailboxId": "mbx_040ewg61x43hyc8dayjy8vfh74",
+      "objectId": "msg_0s87v58e7yj7xjzh9ecnwvw7aa",
+      "sealed": {
+        "keyEnvelope": "Y1H4LobkVaH_NRq3yrCfgf0iBha_k4js3iWjJELpdlrE4DWFJJiyjGashqd9WeYN3srDirR2IEYQ4Tuo6qFt_ObdXB84x8NvZhGYxULxAaM",
+        "header": "Achwf4JF_I1r0Do1N-jIjFaSlsYwxsc5AmLf-SwAsjV28uvSnvuyATXdTolnBiLRet_qGQWGBOgqi1S4_p3PHi6dq2tqbJTJ_brC5ryiravYuI_ENnk2_uM52ZGzmK-qk35lPcx-vQanmmBaHsWKVtShpH6FCLJ4n7dfhuTZ9bIJlcW0J3HhTrVGVpSvb7DTesoZWqVUhncTsfUmY3uowCtM6LW-unoylO95JXgnsDQLlR4DH47PyFRnEX1aIvciBr6LH-gLKgef5DkdWWi8eOpFAaLmd6oPdfIKru8dagsXCNaCIYOXrw43--UabsdYX8i1oYoqoLMhYyBr4eyazC0WBpzXQcvmUT4AlcuqEBtIUfd2QX-2I1r3jAD39jVndHM0fPYdZ1_Tt7VDYVVYICLr-N7Q9xubCwE7o2F0b7b4fCJdCkAe7_5dEZU1EArvZsq94UYdbFcThBRJRm26JPIbOMvC3H5p-j6TYD4e8gbJipWeSdqdMa46noKtjkU3zOs3PBs_N53jNReZRW6R6ZgQIaQZSq01alosFRU"
+      },
+      "expect": "DecryptionFailed"
+    },
+    {
+      "name": "body moved to another mailbox",
+      "open": "body",
+      "mailboxId": "mbx_3qtrfhhng5qm04b2strzkmkn7c",
+      "objectId": "msg_27ksjpr1xzdwk07gs3tte41wt6",
+      "sealed": {
+        "keyEnvelope": "4TRsZal2p5zHWj8P6GhS_kMcBJA1mo_iiODuyHiquAfD96K7jmzkr5DUCBSOFIE4RH_y-IyvJhPHc2eLQvvMXJ3iJKRK38SXkcLMdO3LpxM",
+        "bodyB64url": "UE1CMdP4oHa4318C6Ax_gLAX9ekDBZBp6bIlPL327_gDYN5arh-_INItKjaRnczjQ1dQ0uP02VkkH2Bzt-sytTnnP3itiy3ti38A-qJNP17ncMrE4O-oUZOiiLY0QXY17fOm5Ou3GxKJxJBJBrefWuoE7G5O7RbrOUUhAbxiOATnbFcgMXvtGl0sM0TWF0ob-HLgNLgRrQaZXATMqX71zT2cltPIYxOdtl8BkPFHbYRzpXnBR8iYWxMpi5PRu0w2uqJ7IU7mORimtKkGL10KkEF3jOkcqoxJNOS7bTvDKm3S9aXEhjrWEk6bLH2L0eWe7hvkW8FJH1r6l9MXgrQH96xMQA4myVhz9IgNaTKX0Hz2QnaDTfwY5j25Wg27cIjVjpBskZvZMMp35O70ENaRzm4Hp8VAB5PwUmEE3cQ5hnnmtT1XUaTJNam3RgG1wVV07axepIo2IArWik9D77m94Yvj1CocgW-TKdQ"
+      },
+      "expect": "DecryptionFailed"
+    },
+    {
+      "name": "body moved to another mailbox, with its message key re-sealed for that mailbox (only the body's own associated data can refuse it)",
+      "open": "body",
+      "mailboxId": "mbx_3qtrfhhng5qm04b2strzkmkn7c",
+      "objectId": "msg_27ksjpr1xzdwk07gs3tte41wt6",
+      "sealed": {
+        "keyEnvelope": "x1erZBBghNLPmXGxbP7THQT-wzKA-hMOut92LeF1hBRlES25fLxZxUUjN9m4ONEQJtP4GuJ9qsL5k-GBOB--5TQ_-kwjS07r3TLId1Thonk",
+        "bodyB64url": "UE1CMdP4oHa4318C6Ax_gLAX9ekDBZBp6bIlPL327_gDYN5arh-_INItKjaRnczjQ1dQ0uP02VkkH2Bzt-sytTnnP3itiy3ti38A-qJNP17ncMrE4O-oUZOiiLY0QXY17fOm5Ou3GxKJxJBJBrefWuoE7G5O7RbrOUUhAbxiOATnbFcgMXvtGl0sM0TWF0ob-HLgNLgRrQaZXATMqX71zT2cltPIYxOdtl8BkPFHbYRzpXnBR8iYWxMpi5PRu0w2uqJ7IU7mORimtKkGL10KkEF3jOkcqoxJNOS7bTvDKm3S9aXEhjrWEk6bLH2L0eWe7hvkW8FJH1r6l9MXgrQH96xMQA4myVhz9IgNaTKX0Hz2QnaDTfwY5j25Wg27cIjVjpBskZvZMMp35O70ENaRzm4Hp8VAB5PwUmEE3cQ5hnnmtT1XUaTJNam3RgG1wVV07axepIo2IArWik9D77m94Yvj1CocgW-TKdQ"
+      },
+      "expect": "DecryptionFailed"
+    },
+    {
+      "name": "truncated tag: header block missing its last byte",
+      "open": "header",
+      "mailboxId": "mbx_040ewg61x43hyc8dayjy8vfh74",
+      "objectId": "msg_27ksjpr1xzdwk07gs3tte41wt6",
+      "sealed": {
+        "keyEnvelope": "4TRsZal2p5zHWj8P6GhS_kMcBJA1mo_iiODuyHiquAfD96K7jmzkr5DUCBSOFIE4RH_y-IyvJhPHc2eLQvvMXJ3iJKRK38SXkcLMdO3LpxM",
+        "header": "Achwf4JF_I1r0Do1N-jIjFaSlsYwxsc5AmLf-SwAsjV28uvSnvuyATXdTolnBiLRet_qGQWGBOgqi1S4_p3PHi6dq2tqbJTJ_brC5ryiravYuI_ENnk2_uM52ZGzmK-qk35lPcx-vQanmmBaHsWKVtShpH6FCLJ4n7dfhuTZ9bIJlcW0J3HhTrVGVpSvb7DTesoZWqVUhncTsfUmY3uowCtM6LW-unoylO95JXgnsDQLlR4DH47PyFRnEX1aIvciBr6LH-gLKgef5DkdWWi8eOpFAaLmd6oPdfIKru8dagsXCNaCIYOXrw43--UabsdYX8i1oYoqoLMhYyBr4eyazC0WBpzXQcvmUT4AlcuqEBtIUfd2QX-2I1r3jAD39jVndHM0fPYdZ1_Tt7VDYVVYICLr-N7Q9xubCwE7o2F0b7b4fCJdCkAe7_5dEZU1EArvZsq94UYdbFcThBRJRm26JPIbOMvC3H5p-j6TYD4e8gbJipWeSdqdMa46noKtjkU3zOs3PBs_N53jNReZRW6R6ZgQIaQZSq01alosFQ"
+      },
+      "expect": "DecryptionFailed"
+    },
+    {
+      "name": "truncated tag: body object missing its last byte",
+      "open": "body",
+      "mailboxId": "mbx_040ewg61x43hyc8dayjy8vfh74",
+      "objectId": "msg_27ksjpr1xzdwk07gs3tte41wt6",
+      "sealed": {
+        "keyEnvelope": "4TRsZal2p5zHWj8P6GhS_kMcBJA1mo_iiODuyHiquAfD96K7jmzkr5DUCBSOFIE4RH_y-IyvJhPHc2eLQvvMXJ3iJKRK38SXkcLMdO3LpxM",
+        "bodyB64url": "UE1CMdP4oHa4318C6Ax_gLAX9ekDBZBp6bIlPL327_gDYN5arh-_INItKjaRnczjQ1dQ0uP02VkkH2Bzt-sytTnnP3itiy3ti38A-qJNP17ncMrE4O-oUZOiiLY0QXY17fOm5Ou3GxKJxJBJBrefWuoE7G5O7RbrOUUhAbxiOATnbFcgMXvtGl0sM0TWF0ob-HLgNLgRrQaZXATMqX71zT2cltPIYxOdtl8BkPFHbYRzpXnBR8iYWxMpi5PRu0w2uqJ7IU7mORimtKkGL10KkEF3jOkcqoxJNOS7bTvDKm3S9aXEhjrWEk6bLH2L0eWe7hvkW8FJH1r6l9MXgrQH96xMQA4myVhz9IgNaTKX0Hz2QnaDTfwY5j25Wg27cIjVjpBskZvZMMp35O70ENaRzm4Hp8VAB5PwUmEE3cQ5hnnmtT1XUaTJNam3RgG1wVV07axepIo2IArWik9D77m94Yvj1CocgW-TKQ"
+      },
+      "expect": "DecryptionFailed"
+    },
+    {
+      "name": "recovery key with a one-character typo",
+      "open": "recoveryDisplay",
+      "recoveryDisplay": "2RCS4-7QKV9-V0XFS-NDT8F-XP4VX-NCNK6-N4TAE-43SYH-S240A-TB9AS-J2ACK",
+      "expect": "RecoveryKeyTypo"
+    }
+  ]
+}

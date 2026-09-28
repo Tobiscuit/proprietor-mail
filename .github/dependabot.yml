@@ -1,0 +1,32 @@
+# Version updates for npm (the root lockfile covers both workspace packages)
+# and for the SHA-pinned actions (Dependabot moves the SHA and its comment
+# together). A new release waits seven days before it is proposed, so a
+# compromised release has time to be caught and pulled; security updates are
+# not delayed.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    # Every version here is pinned exactly; keep it that way.
+    versioning-strategy: increase
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    groups:
+      # Tooling moves together; runtime dependencies (what ships) come one per
+      # pull request so each gets its own review.
+      development:
+        dependency-type: development
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]

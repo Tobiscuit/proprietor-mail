@@ -1,0 +1,80 @@
+// Copyright (c) 2026 Cloudflare, Inc.
+// Licensed under the Apache 2.0 license found in the LICENSE file or at:
+//     https://opensource.org/licenses/Apache-2.0
+//
+// Modified by Operator, 2026-09: the migration runner is adapted from
+// agentic-inbox's workers/durableObject/migrations.ts (tracking table renamed
+// to mailbox_migrations; every migration runs inside transactionSync; the
+// BEGIN/COMMIT stripping was dropped because nothing here writes them). The
+// schema itself is platform-mail's own (plan.md §3): sealed headers and key
+// envelopes only, no message content in any column.
+
+import { SYSTEM_FOLDERS } from "./folders";
+
+export interface Migration {
+  name: string;
+  sql: string;
+}
+
+const seedFolders = SYSTEM_FOLDERS.map((f) => `('${f.id}', '${f.name}', 1)`).join(", ");
+
+export const mailboxMigrations: Migration[] = [
+  {
+    name: "0001_mailbox",
+    sql: `
+      CREATE TABLE identity (only INTEGER PRIMARY KEY CHECK (only = 1), mailbox_id TEXT NOT NULL,
+        tenant_id TEXT NOT NULL, address TEXT NOT NULL, display_name TEXT NOT NULL DEFAULT '');
+      CREATE TABLE keys (key_id TEXT PRIMARY KEY, public_key BLOB NOT NULL, created_at TEXT NOT NULL,
+        created_by TEXT NOT NULL, retired_at TEXT);
+      CREATE TABLE key_wraps (id TEXT PRIMARY KEY, key_id TEXT NOT NULL REFERENCES keys(key_id),
+        kind TEXT NOT NULL CHECK (kind IN ('passkey-prf','recovery')), credential_id TEXT, label TEXT NOT NULL,
+        wrapped TEXT NOT NULL, created_at TEXT NOT NULL, created_by TEXT NOT NULL);
+      CREATE TABLE folders (id TEXT PRIMARY KEY, name TEXT NOT NULL, system INTEGER NOT NULL);
+      INSERT INTO folders (id, name, system) VALUES ${seedFolders};
+      -- M8: system folders are fixed. Enforced by the database, not by the absence of an API.
+      CREATE TRIGGER folders_system_fixed_update BEFORE UPDATE ON folders WHEN OLD.system = 1
+        BEGIN SELECT RAISE(ABORT, 'system folders are fixed'); END;
+      CREATE TRIGGER folders_system_fixed_delete BEFORE DELETE ON folders WHEN OLD.system = 1
+        BEGIN SELECT RAISE(ABORT, 'system folders are fixed'); END;
+      CREATE TABLE messages (id TEXT PRIMARY KEY, folder_id TEXT NOT NULL REFERENCES folders(id),
+        direction TEXT NOT NULL CHECK (direction IN ('in','out')), received_at TEXT NOT NULL,
+        size INTEGER NOT NULL, key_id TEXT NOT NULL, key_envelope TEXT NOT NULL, header TEXT NOT NULL,
+        body_key TEXT NOT NULL, seen INTEGER NOT NULL DEFAULT 0, flagged INTEGER NOT NULL DEFAULT 0,
+        trashed_at TEXT);
+      CREATE INDEX messages_by_folder ON messages(folder_id, received_at DESC);
+      CREATE INDEX messages_in_trash ON messages(trashed_at) WHERE trashed_at IS NOT NULL;
+      CREATE TABLE drafts (id TEXT PRIMARY KEY, key_id TEXT NOT NULL, key_envelope TEXT NOT NULL,
+        sealed TEXT NOT NULL, updated_at TEXT NOT NULL);
+      CREATE TABLE sends (idempotency_key TEXT PRIMARY KEY, message_id TEXT, provider_message_id TEXT,
+        created_at TEXT NOT NULL);
+      CREATE INDEX sends_by_time ON sends(created_at);
+      CREATE TABLE policy (only INTEGER PRIMARY KEY CHECK (only = 1),
+        open_roles TEXT NOT NULL DEFAULT '["owner"]', send_roles TEXT NOT NULL DEFAULT '["owner"]',
+        assistant TEXT NOT NULL DEFAULT 'off' CHECK (assistant IN ('off','on')),
+        delivery TEXT NOT NULL DEFAULT 'store' CHECK (delivery IN ('store','store-and-forward')),
+        forward_to TEXT, updated_at TEXT NOT NULL, updated_by TEXT NOT NULL);
+      CREATE TABLE audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, actor TEXT NOT NULL,
+        action TEXT NOT NULL, detail TEXT NOT NULL);
+    `,
+  },
+];
+
+/**
+ * Minimal migration runner. Each migration runs inside the Durable Object's
+ * transactionSync (the DO runtime forbids SQL-level BEGIN/COMMIT), so a
+ * multi-statement migration is all or nothing.
+ */
+export function applyMigrations(storage: DurableObjectStorage, migrations: Migration[]): void {
+  const sql = storage.sql;
+  sql.exec(`CREATE TABLE IF NOT EXISTS mailbox_migrations (
+    name TEXT PRIMARY KEY,
+    applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  )`);
+  for (const migration of migrations) {
+    if (sql.exec("SELECT 1 FROM mailbox_migrations WHERE name = ?", migration.name).toArray().length > 0) continue;
+    storage.transactionSync(() => {
+      sql.exec(migration.sql);
+      sql.exec("INSERT INTO mailbox_migrations (name) VALUES (?)", migration.name);
+    });
+  }
+}

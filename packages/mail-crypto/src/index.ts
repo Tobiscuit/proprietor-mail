@@ -2,11 +2,9 @@
  * @platform-mail/crypto - envelope v1 and key wrapping.
  *
  * The contract is contracts/envelope-v1.md; this file is its API in code form.
- * Until slice S1 lands, every function below throws `NotImplemented` and
- * `IMPLEMENTED` is false, so the Worker (slice S2) can compile against the real
- * signatures and inject a fake in its unit tests. S1 owns this package and may
- * add exports; it must not change a signature below without changing the
- * contract first.
+ * The signatures are the ones the stub published for slices S2 and S3; S1
+ * implemented them without changing any (see README.md for the decisions).
+ * A signature changes only with the contract.
  *
  * Two audiences:
  *   - the Mail Worker, which only ever SEALS (it holds public keys only);
@@ -14,33 +12,38 @@
  *     mailbox private key.
  */
 
-/** False until S1 replaces the stubs. Tests that need real crypto skip on it. */
-export const IMPLEMENTED: boolean = false;
+import { base64url, copy, fromBase64url, randomBytes } from "./bytes";
+import { crockfordEncode } from "./crockford";
+import {
+  aesKey,
+  BODY_OBJECT,
+  context,
+  DRAFT_BLOCK,
+  failClosed,
+  HEADER_BLOCK,
+  openBlock,
+  openKeyEnvelope,
+  sealBlock,
+  sealKeyEnvelope,
+} from "./envelope";
+import {
+  importPrivateScalar,
+  importPublicKey,
+  keyIdOf as keyIdOfPublicKey,
+  materialOf,
+  publicKeyMatches as materialMatches,
+} from "./keys";
+import { parseDraft, parseHeader, serializeDraft, serializeHeader } from "./plaintext";
+import { newRecoveryKey as newRecovery, parseRecoveryKey as parseRecovery } from "./recovery";
+import { prfInput as prfInputFor, unwrapPrivateKey as unwrapWithSecret, wrapPrivateKey as wrapWithSecret } from "./wrap";
+
+/** True since S1 replaced the stubs. Tests that need real crypto used to skip on it. */
+export const IMPLEMENTED: boolean = true;
 
 export const ENVELOPE_VERSION = 1 as const;
 
-export class NotImplemented extends Error {
-  constructor(what: string) {
-    super(`@platform-mail/crypto: ${what} is not implemented yet (slice S1)`);
-    this.name = "NotImplemented";
-  }
-}
-
-/** An authentication tag did not verify, or a blob is malformed. Never an empty result. */
-export class DecryptionFailed extends Error {
-  constructor(message = "this could not be decrypted") {
-    super(message);
-    this.name = "DecryptionFailed";
-  }
-}
-
-/** A recovery key whose checksum does not match: a typo, caught before any decryption. */
-export class RecoveryKeyTypo extends Error {
-  constructor(message = "that recovery key has a typo") {
-    super(message);
-    this.name = "RecoveryKeyTypo";
-  }
-}
+export { DecryptionFailed, NotImplemented, RecoveryKeyTypo } from "./errors";
+export { x25519Supported } from "./keys";
 
 // ---- Plaintext shapes (contracts/envelope-v1.md) ----------------------------
 
@@ -101,15 +104,20 @@ export interface MailboxPublicKey {
 }
 
 /**
- * A mailbox private key held in the browser. Opaque on purpose: S1 decides
- * whether it wraps a non-extractable CryptoKey or raw bytes behind a closure.
- * It is never serialized except inside a wrap.
+ * A mailbox private key held in the browser. Opaque on purpose: a frozen
+ * `{ keyId }` handle whose key material (a non-extractable X25519 CryptoKey
+ * and the raw scalar, read only by wrapPrivateKey) lives in a module-private
+ * WeakMap. It is never serialized except inside a wrap; a clone or a forged
+ * object is refused with a TypeError.
  */
 export interface MailboxPrivateKey {
   readonly keyId: string;
 }
 
 export type IdPrefix = "mbx" | "msg" | "drf" | "wrp";
+
+const ID_PREFIXES: readonly string[] = ["mbx", "msg", "drf", "wrp"];
+const KEY_ID = /^[0-9a-f]{32}$/;
 
 export type WrapKind = "passkey-prf" | "recovery";
 
@@ -144,18 +152,18 @@ export interface SealedDraft {
 
 /** `<prefix>_<26 lowercase Crockford base32 chars of 16 random bytes>`. */
 export function newId(prefix: IdPrefix): string {
-  throw new NotImplemented(`newId(${prefix})`);
+  if (!ID_PREFIXES.includes(prefix)) throw new TypeError(`unknown id prefix: ${String(prefix)}`);
+  return `${prefix}_${crockfordEncode(randomBytes(16), "lower")}`;
 }
 
 export async function keyIdOf(publicKey: Uint8Array): Promise<string> {
-  void publicKey;
-  throw new NotImplemented("keyIdOf");
+  return keyIdOfPublicKey(publicKey);
 }
 
 /** keyId in groups of four, for people to compare. */
 export function fingerprint(keyId: string): string {
-  void keyId;
-  throw new NotImplemented("fingerprint");
+  if (typeof keyId !== "string" || !KEY_ID.test(keyId)) throw new TypeError("not a keyId (32 lowercase hex digits)");
+  return keyId.match(/.{4}/g)!.join(" ");
 }
 
 // ---- API: the Worker (seal only) --------------------------------------------
@@ -166,14 +174,37 @@ export async function sealMessage(
   header: MessageHeader,
   raw: Uint8Array,
 ): Promise<SealedMessage> {
-  void pub, ids, header, raw;
-  throw new NotImplemented("sealMessage");
+  if (!(raw instanceof Uint8Array)) throw new TypeError("raw is the message's bytes (a Uint8Array)");
+  const recipient = await importPublicKey(pub);
+  const headerJson = serializeHeader(header);
+  const headerAad = context("header", ids.mailboxId, ids.messageId);
+  const bodyAad = context("body", ids.mailboxId, ids.messageId);
+  const dek = randomBytes(32);
+  try {
+    const keyEnvelope = await sealKeyEnvelope(recipient, ids.mailboxId, ids.messageId, dek);
+    const key = await aesKey(dek, "encrypt");
+    return {
+      keyId: pub.keyId,
+      keyEnvelope: base64url(keyEnvelope),
+      header: base64url(await sealBlock(HEADER_BLOCK, key, headerAad, headerJson)),
+      body: await sealBlock(BODY_OBJECT, key, bodyAad, copy(raw)),
+    };
+  } finally {
+    dek.fill(0);
+  }
 }
 
 // ---- API: the browser --------------------------------------------------------
 
-export async function generateMailboxKey(): Promise<{ publicKey: MailboxPublicKey; privateKey: MailboxPrivateKey }> {
-  throw new NotImplemented("generateMailboxKey");
+export async function generateMailboxKey(): Promise<{ publicKey: MailboxPublicKey; privateKey: MailboxPrivateKey }> { // pragma: allowlist secret (a type)
+  const scalar = randomBytes(32);
+  try {
+    const privateKey = await importPrivateScalar(scalar);
+    const { keyId, publicKey } = materialOf(privateKey);
+    return { publicKey: { keyId, publicKey: copy(publicKey) }, privateKey };
+  } finally {
+    scalar.fill(0);
+  }
 }
 
 export async function openHeader(
@@ -181,8 +212,12 @@ export async function openHeader(
   ids: { mailboxId: string; messageId: string },
   sealed: Pick<SealedMessage, "keyEnvelope" | "header">,
 ): Promise<MessageHeader> {
-  void priv, ids, sealed;
-  throw new NotImplemented("openHeader");
+  const { keyPair } = materialOf(priv);
+  return failClosed(async () => {
+    const key = await openMessageKey(keyPair, ids.mailboxId, ids.messageId, sealed.keyEnvelope);
+    const aad = context("header", ids.mailboxId, ids.messageId);
+    return parseHeader(await openBlock(HEADER_BLOCK, key, aad, decodeBlock(sealed.header)));
+  });
 }
 
 export async function openBody(
@@ -190,8 +225,13 @@ export async function openBody(
   ids: { mailboxId: string; messageId: string },
   sealed: Pick<SealedMessage, "keyEnvelope" | "body">,
 ): Promise<Uint8Array> {
-  void priv, ids, sealed;
-  throw new NotImplemented("openBody");
+  const { keyPair } = materialOf(priv);
+  return failClosed(async () => {
+    const key = await openMessageKey(keyPair, ids.mailboxId, ids.messageId, sealed.keyEnvelope);
+    const aad = context("body", ids.mailboxId, ids.messageId);
+    if (!(sealed.body instanceof Uint8Array)) throw new TypeError("body is a Uint8Array");
+    return openBlock(BODY_OBJECT, key, aad, copy(sealed.body));
+  });
 }
 
 export async function sealDraft(
@@ -199,8 +239,21 @@ export async function sealDraft(
   ids: { mailboxId: string; draftId: string },
   draft: Draft,
 ): Promise<SealedDraft> {
-  void pub, ids, draft;
-  throw new NotImplemented("sealDraft");
+  const recipient = await importPublicKey(pub);
+  const json = serializeDraft(draft);
+  const aad = context("draft", ids.mailboxId, ids.draftId);
+  const dek = randomBytes(32);
+  try {
+    const keyEnvelope = await sealKeyEnvelope(recipient, ids.mailboxId, ids.draftId, dek);
+    const key = await aesKey(dek, "encrypt");
+    return {
+      keyId: pub.keyId,
+      keyEnvelope: base64url(keyEnvelope),
+      sealed: base64url(await sealBlock(DRAFT_BLOCK, key, aad, json)),
+    };
+  } finally {
+    dek.fill(0);
+  }
 }
 
 export async function openDraft(
@@ -208,45 +261,67 @@ export async function openDraft(
   ids: { mailboxId: string; draftId: string },
   sealed: SealedDraft,
 ): Promise<Draft> {
-  void priv, ids, sealed;
-  throw new NotImplemented("openDraft");
+  const { keyPair } = materialOf(priv);
+  return failClosed(async () => {
+    const key = await openMessageKey(keyPair, ids.mailboxId, ids.draftId, sealed.keyEnvelope);
+    const aad = context("draft", ids.mailboxId, ids.draftId);
+    return parseDraft(await openBlock(DRAFT_BLOCK, key, aad, decodeBlock(sealed.sealed)));
+  });
 }
 
 /** True when the private key's public half equals the advertised public key (domain-model G7). */
 export async function publicKeyMatches(priv: MailboxPrivateKey, pub: MailboxPublicKey): Promise<boolean> {
-  void priv, pub;
-  throw new NotImplemented("publicKeyMatches");
+  return materialMatches(materialOf(priv), pub);
 }
 
 /** The 32-byte `prf.eval.first` input for a passkey wrap. */
 export async function prfInput(mailboxId: string, wrapId: string): Promise<Uint8Array> {
-  void mailboxId, wrapId;
-  throw new NotImplemented("prfInput");
+  return prfInputFor(mailboxId, wrapId);
 }
 
 export async function wrapPrivateKey(
   priv: MailboxPrivateKey,
-  ctx: { mailboxId: string; wrapId: string; kind: WrapKind; secret: Uint8Array },
+  ctx: { mailboxId: string; wrapId: string; kind: WrapKind; secret: Uint8Array }, // pragma: allowlist secret (a type)
 ): Promise<KeyWrap> {
-  void priv, ctx;
-  throw new NotImplemented("wrapPrivateKey");
+  return wrapWithSecret(priv, ctx);
 }
 
 export async function unwrapPrivateKey(
   wrap: KeyWrap,
-  ctx: { mailboxId: string; secret: Uint8Array },
+  ctx: { mailboxId: string; secret: Uint8Array }, // pragma: allowlist secret (a type)
 ): Promise<MailboxPrivateKey> {
-  void wrap, ctx;
-  throw new NotImplemented("unwrapPrivateKey");
+  return unwrapWithSecret(wrap, ctx);
 }
 
 /** A new 32-byte recovery secret and the 55-character display form (11 groups of 5). */
-export function newRecoveryKey(): { secret: Uint8Array; display: string } {
-  throw new NotImplemented("newRecoveryKey");
+export function newRecoveryKey(): { secret: Uint8Array; display: string } { // pragma: allowlist secret (a type)
+  return newRecovery();
 }
 
 /** The 32-byte secret from its display form; throws RecoveryKeyTypo on a checksum mismatch. */
 export function parseRecoveryKey(display: string): Uint8Array {
-  void display;
-  throw new NotImplemented("parseRecoveryKey");
+  return parseRecovery(display);
+}
+
+// ---- Internals ---------------------------------------------------------------
+
+function decodeBlock(encoded: string): Uint8Array<ArrayBuffer> {
+  const bytes = fromBase64url(encoded);
+  if (bytes === null) throw new TypeError("not base64url");
+  return bytes;
+}
+
+/** Opens a key envelope (step 2) into an AES-256-GCM key for the blocks. */
+async function openMessageKey(
+  keyPair: CryptoKeyPair,
+  mailboxId: string,
+  objectId: string,
+  keyEnvelope: string,
+): Promise<CryptoKey> {
+  const dek = await openKeyEnvelope(keyPair, mailboxId, objectId, decodeBlock(keyEnvelope));
+  try {
+    return await aesKey(dek, "decrypt");
+  } finally {
+    dek.fill(0);
+  }
 }
