@@ -115,7 +115,7 @@ envelope v1 via `sealMessage` only.
   (limits + idempotency), Sent copy sealed and stored
 - [x] S2h trash purge after 30 days (M9); orphan R2 cleanup on failed insert
 - [x] S2i′ `NewMailSignal` port shaped as the dashboard's future `MailSignals`
-  entrypoint, `unread({ tenantId, mailboxId, unread })`, no-op adapter now
+  entrypoint, `unread({ businessId, mailboxId, unread })`, no-op adapter now
 - [x] S2i `MailAdmin` entrypoint (suspend, resume, set delivery mode and
   forward target — M10), exported but bound to nothing
 - [x] S2j wiring: the real `sealMessage`, `buildMime` and `sesRawMailer`
@@ -129,7 +129,7 @@ envelope v1 via `sealMessage` only.
   rejected with `setReject` and stores nothing;
 - M3: after `enroll`, no storage holds the test's private key bytes; no
   method accepts a private key;
-- M4: a capability for tenant A cannot read tenant B's mailbox (NotFound,
+- M4: a capability for business A cannot read business B's mailbox (NotFound,
   identical to a missing mailbox); every capability vector behaves as listed;
 - M5: `enroll` without a recovery wrap is refused; removing the last
   recovery wrap is refused;
@@ -187,7 +187,7 @@ sender (header-injection handling, quoted display names).
   GitHub release, so the dashboard's vendoring script checks against CI's
   record rather than the copy; sign the tag if the maintainer has a signing
   key
-- [x] the same workflow packs `@platform-mail/crypto` once, attests the
+- [x] the same workflow packs `@proprietor/mail-crypto` once, attests the
   tarball and `SHA256SUMS` with GitHub artifact attestations, and stages the
   tarball on npm with trusted publishing (OIDC, no token; provenance). A
   maintainer approves the staged version with 2FA before it goes live. The
@@ -230,7 +230,7 @@ sender (header-injection handling, quoted display names).
 
 ## S5 — Deliverability feed  *[H: needs the §6 AWS resources]*
 
-- [H] pull `platform-mail-events` from SQS on a schedule; per-mailbox
+- [H] pull `proprietor-mail-events` from SQS on a schedule; per-mailbox
   suppression checked before `send`; events kept 90 days with only the
   recipient address, the event type and the time (D8)
 
