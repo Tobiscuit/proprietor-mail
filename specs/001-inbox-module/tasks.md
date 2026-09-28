@@ -261,7 +261,8 @@ regenerate and verify.
 
 **Contract:** `plan.md` §13; `mail-service-v1` (`RecipientSuppressed`).
 **Owns:** `src/deliverability/**`, `scheduled()` in `src/index.ts`, `src/env.ts`,
-the cron and observability lines of `wrangler.jsonc`, the Mailbox's
+in `wrangler.jsonc` the cron and observability lines and the removal of the
+placeholder `database_id` (G24), with `test/node/config.test.ts`, the Mailbox's
 `recordDeliveryEvent`, its suppression check in `send` and the schema
 migration for it, the `EmailTags` option in `packages/mail-outbound`.
 **Acceptance:** fixtures of each SES event type (AWS's documented shapes, with
