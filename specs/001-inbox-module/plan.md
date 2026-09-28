@@ -544,12 +544,16 @@ its shape. Every step is the operator's go; each has its way back.
 
 1. **Gates**: the dashboard with the inbox serves its final host (G19, D12);
    the operator's business exists on the platform (D18).
-2. **Infrastructure** (Terraform, parked until go): Mail's D1 and R2; Mail's
+2. **Infrastructure** (Terraform, parked until go): Mail's R2 bucket; Mail's
    configuration set for the domain, its SNS topic, SQS queue and dead-letter
    queue; the SES tenant and its associations (identity, configuration set);
    the sending principal's policy (its user is created by hand, inside the
-   operator's sending boundary). Tenant suppression scope and reputation
-   policy by CLI, since the provider has no resource for them.
+   operator's sending boundary). Tenant suppression scope by CLI, since the
+   provider has no resource for it; a new tenant gets the `standard`
+   reputation policy by itself. The D1 Directory is created with wrangler
+   BEFORE the first deploy (the operator's infrastructure credential has no
+   D1 permission, on purpose): `wrangler.jsonc` names it by name only, and
+   a failed lookup at deploy would create one of its own.
 3. **Secrets** into the secret store, then into the Workers through standard
    input: the capability keys (both Workers), the sending principal's key and
    the queue's URL (Mail only).
