@@ -198,7 +198,11 @@ mailbox can go live, and then preparing the first client's.
   is the WebAuthn RP ID. The dashboard that carries the inbox must be serving
   that host before anyone enrolls (G19).
 
-**Open, each with a recommendation.** Only the operator decides these.
+**Decided 2026-09-28: the operator approved D11–D23 as recommended**, with two
+notes. D16 is still open (the name in `NOTICE` stays as it is until chosen).
+D22 is being settled with the dashboard's maintainers (raise the send action's
+limit, or one gated `POST` route). Recommendations are kept below for the
+record.
 
 | # | Decision | Recommendation |
 |---|---|---|
