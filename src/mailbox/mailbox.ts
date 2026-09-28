@@ -1,6 +1,6 @@
 import { Agent } from "agents";
 import type { AgentEmail } from "agents/email";
-import { LIMITS } from "@platform-mail/outbound";
+import { LIMITS } from "@proprietor/mail-outbound";
 import type { Role } from "../capability";
 import { Directory, type DirectoryEntry } from "../directory/directory";
 import type { Env } from "../env";
@@ -20,7 +20,7 @@ import {
   refused,
 } from "../errors";
 import { type LogValue, logAlert, logEvent } from "../log";
-import type { MessageHeader } from "@platform-mail/crypto";
+import type { MessageHeader } from "@proprietor/mail-crypto";
 import { inboundHeader, minimalHeader, outboundHeader, parseMessage } from "../mail/header";
 import { sesMessageId } from "../mail/ses-message-id";
 import type { MailboxPorts } from "../ports";

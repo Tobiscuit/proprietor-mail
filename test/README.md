@@ -40,8 +40,8 @@ package's own typecheck).
   rejects, that is a bug, and the escape guard says so.
 - **Storage is isolated per test file**, not per test: every test makes fresh
   mailbox ids.
-- **End-to-end tests** (`test/e2e.test.ts`) put the real `@platform-mail/crypto`
-  and `@platform-mail/outbound` behind the ports and skip on each package's
+- **End-to-end tests** (`test/e2e.test.ts`) put the real `@proprietor/mail-crypto`
+  and `@proprietor/mail-outbound` behind the ports and skip on each package's
   `IMPLEMENTED` flag, so they ran as soon as S1 and S3 were merged.
 
 ### The escape guard: exceptions that escape an RPC hop fail the run
@@ -112,13 +112,13 @@ Two local sessions: the Mail Worker on :8787 (the local email endpoint
 reaches the primary worker of a session), and `test/local/driver.ts` on
 :8788, a stand-in for the dashboard that mints capabilities with the public
 TEST key and calls `MailService` over a real service binding; the local dev
-registry connects the two (`env.MAIL (platform-mail#MailService) … [connected]`).
+registry connects the two (`env.MAIL (proprietor-mail#MailService) … [connected]`).
 Everything is `--local`; nothing touches an account. From the repository root:
 
 ```sh
-npx wrangler d1 migrations apply platform-mail --local
+npx wrangler d1 migrations apply proprietor-mail --local
 node scripts/provision-mailbox.ts --tenant tnt_local --address hello@example.test > /tmp/provision.sql
-npx wrangler d1 execute platform-mail --local --file /tmp/provision.sql
+npx wrangler d1 execute proprietor-mail --local --file /tmp/provision.sql
 
 # The capability key is the public TEST key from contracts/capability-v1.vectors.json, not a secret.
 printf '%s\n' "MAIL_CAPABILITY_KEYS='{\"test-2026-09\":\"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\"}'" > /tmp/mail-local.env  # pragma: allowlist secret (public test key)

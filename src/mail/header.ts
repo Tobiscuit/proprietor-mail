@@ -1,4 +1,4 @@
-import type { Address, AttachmentSummary, MessageHeader } from "@platform-mail/crypto";
+import type { Address, AttachmentSummary, MessageHeader } from "@proprietor/mail-crypto";
 import PostalMime, { type Address as ParsedAddress, type Email } from "postal-mime";
 import { stripHtmlToText } from "./html-text";
 

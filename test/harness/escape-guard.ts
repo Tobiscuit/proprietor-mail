@@ -221,7 +221,7 @@ let installed: EscapeGuardReporter | undefined;
  */
 export function escapeGuard(): Plugin {
   return {
-    name: "platform-mail:escape-guard",
+    name: "proprietor-mail:escape-guard",
     configureVitest({ vitest }) {
       // A config restart (watch mode) builds new reporters: add the same guard again; the streams stay wrapped once.
       if (installed !== undefined) {

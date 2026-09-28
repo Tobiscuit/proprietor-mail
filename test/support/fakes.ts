@@ -1,5 +1,5 @@
-import type { MailboxPublicKey, MessageHeader, SealedMessage } from "@platform-mail/crypto";
-import type { BuildOptions, BuiltMessage, ComposedMessage, RawSendRequest } from "@platform-mail/outbound";
+import type { MailboxPublicKey, MessageHeader, SealedMessage } from "@proprietor/mail-crypto";
+import type { BuildOptions, BuiltMessage, ComposedMessage, RawSendRequest } from "@proprietor/mail-outbound";
 import type { Clock, IdSource, MailboxPorts, MimeBuilder, NewMailSignal, RawMailer, Sealer } from "../../src/ports";
 import { base64urlFromBytes } from "./capability-tokens";
 import { testId } from "./ids";

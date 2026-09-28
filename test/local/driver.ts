@@ -1,4 +1,4 @@
-import * as mailCrypto from "@platform-mail/crypto";
+import * as mailCrypto from "@proprietor/mail-crypto";
 import type { MailError } from "../../src/errors";
 import type { MailService } from "../../src/service";
 import { base64urlFromBytes, canonicalClaims, canonicalHeader, randomJti, signToken, bytesFromBase64url } from "../support/capability-tokens";

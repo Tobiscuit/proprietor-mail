@@ -1,7 +1,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { IMPLEMENTED } from "@platform-mail/crypto";
+import { IMPLEMENTED } from "@proprietor/mail-crypto";
 import { describe, expect, it } from "vitest";
 
 // The provisioning script PRINTS SQL for the operator; it never runs it
@@ -26,7 +26,7 @@ describe("scripts/provision-mailbox.ts", () => {
       /^INSERT INTO mailboxes .* VALUES \('mbx_0123456789abcdefghjkmnpqrs', 'tnt_example', 'hello@example\.com', 'provisioned', 'client-example', 'send-example-mail', '\d{4}-\d\d-\d\dT[\d:.]+Z'\);$/,
     );
     // It tells the operator how to run it, and that it has not been run.
-    expect(out).toMatch(/^-- .*wrangler d1 execute platform-mail/m);
+    expect(out).toMatch(/^-- .*wrangler d1 execute proprietor-mail/m);
   });
 
   it("refuses bad input with a non-zero exit and prints no SQL", () => {
@@ -42,7 +42,7 @@ describe("scripts/provision-mailbox.ts", () => {
     expect(res.stderr).toMatch(/--tenant/);
   });
 
-  it.skipIf(IMPLEMENTED)("asks for --id while @platform-mail/crypto cannot make one (slice S1)", () => {
+  it.skipIf(IMPLEMENTED)("asks for --id while @proprietor/mail-crypto cannot make one (slice S1)", () => {
     const res = run(["--tenant", "t1", "--address", "a@b.test"]);
     expect(res.status).not.toBe(0);
     expect(res.stdout).not.toMatch(/INSERT/);

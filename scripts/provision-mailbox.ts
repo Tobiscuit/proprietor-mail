@@ -9,7 +9,7 @@
  *
  * Node 22.18+ runs this TypeScript file directly (type stripping).
  *
- * The mailbox id comes from `newId("mbx")` in @platform-mail/crypto, the one
+ * The mailbox id comes from `newId("mbx")` in @proprietor/mail-crypto, the one
  * implementation of the id format. Until slice S1 lands that is a stub, and
  * `--id` must be given.
  */
@@ -34,7 +34,7 @@ registerHooks({
   },
 });
 // Loaded after the hook, so that the package's own imports resolve.
-const { newId } = await import("@platform-mail/crypto");
+const { newId } = await import("@proprietor/mail-crypto");
 
 function fail(message: string, code = 1): never {
   process.stderr.write(`provision-mailbox: ${message}\n`);
@@ -61,7 +61,7 @@ if (id === undefined) {
     id = newId("mbx");
   } catch (err) {
     if (err instanceof Error && err.name === "NotImplemented") {
-      fail("@platform-mail/crypto cannot make ids yet (slice S1); pass --id mbx_<26 characters>", 2);
+      fail("@proprietor/mail-crypto cannot make ids yet (slice S1); pass --id mbx_<26 characters>", 2);
     }
     throw err;
   }
@@ -83,7 +83,7 @@ try {
 
 process.stdout.write(
   `-- Provisions mailbox ${id} (status: provisioned). NOT executed: review it, then run\n` +
-    `--   npx wrangler d1 execute platform-mail --remote --file <this file>\n` +
+    `--   npx wrangler d1 execute proprietor-mail --remote --file <this file>\n` +
     `-- The mailbox accepts no mail until its owner enrolls a key on their own device.\n` +
     sql,
 );

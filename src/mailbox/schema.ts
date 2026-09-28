@@ -6,7 +6,7 @@
 // agentic-inbox's workers/durableObject/migrations.ts (tracking table renamed
 // to mailbox_migrations; every migration runs inside transactionSync; the
 // BEGIN/COMMIT stripping was dropped because nothing here writes them). The
-// schema itself is platform-mail's own (plan.md §3): sealed headers and key
+// schema itself is proprietor-mail's own (plan.md §3): sealed headers and key
 // envelopes only, no message content in any column.
 
 import { SYSTEM_FOLDERS } from "./folders";

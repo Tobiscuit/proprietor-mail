@@ -1,5 +1,5 @@
 /**
- * @platform-mail/outbound - turn a composed message into MIME and hand it to
+ * @proprietor/mail-outbound - turn a composed message into MIME and hand it to
  * Amazon SES (API v2, raw content).
  *
  * This file is the API in code form (specs/001-inbox-module/plan.md §6).
@@ -21,7 +21,7 @@ export const IMPLEMENTED: boolean = true;
 
 export class NotImplemented extends Error {
   constructor(what: string) {
-    super(`@platform-mail/outbound: ${what} is not implemented yet (slice S3)`);
+    super(`@proprietor/mail-outbound: ${what} is not implemented yet (slice S3)`);
     this.name = "NotImplemented";
   }
 }

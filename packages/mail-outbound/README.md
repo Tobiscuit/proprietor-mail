@@ -1,4 +1,4 @@
-# @platform-mail/outbound
+# @proprietor/mail-outbound
 
 Turns a composed message into an RFC 5322 / MIME message (`buildMime`) and
 sends it through Amazon SES API v2 `SendEmail` as raw content
@@ -22,7 +22,7 @@ const { providerMessageId } = await mailer.send({
 From the repository root:
 
 ```
-npm ci && npm test -w @platform-mail/outbound && npm run typecheck -w @platform-mail/outbound
+npm ci && npm test -w @proprietor/mail-outbound && npm run typecheck -w @proprietor/mail-outbound
 ```
 
 ## What the message looks like

@@ -1,5 +1,5 @@
 // Writes contracts/envelope-v1.vectors.json. Runs only on request:
-//   npm run write-vectors -w @platform-mail/crypto
+//   npm run write-vectors -w @proprietor/mail-crypto
 // (vitest.config.ts excludes this file from `npm test`). Every key and secret is derived from a
 // public label, so they are recognisably test values; ids, message keys and IVs are fresh on each
 // run, so regenerating changes the file. test/vectors.test.ts checks whatever is committed.
@@ -161,7 +161,7 @@ test("write contracts/envelope-v1.vectors.json", async () => {
   const vectors = {
     contract: "contracts/envelope-v1.md",
     about:
-      "Test vectors for envelope v1, written by packages/mail-crypto (npm run write-vectors -w @platform-mail/crypto) " +
+      "Test vectors for envelope v1, written by packages/mail-crypto (npm run write-vectors -w @proprietor/mail-crypto) " +
       "and checked by its test/vectors.test.ts. Every key and secret is SHA-256 of the public label next to it: " +
       "test values only, never used for real mail. Byte strings are lowercase hex, except the stored forms " +
       "(keyEnvelope, header, sealed, wrapped) and fields ending in B64url, which are base64url without padding " +

@@ -29,7 +29,7 @@ const functions = [
 
 const errors = ["NotImplemented", "DecryptionFailed", "RecoveryKeyTypo"] as const;
 
-describe("@platform-mail/crypto exports the contract's API", () => {
+describe("@proprietor/mail-crypto exports the contract's API", () => {
   test.each(functions)("%s is an exported function", (name) => {
     expect(typeof api[name]).toBe("function");
   });

@@ -1,6 +1,6 @@
 export class NotImplemented extends Error {
   constructor(what: string) {
-    super(`@platform-mail/crypto: ${what} is not implemented yet (slice S1)`);
+    super(`@proprietor/mail-crypto: ${what} is not implemented yet (slice S1)`);
     this.name = "NotImplemented";
   }
 }
