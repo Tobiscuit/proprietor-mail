@@ -200,9 +200,17 @@ mailbox can go live, and then preparing the first client's.
 
 **Decided 2026-09-28: the operator approved D11–D23 as recommended**, with two
 notes. D16 is still open (the name in `NOTICE` stays as it is until chosen).
-D22 is being settled with the dashboard's maintainers (raise the send action's
-limit, or one gated `POST` route). Recommendations are kept below for the
-record.
+D22 is settled with the dashboard's maintainers: **one gated `POST` route**,
+not a raised action limit (a server-action limit is global in every
+Next-shaped runtime, and a route can stream the multipart body to the
+MailService binding instead of buffering it). The contract the mail-client
+builder writes against: `POST /inbox/send` inside the inbox route group,
+behind the same entry gate; `multipart/form-data`; the same same-origin check
+as every mutation; the capability minted server-side from the session for
+that request; a hard cap of 25 MB per message; JSON back, `{ok, messageId}`
+or `{ok: false, message}`. The dashboard's maintainers write the route
+handler; this module owns what it forwards to MailService. Recommendations
+are kept below for the record.
 
 | # | Decision | Recommendation |
 |---|---|---|
