@@ -2,7 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 //
-// Modified by Operator, 2026-09: the migration runner is adapted from
+// Modified by Juan Ramirez (Proprietor Systems), 2026-09: the migration runner is adapted from
 // agentic-inbox's workers/durableObject/migrations.ts (tracking table renamed
 // to mailbox_migrations; every migration runs inside transactionSync; the
 // BEGIN/COMMIT stripping was dropped because nothing here writes them). The

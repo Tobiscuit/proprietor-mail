@@ -24,7 +24,7 @@ maintainer merges.
 - Pin exact versions you checked on npm today; no ranges for anything security
   relevant.
 - Code adapted from cloudflare/agentic-inbox keeps Cloudflare's copyright
-  header, adds `// Modified by Operator, 2026-09: <what changed>`, and is listed
+  header, adds `// Modified by Juan Ramirez (Proprietor Systems), 2026-09: <what changed>`, and is listed
   in `NOTICE`.
 - No real mail to or from anyone. No deploys, no `wrangler d1 create`, no DNS,
   no Email Routing, no Access, no AWS resources.

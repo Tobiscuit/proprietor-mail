@@ -199,7 +199,7 @@ mailbox can go live, and then preparing the first client's.
   that host before anyone enrolls (G19).
 
 **Decided 2026-09-28: the operator approved D11–D23 as recommended**, with two
-notes. D16 is still open (the name in `NOTICE` stays as it is until chosen).
+notes. D16 is decided: the name is "Juan Ramirez (Proprietor Systems)" (2026-09-29).
 D22 is settled with the dashboard's maintainers: **one gated `POST` route**,
 not a raised action limit (a server-action limit is global in every
 Next-shaped runtime, and a route can stream the multipart body to the

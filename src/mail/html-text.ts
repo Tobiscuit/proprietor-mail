@@ -2,7 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 //
-// Modified by Operator, 2026-09: `stripHtmlToText` taken from agentic-inbox's
+// Modified by Juan Ramirez (Proprietor Systems), 2026-09: `stripHtmlToText` taken from agentic-inbox's
 // workers/lib/email-helpers.ts, alone; it now also decodes the common HTML
 // entities, and is used only to make the snippet that is sealed inside a
 // MessageHeader (postal-mime 3.0.1 gives no text for an HTML-only message).
