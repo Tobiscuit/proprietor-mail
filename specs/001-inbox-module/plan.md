@@ -82,6 +82,30 @@ frame's `srcdoc` only through a named Trusted Types policy that returns
 DOMPurify's `TrustedHTML`, loads nothing cross-origin, and uses no Web Worker
 unless the shell adds a `worker-src` for it.
 
+### Round 2 answers from the dashboard's maintainers (2026-09-28)
+
+- **Capability v1**: claim `business` (not `tenant`), issuer
+  `proprietor-dashboard`, audience `proprietor-mail`; the dashboard tests its
+  minting against the regenerated vectors (G16).
+- **The module boundary** (§14), agreed as proposed: this repository ships
+  `mail-crypto`, a new framework-free `mail-client` and the `MailService`
+  RPC; the dashboard hosts the inbox's route group, its module definition
+  (`enabled` = `has.email`), the `MAIL` service binding, capability minting
+  and the policy allowances. The route group's screens come from this
+  project as a pull request into the dashboard, which its maintainers review
+  where it meets the shell.
+- **Policy**: nonce-stamped email styles on two conditions (the CSS is
+  sanitised first; the nonce is read at run time from the page's own script
+  element); no remote images; the Trusted Types allowlist gets
+  `proprietor-mail#srcdoc` when enforcement starts.
+- **Binary server-action arguments** are not verified in the dashboard's
+  framework; use `FormData` with `File` parts. Its default body limit of
+  1 MB is D22.
+- **The operator's own business** does not exist on the platform yet (G20,
+  D18). **`MailSignals`** is not started; the no-op adapter stays.
+- **The new dashboard's cutover** to its final host has no date; S8 plans
+  against it (G19, D12).
+
 ## 2. Repository layout and who owns what
 
 ```
@@ -115,11 +139,15 @@ Bindings (sketch; S2 writes the real `wrangler.jsonc`):
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "preview_urls": false,
-  "d1_databases": [{ "binding": "DIRECTORY", "database_name": "proprietor-mail", "database_id": "<created at deploy>" }],
+  // No database_id: wrangler resolves the database by name (G24).
+  "d1_databases": [{ "binding": "DIRECTORY", "database_name": "proprietor-mail", "migrations_dir": "migrations" }],
   "r2_buckets": [{ "binding": "MAIL", "bucket_name": "proprietor-mail" }],
   "durable_objects": { "bindings": [{ "name": "Mailbox", "class_name": "Mailbox" }] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Mailbox"] }]
-  // secrets: MAIL_CAPABILITY_KEYS, SES_ACCESS_KEY_ID, SES_SECRET_ACCESS_KEY
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Mailbox"] }],
+  "triggers": { "crons": ["*/5 * * * *"] },   // the deliverability feed (§13)
+  "observability": { "enabled": true, "logs": { "invocation_logs": false } }   // G25, D20
+  // secrets: MAIL_CAPABILITY_KEYS, SES_ACCESS_KEY_ID, SES_SECRET_ACCESS_KEY,
+  //          MAIL_EVENTS_QUEUE_URL (it names the AWS account, so it is not a var)
   // vars:    SES_REGION = "us-east-1"
 }
 ```
@@ -195,8 +223,8 @@ why). The "Returns" column below is the `value` of an `ok` result.
 
 | Method | Needs `mbx` | Role | Returns / does |
 |---|---|---|---|
-| `mailboxes(cap)` | no | any | `[{ id, address, status }]` for the capability's business, so the module can show "not set up", "set up your inbox" or the inbox |
-| `mailbox(cap)` | yes | open | `{ id, address, status, displayName, keys[], wraps[], policy }` — wraps are ciphertext; `policy` includes `delivery` and `forwardTo` (M10) |
+| `mailboxes(cap)` | no | any | `[{ id, address, addresses, status }]` for the capability's business, so the module can show "not set up", "set up your inbox" or the inbox; `address` is the primary, `addresses` lists all, primary first (§12) |
+| `mailbox(cap)` | yes | open | `{ id, address, addresses, status, displayName, keys[], wraps[], policy }` — wraps are ciphertext; `policy` includes `delivery` and `forwardTo` (M10) |
 | `enroll(cap, { publicKey, wraps[] })` | yes | owner | only when `provisioned`; recomputes the keyId; requires one `recovery` wrap (M5); sets Directory `active` |
 | `addWrap(cap, wrap)` / `removeWrap(cap, wrapId)` | yes | owner | the last recovery wrap cannot be removed |
 | `list(cap, { folder, before?, limit? })` | yes | open | `{ items: [{ id, folder, direction, receivedAt, size, seen, flagged, keyId, keyEnvelope, header }], next }`, newest first, `limit` ≤ 100 |
@@ -204,7 +232,7 @@ why). The "Returns" column below is the `value` of an `ok` result.
 | `update(cap, messageId, { seen?, flagged?, folder? })` | yes | open | moving to `trash` sets `trashedAt` |
 | `purge(cap, messageId)` | yes | owner | row and R2 object deleted |
 | `drafts(cap)` / `saveDraft(cap, { id, keyId, keyEnvelope, sealed })` / `deleteDraft(cap, id)` | yes | open | sealed in the browser |
-| `send(cap, { idempotencyKey, to, cc?, bcc?, subject, text, html?, inReplyTo?, references?, attachments?, draftId? })` | yes | send | builds MIME, sends through SES, seals and stores the Sent copy, deletes `draftId`; plaintext lives only for the call |
+| `send(cap, { idempotencyKey, from?, to, cc?, bcc?, subject, text, html?, inReplyTo?, references?, attachments?, draftId? })` | yes | send | `from` is one of the mailbox's addresses (default: the primary; M6). Refuses suppressed recipients with `RecipientSuppressed` (M11) before anything is reserved or sent. Builds MIME, sends through SES with the mailbox's SES tenant, its configuration set and the tag `mailbox=<id>` (§13), seals and stores the Sent copy, deletes `draftId`; plaintext lives only for the call |
 | `unread(cap)` | yes | open | `{ inbox: number }` |
 | `setPolicy(cap, { displayName?, assistant? })` | yes | owner | `assistant: "on"` answers `AssistantUnavailable` in v1 |
 | `audit(cap, { before? })` | yes | owner | `[{ at, actor, action, detail }]` |
@@ -405,3 +433,143 @@ Workers Builds on `main`. First deploy only after D1, D4, D5 and D7 are
 decided and the Cloudflare/AWS resources in §6 exist. The first routed address
 is the operator's own mailbox; the first owner is the operator, enrolling on
 their own devices.
+
+## 12. Several addresses, one mailbox (round 2, G12)
+
+Migration `0002_addresses.sql` (the Directory is not deployed anywhere yet,
+but the migration is added rather than folded into 0001, so that each slice
+owns its own file):
+
+```sql
+CREATE TABLE addresses (
+  address     TEXT PRIMARY KEY,                       -- lower-case
+  mailbox_id  TEXT NOT NULL REFERENCES mailboxes(id),
+  created_at  TEXT NOT NULL
+);
+CREATE INDEX addresses_by_mailbox ON addresses(mailbox_id);
+```
+
+- The resolver looks an envelope recipient up in `addresses`, joined to its
+  mailbox. `mailboxes.address` stays the **primary address**: the Mailbox's
+  identity (unchanged, so the identity check still compares it) and the
+  default `From`.
+- Provisioning prints one transaction: the mailbox row, then one `addresses`
+  row per address, primary first. A second printer adds an address to an
+  existing mailbox. Nothing removes an address (D-1): an address that ever
+  delivered to a mailbox stays with it, closed or not.
+- The Directory refuses an address that belongs to another mailbox (primary
+  key), and a test proves D-2 (the primary is always one of the mailbox's
+  addresses) for every row the printers can produce.
+- **Sealed, not stored**: the Worker adds `envelopeTo` (the envelope
+  recipient, one of the mailbox's addresses) to the sealed MessageHeader of
+  every arrival, `null` on sent copies (envelope v1, amended before the first
+  enrollment). The browser uses it to merge the copies of a message sent to
+  two of the addresses (G13) and to reply from the address a message arrived
+  at.
+- **Sending as an address**: `send` takes an optional `from`, checked against
+  the Directory's addresses on every call; the display name is the mailbox's.
+  The sending principal's policy lists exactly these addresses (D14).
+
+## 13. The deliverability feed (round 2, S5)
+
+```
+  Mail's send ──(ConfigurationSetName = the mailbox's, TenantName = its SES tenant,
+                 EmailTags [{ Name: "mailbox", Value: <mailbox id> }])──▶ SES
+  SES configuration set (one per sending domain, Mail's own)
+     └─ event destination: BOUNCE, COMPLAINT, REJECT, DELIVERY_DELAY, RENDERING_FAILURE
+          ──▶ SNS topic (Mail's own) ──▶ SQS queue (Mail's own; raw delivery; SSE;
+                                          retention 4 days; dead-letter queue after 5 reads)
+                                                  ▲
+  Mail Worker, cron every 5 minutes: ReceiveMessage (AWS JSON protocol, SigV4 with
+  aws4fetch and the sending principal's credential) → parse → route by the
+  `mailbox` tag → Mailbox.recordDeliveryEvent → DeleteMessageBatch
+```
+
+- **No DELIVERY, SEND, OPEN or CLICK events**: every SES event carries the
+  recipients and usually the subject (`commonHeaders`), so Mail subscribes
+  only to what it acts on (D8).
+- **Routing** is by Mail's own tag alone (G22). SES tags allow ASCII letters,
+  digits, `_` and `-`, so a mailbox id fits as is. An event without the tag,
+  or naming a mailbox that does not exist, is deleted and raised as an
+  operator alert; nothing is ever logged from its content.
+- **What a mailbox keeps** (M11, D15): for a `Permanent` bounce and for every
+  complaint, the HMAC-SHA-256 of each named recipient's lower-cased address
+  under the mailbox's own random 32-byte key, the reason, and first and last
+  dates. `Transient` bounces, delays, rejects and rendering failures change
+  nothing stored; they are counted in the Worker's log line (counts only).
+  Entries lapse one year after their last event (the daily housekeeping).
+- **At least once** (M12): SQS may deliver an event twice; recording is an
+  upsert, so a second delivery changes nothing.
+- **Refusing before sending**: `send` hashes every recipient and answers
+  `RecipientSuppressed` with `{ field, index, reason, since }` for each hit,
+  before reserving the idempotency key and before the rate limit counts it.
+  SES's own tenant-level list (D23) stays the backstop.
+- **Owner-visible bounces**: SES feedback forwarding (on by default) sends
+  the bounce notification to the sending address, where it arrives as an
+  ordinary message, sealed. Whether SES v2 falls back to the `From` address
+  when no feedback address is given is not verified; the S8 simulator send
+  settles it.
+
+## 14. The browser half and the inbox screens (round 2, S6)
+
+The boundary agreed with the dashboard's maintainers (§1, round 2):
+
+```
+  this repository (published)                  the dashboard (not published)
+  ───────────────────────────────              ──────────────────────────────────────
+  @proprietor/mail-crypto   envelope v1   ──▶  app/(modules)/inbox/_vendor/…  (VERSION,
+  @proprietor/mail-client   keys, unlock,        SHA256SUMS, a test that recomputes them)
+                            open, threads,     app/(modules)/inbox/**  screens, server
+                            search, render,      actions, the one GET body route
+                            compose helpers    modules/inbox.ts  (enabled = has.email)
+  MailService (RPC)         ciphertext out ──▶ MAIL service binding, mailCapability()
+```
+
+- `contracts/mail-client-v1.md` is the API and its rules; the stub in
+  `packages/mail-client` is its signature. The screens never hold a key,
+  parse MIME or write message HTML: they call `mail-client`.
+- The screens: not set up, set up (the key ceremony), unlock, the folders
+  and threads, search, reading in the one frame, compose / reply / forward
+  with drafts sealed on every save, and settings (display name, devices,
+  recovery key, "How your mail is protected", the assistant shown "Off").
+  Styled with the shell's theme tokens only.
+- Transport: server actions return `MailResult` values unchanged; the body
+  route streams ciphertext; sending posts `FormData` built by
+  `encodeSendForm` and read by `decodeSendForm` (D22 decides the size limit).
+
+## 15. Activating the operator's own mailbox (round 2, S8)
+
+The operator's private runbook carries the real names and commands; this is
+its shape. Every step is the operator's go; each has its way back.
+
+1. **Gates**: the dashboard with the inbox serves its final host (G19, D12);
+   the operator's business exists on the platform (D18).
+2. **Infrastructure** (Terraform, parked until go): Mail's R2 bucket; Mail's
+   configuration set for the domain, its SNS topic, SQS queue and dead-letter
+   queue; the SES tenant and its associations (identity, configuration set);
+   the sending principal's policy (its user is created by hand, inside the
+   operator's sending boundary). Tenant suppression scope by CLI, since the
+   provider has no resource for it; a new tenant gets the `standard`
+   reputation policy by itself. The D1 Directory is created with wrangler
+   BEFORE the first deploy (the operator's infrastructure credential has no
+   D1 permission, on purpose): `wrangler.jsonc` names it by name only, and
+   a failed lookup at deploy would create one of its own.
+3. **Secrets** into the secret store, then into the Workers through standard
+   input: the capability keys (both Workers), the sending principal's key and
+   the queue's URL (Mail only).
+4. **Probe** on a throwaway address with a throwaway Worker: what Email
+   Routing does when `email()` throws, and what Workers Logs records for an
+   email invocation (G25). Then remove both.
+5. **Deploy** Mail: `wrangler d1 migrations apply --remote`, `wrangler
+   deploy`, with the account from the environment.
+6. **Provision** the mailbox and its addresses (the printed, reviewed SQL).
+7. **Enroll**: the operator, on their own devices, in the dashboard.
+8. **Dual delivery** (D13): `store-and-forward` to today's forward target,
+   then switch the routing rules from `forward` to the Worker.
+9. **Send tests**: the SES mailbox simulator first (success, bounce,
+   complaint), then a real round trip.
+10. **After two weeks** with no lost or duplicated mail: `store`, on the
+    operator's word.
+
+**Rollback at any step after 8**: restore the rules' `forward` action.
+

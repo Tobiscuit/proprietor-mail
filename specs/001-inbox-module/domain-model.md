@@ -21,6 +21,25 @@ not as migrations. It found eleven; they come first.
 | G10 | **The operator controls routing.** Whoever controls Email Routing can add a forward of future mail to themselves, outside this module entirely. | A promise that ignores the routing layer. | Covered by the promise's first limit (mail in transit). The mailbox's own forwarding setting is always shown to the owner and every change is audited. |
 | G11 | **Dual delivery can duplicate or drop.** While a forwarded address moves to the inbox, a Worker error after forwarding could make Email Routing retry and forward twice; an error before forwarding could lose the copy in the owner's existing mailbox. | Duplicate or missing mail for a real business. | Forward first; never throw after a successful forward; failures to store are counted and alerted. `plan.md` §8. |
 
+### Gaps found in round 2 (2026-09-28), before the first mailbox goes live
+
+| # | Gap | What happens if it is missed | Resolution |
+|---|---|---|---|
+| G12 | **The first mailbox has three addresses** (D4, round 2), and v1 allowed one address per mailbox: the Directory's `address` is UNIQUE per mailbox, and the Mailbox refuses a Directory row whose address differs from the one it was created with. | The operator's three addresses cannot share one mailbox; two of them would bounce. | A mailbox has one **primary address** (its identity, the default `From`) and any number of further addresses in a Directory `addresses` table (`plan.md` §12). An address belongs to at most one mailbox, ever. |
+| G13 | **One message to two of a mailbox's addresses arrives twice.** Email Routing hands the Worker one envelope recipient per invocation. | Duplicates in the inbox. The server cannot deduplicate without keeping a fingerprint of the content, which would itself leak. | The sealed header records which address the message arrived for (`envelopeTo`); the browser merges copies by Message-ID and lists both addresses. |
+| G14 | **The operator's address is also the platform's sender.** Replies to the platform's notification mail land in the operator's mailbox, and two sending principals (the platform's and Mail's) may both send as that one address. | D7's "neither key can send as the other" silently false for that address. | Accepted for the operator's own domain and stated; D7 still holds for every client domain. Mail sends only through its own configuration set, whose events reach only Mail's own feed. Restricting the platform's principal to its own `From` addresses is an operator decision (D17). |
+| G15 | **The sending identity's default configuration set belongs to another application's event feed.** A send without an explicit configuration set would put a mailbox's recipients and subjects into that feed. | Client recipients and subjects in another application's database. | Mail passes its own configuration set on every send and refuses to send without one (already so); a test pins it. |
+| G16 | **The capability's claim name drifted.** The dashboard mints `business`; Mail verified `tenant`. No shared test caught it, because the dashboard had not yet run the published vectors. | Every real call refused on the first day. | Renamed (D11); both sides run `contracts/capability-v1.vectors.json`, and the dashboard's test runs them from the commit this repository names. |
+| G17 | **Remote images cannot load in the frame.** The frame inherits the page's policy (`img-src 'self' data: blob:`); D3 promised a "show images" button. | A button that cannot work, or a looser policy on the page that holds the key. | No remote content in v1 (D3 as amended): remote images are removed and counted; inline images are shown as `data:` URLs. |
+| G18 | **An email's own `<style>` blocks are dropped by the inherited policy**, which admits only the page's nonce. | Mail that renders unstyled, or a looser policy. | The browser sanitises the CSS (no `@import`, no remote `url()`) and stamps the page's nonce, read at run time from the page's own script element, on the resulting `<style>` elements (agreed with the dashboard's maintainers on these two conditions). |
+| G19 | **The key ceremony needs the new dashboard on its final host.** The RP ID is that exact host (D5); the dashboard that has the inbox has no date yet for moving there. | The operator's mailbox waits on an unrelated cutover. | Plan against "new dashboard live on the final host". D12 records the one alternative: enroll on a host UNDER the RP ID. |
+| G20 | **The operator's own business has no row on the platform yet.** | No business id for the Directory row, no capability for the operator's own mailbox. | An operator action on the platform side (D18), before provisioning. |
+| G21 | **Suppression needs the addresses that bounced, and zero-access minimises stored metadata.** | A plaintext list of bounced and complaining recipients at rest. | Store a keyed hash per mailbox, never the address (M11); the bounce itself reaches the owner as a normal, sealed message through SES feedback forwarding. |
+| G22 | **An SES event must be matched to its mailbox without reading content.** | Events that cannot be routed, or routing by subject or address. | Every send carries a message tag naming the mailbox id; events are routed by that tag alone (`plan.md` §13). |
+| G23 | **An unlocked key that can be re-wrapped can be exported.** Any code in the page that reaches the key handle could wrap it under a secret it chose, then open that wrap. | The whole page's code can take the key home. | K1: the unlocked key is non-extractable and decrypt-only; wrapping again (a new device, a new recovery key) needs a fresh unlock for that one operation. With PKCS #8 wraps opened by `unwrapKey`, the private key never exists as bytes in JavaScript. |
+| G24 | **The Worker's production configuration names resources, and the repository will be public.** | Account and resource identifiers published with the code. | The configuration names resources by name only: wrangler resolves the D1 database by `database_name`, and the account comes from the environment. Anything else operator-specific is a secret or a deploy-time variable. |
+| G25 | **Workers Logs records each email invocation with its envelope recipient.** | An address in the operator's logs for every arrival, against D8. | `observability.logs.invocation_logs = false`; the Worker's own log lines already carry ids, sizes and outcomes only. The throwaway probe (S8) confirms what remains. |
+
 ## 1. Bounded contexts
 
 | Context | Owns | Lives in | Language |
@@ -90,9 +109,10 @@ Invariants, each a test:
 - **M5 — Activation requires a recovery wrap.** The mailbox becomes `active`
   only when its key ring has a public key and at least one recovery-key wrap.
   The last recovery wrap cannot be removed.
-- **M6 — Only the owner sends, as the mailbox.** `From` is always the mailbox
-  address; the request cannot choose it. Roles allowed to send default to
-  `owner`.
+- **M6 — Only the owner sends, as the mailbox.** `From` is always one of the
+  mailbox's own addresses (the primary unless the request names another of
+  them); the request can never name any other address. Roles allowed to send
+  default to `owner`.
 - **M7 — Sending is bounded and idempotent.** At most 20 messages an hour and
   100 a day per mailbox (agentic-inbox's limits), at most 50 recipients a
   message; a repeated idempotency key returns the first result and sends
@@ -104,6 +124,14 @@ Invariants, each a test:
 - **M10 — Forwarding is visible and audited.** Delivery mode and forwarding
   target are returned on every `mailbox()` read, and every change writes an
   audit row naming who and when.
+- **M11 — A recipient who bounced permanently or complained is not written to
+  again** from that mailbox: `send` refuses with `RecipientSuppressed`, naming
+  the position of each such recipient and never its address. The mailbox
+  stores only a keyed hash of each suppressed address (HMAC-SHA-256 under a
+  random key of its own), the reason and two dates; an entry lapses one year
+  after its last event.
+- **M12 — Delivery events are applied at most once in effect.** The feed
+  delivers at least once; recording an event twice changes nothing.
 
 ### StoredMessage (entity inside Mailbox)
 
@@ -130,17 +158,35 @@ later addition for devices without PRF.
 
 ### Directory entry (aggregate in Mail's D1)
 
-`{ id, businessId, address, status, sesTenant, createdAt, activatedAt,
-closedAt }`. Status moves `provisioned → active → suspended ⇄ active →
-closed`. Invariants: an address belongs to one mailbox (UNIQUE); a business has
-at most one mailbox in v1 (UNIQUE, relaxed when aliases arrive); `closed` is
-terminal.
+`{ id, businessId, address, addresses, status, sesTenant,
+sesConfigurationSet, createdAt, activatedAt, closedAt }`. `address` is the
+**primary address**: the mailbox's identity and its default `From`.
+`addresses` lists every address that delivers to the mailbox, the primary
+first (round 2, G12). Status moves `provisioned → active → suspended ⇄ active
+→ closed`.
+
+Invariants:
+
+- **D-1** An address belongs to at most one mailbox, and never moves to
+  another: an address that ever delivered to a mailbox is never given to a
+  different one, so mail meant for one owner can never reach the next.
+- **D-2** The primary address is always one of the mailbox's addresses.
+- **D-3** A business has at most one mailbox in v1.
+- **D-4** `closed` is terminal.
 
 ### Capability (value object, Published Language)
 
 `{ sub: accountId, business, mbx?, role, iat, exp, aud: "proprietor-mail", iss:
 "proprietor-dashboard" }`, an HS256 JWT signed with a key only the dashboard and
 Mail hold, valid for at most 60 seconds. `contracts/capability-v1.md`.
+
+### Key custody in the browser (Key Custody context)
+
+- **K1 — An unlocked mailbox cannot give its key away.** The private key is a
+  non-extractable `CryptoKey`, opened from its wrap by `unwrapKey`, and the
+  unlocked session holds no raw form of it. Wrapping it again needs a fresh
+  unlock for that one operation (G23).
+- **K2 — The advertised public key is checked at every unlock** (G7).
 
 ### Envelope (value object, Shared Kernel)
 
