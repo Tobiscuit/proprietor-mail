@@ -1,11 +1,18 @@
 #!/usr/bin/env node
 /**
- * Prints the SQL that provisions one mailbox (plan.md §3). It PRINTS; it
- * never runs anything. The operator reviews the output and runs it with
- * `wrangler d1 execute`, the way every Directory change is made in v1.
+ * Prints the SQL that provisions one mailbox (plan.md §3 and §12), or adds
+ * addresses to one that exists. It PRINTS; it never runs anything. The
+ * operator reviews the output and runs it with `wrangler d1 execute --file`,
+ * the way every Directory change is made in v1.
  *
- *   node scripts/provision-mailbox.ts --business <business id> --address <address> \
+ *   node scripts/provision-mailbox.ts --business <business id> \
+ *     --address <primary> [--address <further address>]... \
  *     [--id mbx_…] [--ses-tenant <name>] [--configuration-set <name>] > provision.sql
+ *
+ *   node scripts/provision-mailbox.ts --add-to <mbx_…> --address <address>... > addresses.sql
+ *
+ * The first --address is the primary: the mailbox's identity and its default
+ * From. Every address delivers to the same mailbox. Nothing removes one.
  *
  * Node 22.18+ runs this TypeScript file directly (type stripping).
  *
@@ -15,7 +22,7 @@
  */
 import { registerHooks } from "node:module";
 import { parseArgs } from "node:util";
-import { provisionMailboxSql } from "../src/directory/provision.ts";
+import { addAddressesSql, provisionMailboxSql } from "../src/directory/provision.ts";
 
 // The workspace packages are TypeScript written for a bundler: their relative
 // imports carry no extension, which Node's ESM loader refuses. Retry such an
@@ -44,16 +51,40 @@ function fail(message: string, code = 1): never {
 const { values } = parseArgs({
   options: {
     business: { type: "string" },
-    address: { type: "string" },
+    address: { type: "string", multiple: true },
     id: { type: "string" },
     "ses-tenant": { type: "string" },
     "configuration-set": { type: "string" },
+    "add-to": { type: "string" },
   },
   strict: true,
 });
 
+const addresses = values.address ?? [];
+if (addresses.length === 0) fail("--address is required");
+
+const RUN_IT = "--   npx wrangler d1 execute proprietor-mail --remote --file <this file>\n";
+
+if (values["add-to"] !== undefined) {
+  for (const option of ["business", "id", "ses-tenant", "configuration-set"] as const) {
+    if (values[option] !== undefined) fail(`--add-to takes only --address; --${option} is for a new mailbox`);
+  }
+  let sql: string;
+  try {
+    sql = addAddressesSql({ mailboxId: values["add-to"], addresses, now: new Date() });
+  } catch (err) {
+    fail(err instanceof Error ? err.message : String(err));
+  }
+  process.stdout.write(
+    `-- Adds ${addresses.length} address(es) to mailbox ${values["add-to"]}. NOT executed: review it, then run\n` +
+      RUN_IT +
+      "-- The Directory refuses an address that already belongs to another mailbox.\n" +
+      sql,
+  );
+  process.exit(0);
+}
+
 if (values.business === undefined) fail("--business is required");
-if (values.address === undefined) fail("--address is required");
 
 let id = values.id;
 if (id === undefined) {
@@ -72,7 +103,8 @@ try {
   sql = provisionMailboxSql({
     id,
     businessId: values.business,
-    address: values.address,
+    address: addresses[0]!,
+    addresses: addresses.slice(1),
     sesTenant: values["ses-tenant"] ?? null,
     sesConfigurationSet: values["configuration-set"] ?? null,
     now: new Date(),
@@ -82,8 +114,9 @@ try {
 }
 
 process.stdout.write(
-  `-- Provisions mailbox ${id} (status: provisioned). NOT executed: review it, then run\n` +
-    `--   npx wrangler d1 execute proprietor-mail --remote --file <this file>\n` +
-    `-- The mailbox accepts no mail until its owner enrolls a key on their own device.\n` +
+  `-- Provisions mailbox ${id} (status: provisioned) with ${addresses.length} address(es), the first as the primary.\n` +
+    "-- NOT executed: review it, then run\n" +
+    RUN_IT +
+    "-- The mailbox accepts no mail until its owner enrolls a key on their own device.\n" +
     sql,
 );
