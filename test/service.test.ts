@@ -19,6 +19,8 @@ import {
 } from "./support/mailbox";
 import { refusalOf, valueOf } from "./support/results";
 
+const a_tag = () => crypto.randomUUID().slice(0, 8);
+
 const mail = () => exports.MailService;
 
 const NOT_FOUND = { ok: false, error: { name: "NotFound", message: "not found" } };
@@ -158,11 +160,13 @@ describe("M4: a mailbox belongs to one business for life", () => {
     }
   });
 
-  it("lists only the capability's own business's mailboxes, to any member role", async () => {
-    const a = await provisionMailbox({ status: "provisioned" });
+  it("lists only the capability's own business's mailboxes, to any member role, each with its addresses (primary first)", async () => {
+    const a = await provisionMailbox({ status: "provisioned", addresses: [`team.${a_tag()}@mail.test`] });
     await provisionMailbox();
     const list = await mail().mailboxes(await mint({ business: a.businessId, role: "editor" }));
-    expect(list).toEqual({ ok: true, value: [{ id: a.id, address: a.address, status: "provisioned" }] });
+    expect(list).toEqual({ ok: true, value: [{ id: a.id, address: a.address, addresses: a.addresses, status: "provisioned" }] });
+    expect(a.addresses).toHaveLength(2);
+    expect(a.addresses[0]).toBe(a.address);
   });
 });
 
@@ -187,7 +191,7 @@ describe("mailbox() and enrolment (M5, M10)", () => {
   it("shows a provisioned mailbox with no keys, and the delivery mode and forward target (M10)", async () => {
     const mb = await provisionMailbox({ status: "provisioned" });
     const view = valueOf(await mail().mailbox(await capFor(mb)));
-    expect(view).toMatchObject({ id: mb.id, address: mb.address, status: "provisioned", displayName: "", keys: [], wraps: [] });
+    expect(view).toMatchObject({ id: mb.id, address: mb.address, addresses: [mb.address], status: "provisioned", displayName: "", keys: [], wraps: [] });
     expect(view.policy).toMatchObject({ delivery: "store", forwardTo: null, assistant: "off" });
   });
 
