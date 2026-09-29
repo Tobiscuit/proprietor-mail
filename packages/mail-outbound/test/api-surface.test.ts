@@ -10,7 +10,7 @@ const functions = ["buildMime", "sesRawMailer"] as const;
 
 const errors = ["NotImplemented", "InvalidMessage", "SendRejected"] as const;
 
-describe("@platform-mail/outbound exports the plan's API", () => {
+describe("@proprietor/mail-outbound exports the plan's API", () => {
   test.each(functions)("%s is an exported function", (name) => {
     expect(typeof api[name]).toBe("function");
   });

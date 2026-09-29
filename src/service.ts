@@ -23,7 +23,7 @@ import type {
  * and answers with ciphertext; plaintext comes in only for `send`.
  *
  * Here: rules 1-6 of the capability, then rule 7 against the Directory (M4:
- * a missing, closed or other tenant's mailbox is one and the same NotFound).
+ * a missing, closed or other business's mailbox is one and the same NotFound).
  * In the Mailbox: rule 8 (its policy's roles) and every invariant of its own.
  *
  * Every method resolves to a MailResult (contracts/mail-service-v1.md): a
@@ -85,10 +85,10 @@ export interface MailboxSummary {
 }
 
 export class MailService extends WorkerEntrypoint<Env> {
-  /** The capability's tenant's mailboxes, for "not set up" / "set up your inbox" / the inbox. Any member role. */
+  /** The capability's business's mailboxes, for "not set up" / "set up your inbox" / the inbox. Any member role. */
   async mailboxes(cap: string): Promise<MailResult<MailboxSummary[]>> {
     return this.call("mailboxes", cap, async (capability) =>
-      ok((await new Directory(this.env.DIRECTORY).forTenant(capability.tenant)).map((m) => ({ id: m.id, address: m.address, status: m.status }))),
+      ok((await new Directory(this.env.DIRECTORY).forBusiness(capability.business)).map((m) => ({ id: m.id, address: m.address, status: m.status }))),
     );
   }
 
@@ -180,8 +180,8 @@ export class MailService extends WorkerEntrypoint<Env> {
     return this.call(method, cap, async (capability) => {
       if (capability.mbx === undefined) throw new InvalidRequest("the capability names no mailbox");
       const entry = await new Directory(this.env.DIRECTORY).byId(capability.mbx);
-      // Rule 7 and M4: one answer for missing, closed and another tenant's.
-      if (entry === null || entry.status === "closed" || entry.tenantId !== capability.tenant) throw new NotFound();
+      // Rule 7 and M4: one answer for missing, closed and another business's.
+      if (entry === null || entry.status === "closed" || entry.businessId !== capability.business) throw new NotFound();
       const stub = await mailboxRpc(this.env, entry.id);
       return fn(stub, { mailbox: entry, actor: { accountId: capability.sub, role: capability.role } });
     });

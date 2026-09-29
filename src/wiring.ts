@@ -1,11 +1,11 @@
-import { keyIdOf, newId, sealMessage } from "@platform-mail/crypto";
-import { buildMime, sesRawMailer } from "@platform-mail/outbound";
+import { keyIdOf, newId, sealMessage } from "@proprietor/mail-crypto";
+import { buildMime, sesRawMailer } from "@proprietor/mail-outbound";
 import type { Env } from "./env";
 import type { MailboxPorts, NewMailSignal, RawMailer } from "./ports";
 
 /**
- * The real implementations behind the Mailbox's ports: @platform-mail/crypto
- * (slice S1) and @platform-mail/outbound (slice S3). Until those slices land,
+ * The real implementations behind the Mailbox's ports: @proprietor/mail-crypto
+ * (slice S1) and @proprietor/mail-outbound (slice S3). Until those slices land,
  * their functions throw `NotImplemented`; nothing here calls one before it is
  * needed, so constructing the ports never throws.
  */

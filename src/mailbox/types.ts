@@ -4,7 +4,7 @@ import type { FolderId } from "./folders";
 
 /**
  * What MailService tells a Mailbox about each call: the Directory row it
- * checked (tenant and mailbox already matched the capability, M4) and who is
+ * checked (business and mailbox already matched the capability, M4) and who is
  * acting. The Mailbox applies the rest: its own identity and its policy.
  */
 export interface CallContext {

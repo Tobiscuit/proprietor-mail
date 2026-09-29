@@ -2,21 +2,21 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { Directory } from "../src/directory/directory";
 import { provisionMailboxSql } from "../src/directory/provision";
-import { freshMailboxId, freshTenantId } from "./support/ids";
+import { freshMailboxId, freshBusinessId } from "./support/ids";
 
 const AT = new Date("2026-09-26T12:00:00.000Z");
 
-async function insertRow(row: { id: string; tenantId: string; address: string; status: string }) {
+async function insertRow(row: { id: string; businessId: string; address: string; status: string }) {
   await env.DIRECTORY.prepare(
-    "INSERT INTO mailboxes (id, tenant_id, address, status, created_at) VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO mailboxes (id, business_id, address, status, created_at) VALUES (?, ?, ?, ?, ?)",
   )
-    .bind(row.id, row.tenantId, row.address, row.status, AT.toISOString())
+    .bind(row.id, row.businessId, row.address, row.status, AT.toISOString())
     .run();
 }
 
 function freshRow(status = "provisioned") {
   const id = freshMailboxId();
-  return { id, tenantId: freshTenantId(), address: `${id.slice(4, 14)}@mail.test`, status };
+  return { id, businessId: freshBusinessId(), address: `${id.slice(4, 14)}@mail.test`, status };
 }
 
 describe("migration 0001: the Directory's own constraints", () => {
@@ -26,10 +26,10 @@ describe("migration 0001: the Directory's own constraints", () => {
     await expect(insertRow({ ...freshRow(), address: a.address })).rejects.toThrow(/UNIQUE/);
   });
 
-  it("allows one mailbox per tenant in v1", async () => {
+  it("allows one mailbox per business in v1", async () => {
     const a = freshRow();
     await insertRow(a);
-    await expect(insertRow({ ...freshRow(), tenantId: a.tenantId })).rejects.toThrow(/UNIQUE/);
+    await expect(insertRow({ ...freshRow(), businessId: a.businessId })).rejects.toThrow(/UNIQUE/);
   });
 
   it("refuses a status outside the lifecycle", async () => {
@@ -46,7 +46,7 @@ describe("Directory repository", () => {
     const byId = await directory().byId(row.id);
     expect(byId).toEqual({
       id: row.id,
-      tenantId: row.tenantId,
+      businessId: row.businessId,
       address: row.address,
       status: "active",
       sesTenant: null,
@@ -63,13 +63,13 @@ describe("Directory repository", () => {
     expect(await directory().byAddress("nobody@mail.test")).toBeNull();
   });
 
-  it("lists a tenant's mailboxes, leaving out closed ones", async () => {
+  it("lists a business's mailboxes, leaving out closed ones", async () => {
     const open = freshRow("provisioned");
     await insertRow(open);
     const closed = freshRow("closed");
     await insertRow(closed);
-    expect((await directory().forTenant(open.tenantId)).map((m) => m.id)).toEqual([open.id]);
-    expect(await directory().forTenant(closed.tenantId)).toEqual([]);
+    expect((await directory().forBusiness(open.businessId)).map((m) => m.id)).toEqual([open.id]);
+    expect(await directory().forBusiness(closed.businessId)).toEqual([]);
   });
 
   it("activates only a provisioned mailbox, and stamps the time", async () => {
@@ -97,10 +97,10 @@ describe("Directory repository", () => {
 describe("provisioning SQL (printed for the operator, never executed by the script)", () => {
   it("creates a provisioned mailbox when the operator runs it", async () => {
     const id = freshMailboxId();
-    const tenantId = freshTenantId();
+    const businessId = freshBusinessId();
     const sql = provisionMailboxSql({
       id,
-      tenantId,
+      businessId,
       address: `Hello.${id.slice(4, 10)}@Example.TEST`,
       sesTenant: "client-example",
       sesConfigurationSet: "send-example-mail",
@@ -109,7 +109,7 @@ describe("provisioning SQL (printed for the operator, never executed by the scri
     await env.DIRECTORY.exec(sql.replace(/\n/g, " "));
     const row = await new Directory(env.DIRECTORY).byId(id);
     expect(row).toMatchObject({
-      tenantId,
+      businessId,
       address: `hello.${id.slice(4, 10)}@example.test`,
       status: "provisioned",
       sesTenant: "client-example",
@@ -119,7 +119,7 @@ describe("provisioning SQL (printed for the operator, never executed by the scri
   });
 
   it("is exactly one INSERT and nothing else", () => {
-    const sql = provisionMailboxSql({ id: freshMailboxId(), tenantId: "t1", address: "a@b.test", now: AT });
+    const sql = provisionMailboxSql({ id: freshMailboxId(), businessId: "t1", address: "a@b.test", now: AT });
     expect(sql.trim().startsWith("INSERT INTO mailboxes")).toBe(true);
     expect(sql.split(";").filter((s) => s.trim() !== "")).toHaveLength(1);
     expect(sql).toMatch(/'provisioned'/);
@@ -127,14 +127,14 @@ describe("provisioning SQL (printed for the operator, never executed by the scri
 
   it.each([
     ["an id that is not a mailbox id", { id: "mbx_short" }],
-    ["a tenant id carrying SQL", { tenantId: "t1'); DROP TABLE mailboxes; --" }],
+    ["a business id carrying SQL", { businessId: "t1'); DROP TABLE mailboxes; --" }],
     ["an address without a domain", { address: "hello@" }],
     ["an address with a quote", { address: "o'hara@example.test" }],
     ["an address with a line break", { address: "a@b.test\r\nX: y" }],
     ["an SES tenant carrying SQL", { sesTenant: "x' OR '1'='1" }],
   ])("refuses %s", (_what, override) => {
     expect(() =>
-      provisionMailboxSql({ id: freshMailboxId(), tenantId: "t1", address: "a@b.test", now: AT, ...override }),
+      provisionMailboxSql({ id: freshMailboxId(), businessId: "t1", address: "a@b.test", now: AT, ...override }),
     ).toThrow(/invalid/i);
   });
 });

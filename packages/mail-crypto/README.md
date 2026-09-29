@@ -1,6 +1,6 @@
-# @platform-mail/crypto
+# @proprietor/mail-crypto
 
-Envelope v1 and key wrapping for platform-mail, exactly as
+Envelope v1 and key wrapping for proprietor-mail, exactly as
 [`contracts/envelope-v1.md`](../../contracts/envelope-v1.md) specifies. One
 implementation, used by both sides:
 
@@ -13,10 +13,10 @@ It uses only Web Crypto and `crypto.getRandomValues`: no `node:*` imports, no
 `Buffer`, no DOM, no network.
 
 ```
-npm test -w @platform-mail/crypto          # vitest: every acceptance test in tasks.md §S1
-npm run typecheck -w @platform-mail/crypto # src/ with the DOM lib, src/ with @cloudflare/workers-types
+npm test -w @proprietor/mail-crypto          # vitest: every acceptance test in tasks.md §S1
+npm run typecheck -w @proprietor/mail-crypto # src/ with the DOM lib, src/ with @cloudflare/workers-types
                                            # (no DOM, as the Mail Worker compiles it), then src/ + test/
-npm run write-vectors -w @platform-mail/crypto  # regenerate contracts/envelope-v1.vectors.json
+npm run write-vectors -w @proprietor/mail-crypto  # regenerate contracts/envelope-v1.vectors.json
 ```
 
 ## Dependencies

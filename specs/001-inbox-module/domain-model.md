@@ -10,7 +10,7 @@ not as migrations. It found eleven; they come first.
 | # | Gap | What happens if it is missed | Resolution |
 |---|---|---|---|
 | G1 | **Zero-access and a server-side AI assistant conflict.** Whatever can decrypt on the server can be made to decrypt for the operator. | A promise ("the operator can't read it") that the architecture does not keep. | Decision D1; the assistant is off and cannot be turned on in v1. |
-| G2 | **Tenant membership is not mail access.** The operator is an editor member of client tenants (to support them), so "any member may open the tenant's mailbox" would hand the operator ciphertext and metadata, and a setup flow the operator could run would hand over keys. | Zero-access broken by a convenience. | Read access is key possession, and keys are enrolled only on the owner's device. `openRoles` defaults to owners (D9). |
+| G2 | **Business membership is not mail access.** The operator is an editor member of client businesses (to support them), so "any member may open the business's mailbox" would hand the operator ciphertext and metadata, and a setup flow the operator could run would hand over keys. | Zero-access broken by a convenience. | Read access is key possession, and keys are enrolled only on the owner's device. `openRoles` defaults to owners (D9). |
 | G3 | **Passkeys are bound to a domain, and the dashboard is being renamed.** | Every enrolled passkey stops working at the rename; owners are locked out until they find their recovery key. | D5: fix the host before the first enrollment; the recovery key always works. |
 | G4 | **With no iframes, the key lives in the whole dashboard's page.** | The promise would imply that only the inbox code handles keys. | D2: disclosed in the promise; publication of bundle hashes before the first client mailbox. |
 | G5 | **Email HTML is hostile input in the same page as the key.** | One sanitizer bypass is a key theft. | D3: a script-less sandboxed frame for bodies; no remote content by default. |
@@ -25,16 +25,16 @@ not as migrations. It found eleven; they come first.
 
 | Context | Owns | Lives in | Language |
 |---|---|---|---|
-| **Mail Storage** | Mailbox, StoredMessage, Folder, Draft, KeyRing, Mailbox policy, Audit | `platform-mail` Worker: the `Mailbox` Durable Object | "message", "sealed", "folder" |
-| **Mail Directory** | Which mailbox an address belongs to, which tenant a mailbox belongs to, its lifecycle status | `platform-mail` Worker: Mail's own D1 | "mailbox", "address", "provisioned/active" |
-| **Inbound Delivery** | Accepting or refusing an arriving message; forwarding during migration | `platform-mail` Worker: `email()` handler + `Mailbox.onEmail` | "arrival", "reject", "forward" |
-| **Outbound Sending** | Turning a composed message into MIME and handing it to SES; rate limits; idempotency | `packages/mail-outbound` (the MIME builder and the SES adapter) + `Mailbox.send` | "send", "tenant", "configuration set" |
+| **Mail Storage** | Mailbox, StoredMessage, Folder, Draft, KeyRing, Mailbox policy, Audit | `proprietor-mail` Worker: the `Mailbox` Durable Object | "message", "sealed", "folder" |
+| **Mail Directory** | Which mailbox an address belongs to, which business a mailbox belongs to, its lifecycle status | `proprietor-mail` Worker: Mail's own D1 | "mailbox", "address", "provisioned/active" |
+| **Inbound Delivery** | Accepting or refusing an arriving message; forwarding during migration | `proprietor-mail` Worker: `email()` handler + `Mailbox.onEmail` | "arrival", "reject", "forward" |
+| **Outbound Sending** | Turning a composed message into MIME and handing it to SES; rate limits; idempotency | `packages/mail-outbound` (the MIME builder and the SES adapter) + `Mailbox.send` | "send", "SES tenant", "configuration set" |
 | **Key Custody** | Generating mailbox keys, wrapping and unwrapping them, sealing and opening messages and drafts | `packages/mail-crypto`, running in the owner's browser (and, for sealing only, in the Worker) | "wrap", "unlock", "recovery key", "seal/open" |
-| **Identity & Access** | Accounts, memberships, the session, the tenant chooser; minting Mail capabilities | the dashboard shell (a separate application) | "session", "membership", "capability" |
+| **Identity & Access** | Accounts, memberships, the session, the business chooser; minting Mail capabilities | the dashboard shell (a separate application) | "session", "membership", "capability" |
 | **Business Catalogue** | The site manifest and `has.email` | the platform's site catalogue (a separate application) | "module", "manifest" |
 | **Presence** | Live state and Web Push for a business | the dashboard's per-business Agent | "new mail count" |
-| **Deliverability** | Bounces, complaints and suppression for client mail | `platform-mail` (a later slice), fed by the client-mail configuration sets' event destination | "bounce", "suppressed" |
-| **Assistant** (held) | AI help over one mailbox's mail, only when the owner opted in | a separate Durable Object class in `platform-mail`, never instantiated in v1 | "ask", "draft", "opt-in" |
+| **Deliverability** | Bounces, complaints and suppression for client mail | `proprietor-mail` (a later slice), fed by the client-mail configuration sets' event destination | "bounce", "suppressed" |
+| **Assistant** (held) | AI help over one mailbox's mail, only when the owner opted in | a separate Durable Object class in `proprietor-mail`, never instantiated in v1 | "ask", "draft", "opt-in" |
 
 ## 2. Context map
 
@@ -51,7 +51,7 @@ not as migrations. It found eleven; they come first.
    Cloudflare Email Routing ──▶ Inbound Delivery        conformist (ForwardableEmailMessage)
    Outbound Sending ──▶ Amazon SES                      anti-corruption layer (a port + one adapter)
    Mail Storage ──▶ Presence                            one call, the dashboard's MailSignals entrypoint:
-                                                        unread({ tenantId, mailboxId, unread })
+                                                        unread({ businessId, mailboxId, unread })
    Business Catalogue ··▶ dashboard                     has.email decides whether the module shows;
                                                         Mail never reads manifests
 ```
@@ -67,7 +67,7 @@ capability without the key.
 
 ### Mailbox (root) — one Durable Object per mailbox
 
-Holds: identity (id, tenant, address — copied from the Directory at first
+Holds: identity (id, business, address — copied from the Directory at first
 contact and never changed), the key ring, folders, stored messages, drafts,
 sends, policy and audit.
 
@@ -83,10 +83,10 @@ Invariants, each a test:
   table, blob or variable in the Worker holds a mailbox private key or a
   message key in the clear, for any mailbox whose policy says `off` (in v1:
   every mailbox).
-- **M4 — A mailbox belongs to one tenant for life.** Every call is checked:
-  the capability's tenant and mailbox must equal the mailbox's own; a mismatch
+- **M4 — A mailbox belongs to one business for life.** Every call is checked:
+  the capability's business and mailbox must equal the mailbox's own; a mismatch
   answers "not found", never "forbidden", so existence does not leak across
-  tenants.
+  businesses.
 - **M5 — Activation requires a recovery wrap.** The mailbox becomes `active`
   only when its key ring has a public key and at least one recovery-key wrap.
   The last recovery wrap cannot be removed.
@@ -130,16 +130,16 @@ later addition for devices without PRF.
 
 ### Directory entry (aggregate in Mail's D1)
 
-`{ id, tenantId, address, status, sesTenant, createdAt, activatedAt,
+`{ id, businessId, address, status, sesTenant, createdAt, activatedAt,
 closedAt }`. Status moves `provisioned → active → suspended ⇄ active →
-closed`. Invariants: an address belongs to one mailbox (UNIQUE); a tenant has
+closed`. Invariants: an address belongs to one mailbox (UNIQUE); a business has
 at most one mailbox in v1 (UNIQUE, relaxed when aliases arrive); `closed` is
 terminal.
 
 ### Capability (value object, Published Language)
 
-`{ sub: accountId, tenant, mbx?, role, iat, exp, aud: "platform-mail", iss:
-"platform-dashboard" }`, an HS256 JWT signed with a key only the dashboard and
+`{ sub: accountId, business, mbx?, role, iat, exp, aud: "proprietor-mail", iss:
+"proprietor-dashboard" }`, an HS256 JWT signed with a key only the dashboard and
 Mail hold, valid for at most 60 seconds. `contracts/capability-v1.md`.
 
 ### Envelope (value object, Shared Kernel)
@@ -151,22 +151,22 @@ body, each bound to its mailbox and message by associated data.
 
 | Term | Means | Does not mean |
 |---|---|---|
-| **Mailbox** | One business's store of mail, with one address and one key ring | A tenant; a person |
-| **Owner** | A member with role `owner` of the mailbox's tenant | Anyone in the Access policy |
+| **Mailbox** | One business's store of mail, with one address and one key ring | A business; a person |
+| **Owner** | A member with role `owner` of the mailbox's business | Anyone in the Access policy |
 | **Provisioned** | The operator created the mailbox; no key yet; refuses mail | Working |
 | **Active** | Keys enrolled; accepts mail | Unlocked |
 | **Unlocked** | A browser holds the private key in memory right now | Active |
 | **Seal / open** | Encrypt to the mailbox public key / decrypt with its private key | Sign |
 | **Wrap / unwrap** | Encrypt / decrypt the private key under a passkey- or recovery-derived key | Seal |
 | **Recovery key** | A 256-bit secret shown once at setup, never stored by the platform | A password reset |
-| **Capability** | A ≤ 60 s signed statement from the dashboard: this account, this tenant, this mailbox, this role | A session |
+| **Capability** | A ≤ 60 s signed statement from the dashboard: this account, this business, this mailbox, this role | A session |
 | **Assistant** | The AI helper, off unless the owner opts in | The mailbox's Durable Object (which is an Agents SDK `Agent` class for `onEmail`, and runs no model) |
 
 ## 5. What agentic-inbox's model becomes
 
 | agentic-inbox | Here | Why |
 |---|---|---|
-| Mailbox list in R2 JSON, any Access user sees all | Directory in D1, capability per call, owners only | per-tenant isolation (M4, D9) |
+| Mailbox list in R2 JSON, any Access user sees all | Directory in D1, capability per call, owners only | per-business isolation (M4, D9) |
 | `emails.body` plaintext in DO SQLite | sealed header in SQLite, sealed raw message in R2 | M1 |
 | attachments as separate plaintext R2 objects | inside the sealed raw message, parsed in the browser | M1; one object per message |
 | server-side SQL search and subject threading | browser-side, over decrypted headers | G6 |

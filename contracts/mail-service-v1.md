@@ -1,6 +1,6 @@
 # Contract: `MailService` RPC, version 1
 
-**Served by** `platform-mail`'s `MailService` entrypoint. **Called by** the
+**Served by** `proprietor-mail`'s `MailService` entrypoint. **Called by** the
 dashboard's inbox route group, only from server actions and its one streaming
 route handler, over a service binding with `entrypoint: "MailService"`.
 **Status:** agreed shape 2026-09-26. The method table is `specs/001-inbox-module/plan.md`

@@ -1,5 +1,5 @@
-import * as mailCrypto from "@platform-mail/crypto";
-import * as outbound from "@platform-mail/outbound";
+import * as mailCrypto from "@proprietor/mail-crypto";
+import * as outbound from "@proprietor/mail-outbound";
 import { createExecutionContext, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import PostalMime from "postal-mime";
@@ -61,7 +61,7 @@ async function sealedBody(mb: TestMailbox, messageId: string): Promise<Uint8Arra
   return new Uint8Array(await new Response(valueOf(await mail().body(await capFor(mb), messageId))).arrayBuffer());
 }
 
-describe.skipIf(!CRYPTO)("with the real @platform-mail/crypto (S1)", () => {
+describe.skipIf(!CRYPTO)("with the real @proprietor/mail-crypto (S1)", () => {
   it("a message sealed by the Worker opens with the owner's private key to the exact raw bytes", async () => {
     const { mb, privateKey } = await enrolledWithRealKey(realCryptoPorts());
     const raw = sampleMessage({ to: mb.address, subject: "Kitchen remodel — Zürich", body: "Hola, ¿cuánto cuesta?" });
@@ -101,7 +101,7 @@ describe.skipIf(!CRYPTO)("with the real @platform-mail/crypto (S1)", () => {
   });
 });
 
-describe.skipIf(!CRYPTO || !OUTBOUND)("with the real @platform-mail/outbound (S3) and crypto (S1)", () => {
+describe.skipIf(!CRYPTO || !OUTBOUND)("with the real @proprietor/mail-outbound (S3) and crypto (S1)", () => {
   it("sends real MIME (to a fake SES) and the Sent copy opens to exactly the bytes SES was handed", async () => {
     const ports = { ...realCryptoPorts(), mime: productionPorts(env).mime };
     const { mb, privateKey } = await enrolledWithRealKey(ports);
@@ -131,7 +131,7 @@ describe.skipIf(!CRYPTO || !OUTBOUND)("with the real @platform-mail/outbound (S3
     expect(header).toMatchObject({ direction: "out", messageId: `${result.providerMessageId}@email.amazonses.com`, bcc: [{ name: "", address: "archive@example.net" }] });
   });
 
-  it("the production RawMailer is sesRawMailer: SES v2 raw send for the mailbox's configuration set and tenant (fetch never leaves the isolate)", async () => {
+  it("the production RawMailer is sesRawMailer: SES v2 raw send for the mailbox's configuration set and SES tenant (fetch never leaves the isolate)", async () => {
     const mb = await provisionMailbox();
     const requests: { url: string; body: Record<string, unknown> }[] = [];
     const realFetch = globalThis.fetch;
@@ -171,7 +171,7 @@ describe.skipIf(CRYPTO)("until S1 lands", () => {
       task,
       {
         reason: "store mode, storing fails (S1's stub cannot make a message id): email() throws so the message is not counted as delivered",
-        error: "NotImplemented: @platform-mail/crypto",
+        error: "NotImplemented: @proprietor/mail-crypto",
         lines: 1,
       },
       worker.email!(email.message, env, createExecutionContext()),

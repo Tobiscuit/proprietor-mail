@@ -1,5 +1,5 @@
 /**
- * @platform-mail/crypto - envelope v1 and key wrapping.
+ * @proprietor/mail-crypto - envelope v1 and key wrapping.
  *
  * The contract is contracts/envelope-v1.md; this file is its API in code form.
  * The signatures are the ones the stub published for slices S2 and S3; S1

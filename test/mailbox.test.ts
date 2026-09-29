@@ -42,20 +42,20 @@ describe("the Mailbox Agent: schema, identity, folders, policy, audit (tasks.md 
     const mb = await provisionMailbox({ status: "provisioned", enroll: false });
     expect(await sql(mb, "SELECT * FROM identity")).toEqual([]);
     valueOf(await mb.stub.describe(callContext(mb, { status: "provisioned" })));
-    expect(await sql(mb, "SELECT mailbox_id, tenant_id, address, display_name FROM identity")).toEqual([
-      { mailbox_id: mb.id, tenant_id: mb.tenantId, address: mb.address, display_name: "" },
+    expect(await sql(mb, "SELECT mailbox_id, business_id, address, display_name FROM identity")).toEqual([
+      { mailbox_id: mb.id, business_id: mb.businessId, address: mb.address, display_name: "" },
     ]);
   });
 
-  it("refuses to be re-initialized with a different tenant or address, answering NotFound as a value", async () => {
+  it("refuses to be re-initialized with a different business or address, answering NotFound as a value", async () => {
     const mb = await provisionMailbox({ status: "active" });
     const moved = callContext(mb);
-    moved.mailbox.tenantId = "tnt_somebody_else";
+    moved.mailbox.businessId = "biz_somebody_else";
     expect(await mb.stub.describe(moved)).toEqual(NOT_FOUND);
     const renamed = callContext(mb);
     renamed.mailbox.address = "other@mail.test";
     expect(await mb.stub.describe(renamed)).toEqual(NOT_FOUND);
-    expect(await sql(mb, "SELECT tenant_id, address FROM identity")).toEqual([{ tenant_id: mb.tenantId, address: mb.address }]);
+    expect(await sql(mb, "SELECT business_id, address FROM identity")).toEqual([{ business_id: mb.businessId, address: mb.address }]);
   });
 
   it("refuses a call meant for another mailbox", async () => {

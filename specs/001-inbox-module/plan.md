@@ -10,11 +10,11 @@ are settled.
 
 | Seam | Answer | What this plan does with it |
 |---|---|---|
-| (a) Where the mailbox agent lives | In Mail's OWN Durable Object class, in the Mail Worker, behind an RPC entrypoint — not in the dashboard's per-business Agent. The pattern the dashboard's other modules follow: the dashboard authorizes the person, the module owns the data. The per-business Agent may receive a "new mail" count, never content. | `Mailbox` is an Agents SDK `Agent` in `platform-mail`; `MailService` is the entrypoint; a `NewMailSignal` port sends counts only. |
-| (b) Identity | The shell verifies the Access JWT itself (no `ctx.access` under static assets), runs each request in an AsyncLocalStorage session; modules call `currentSession()`; the tenant comes from the chooser, checked against memberships. Dashboard → Mail passes a signed capability `{accountId, tenantId, mailbox, exp ≤ 60 s}`, HMAC'd with a key only the two Workers hold. | `contracts/capability-v1.md` (an HS256 JWT). Mail never reads headers or sessions. |
+| (a) Where the mailbox agent lives | In Mail's OWN Durable Object class, in the Mail Worker, behind an RPC entrypoint — not in the dashboard's per-business Agent. The pattern the dashboard's other modules follow: the dashboard authorizes the person, the module owns the data. The per-business Agent may receive a "new mail" count, never content. | `Mailbox` is an Agents SDK `Agent` in `proprietor-mail`; `MailService` is the entrypoint; a `NewMailSignal` port sends counts only. |
+| (b) Identity | The shell verifies the Access JWT itself (no `ctx.access` under static assets), runs each request in an AsyncLocalStorage session; modules call `currentSession()`; the business comes from the chooser, checked against memberships. Dashboard → Mail passes a signed capability `{accountId, businessId, mailbox, exp ≤ 60 s}`, HMAC'd with a key only the two Workers hold. | `contracts/capability-v1.md` (an HS256 JWT). Mail never reads headers or sessions. |
 | (c) UI home | A route group in the dashboard app (the inbox's own directory), owned by this project; the dashboard's maintainers review where it meets the shell (session, layout, nav, gating, bindings). Not a package. A module contract (nav entry, `enabled(manifest)` checking `has.email`, bindings). The UI reaches Mail only through server actions → RPC. The dashboard's first step (scaffold, session, module contract) is starting now. | Slice S6, held until that first step exists. Ciphertext passes through server actions to the browser, which decrypts. |
 | (d) SES | Reuse the adapter CODE, not the credential or the configuration set. Client mail gets its own IAM principal scoped by identity and `ses:FromAddress`, and its own configuration set with its own event destination. Specify, don't apply. | `packages/mail-outbound` ports the pattern of the platform's existing SES adapter (aws4fetch, an injectable fetch) to raw MIME. Infrastructure in §6. |
-| (e) Tenant | The operator's own tenant is created on the platform side, after two unrelated gaps there are closed. | Mail needs nothing from that work except the tenant id for the Directory row. |
+| (e) Business | The operator's own business is created on the platform side, after two unrelated gaps there are closed. | Mail needs nothing from that work except the business id for the Directory row. |
 | (f) Boundaries | The dashboard's control plane, its site manifest (`email` stays unbuilt until the inbox mounts), its contracts and its database migrations are not Mail's to change; Mail never uses the dashboard's D1. | Nothing in this plan edits the dashboard's code. Marking the email module as built is a change on the dashboard side when S6 lands. |
 
 Also relayed: the dashboard is moving to a new hostname (so no host is hard-coded here;
@@ -27,7 +27,7 @@ hard-coded colour or font. The final token contract is still being defined.
 ### Seams this plan opened, and the answers (settled 2026-09-26)
 
 1. **Minting.** A server-only `mailCapability({ mailboxId? })` in the shell:
-   `sub` from `currentSession()`, tenant and role from the already-checked
+   `sub` from `currentSession()`, business and role from the already-checked
    acting membership, HS256 with the `kid` header, `exp = iat + 60`, a random
    `jti` that both Workers log. Internals are a pure
    `mint({ key, kid, now, jti }, claims)` tested against
@@ -37,7 +37,7 @@ hard-coded colour or font. The final token contract is still being defined.
 2. **How the route group gets `mail-crypto`.** A vendored copy inside the
    inbox's route group (`_vendor/mail-crypto/`) with `VERSION` and
    `SHA256SUMS`, a test that recomputes the sums, and a script that pulls a
-   tagged platform-mail release through `gh` and refuses to copy when the sums
+   tagged proprietor-mail release through `gh` and refuses to copy when the sums
    differ. **Our side:** each release tag `mail-crypto-vX.Y.Z` gets a GitHub
    release whose `SHA256SUMS` asset is produced by a workflow from the tagged
    tree (slice S1r), so their script checks against something other than the
@@ -46,7 +46,7 @@ hard-coded colour or font. The final token contract is still being defined.
    maintainer has a signing key set up.
 3. **Streaming ciphertext.** Agreed and added to their module contract: route
    handlers are allowed inside a module's group, GET only, behind the same
-   entry gate; the handler resolves the acting tenant through the shell,
+   entry gate; the handler resolves the acting business through the shell,
    mints its own capability, pipes `MailService.body()`'s stream through
    without buffering, and always sends `cache-control: private, no-store`,
    `content-type: application/octet-stream` and
@@ -54,7 +54,7 @@ hard-coded colour or font. The final token contract is still being defined.
 4. **Web Push.** Not a `script_name` Durable Object binding (that would expose
    the whole per-business Agent). At a later step the dashboard Worker
    exports a narrow `MailSignals` entrypoint with one method,
-   `unread({ tenantId, mailboxId, unread })`; Mail binds it by service and
+   `unread({ businessId, mailboxId, unread })`; Mail binds it by service and
    entrypoint. Until then Mail's `NewMailSignal` port has a no-op adapter.
 
 **Also agreed:** D7 (one SES tenant per client; Mail's own SNS/SQS feed, so
@@ -85,7 +85,7 @@ unless the shell adds a `worker-src` for it.
 ## 2. Repository layout and who owns what
 
 ```
-platform-mail/
+proprietor-mail/
   specs/001-inbox-module/        architect
   contracts/                     architect (the .vectors.json files: S1 and S2)
   NOTICE, LICENSE                architect; every slice appends its adapted files to NOTICE
@@ -102,7 +102,7 @@ need the real thing skip on that flag and start running when S1 and S3 merge.
 
 ## 3. The Mail Worker
 
-Worker name `platform-mail`. No public HTTP routes (`workers_dev: false`,
+Worker name `proprietor-mail`. No public HTTP routes (`workers_dev: false`,
 `preview_urls: false`): it is reached by Email Routing and by service binding,
 nothing else. `fetch` answers 404 to everything.
 
@@ -110,13 +110,13 @@ Bindings (sketch; S2 writes the real `wrangler.jsonc`):
 
 ```jsonc
 {
-  "name": "platform-mail",
+  "name": "proprietor-mail",
   "main": "src/index.ts",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "preview_urls": false,
-  "d1_databases": [{ "binding": "DIRECTORY", "database_name": "platform-mail", "database_id": "<created at deploy>" }],
-  "r2_buckets": [{ "binding": "MAIL", "bucket_name": "platform-mail" }],
+  "d1_databases": [{ "binding": "DIRECTORY", "database_name": "proprietor-mail", "database_id": "<created at deploy>" }],
+  "r2_buckets": [{ "binding": "MAIL", "bucket_name": "proprietor-mail" }],
   "durable_objects": { "bindings": [{ "name": "Mailbox", "class_name": "Mailbox" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Mailbox"] }]
   // secrets: MAIL_CAPABILITY_KEYS, SES_ACCESS_KEY_ID, SES_SECRET_ACCESS_KEY
@@ -129,7 +129,7 @@ Bindings (sketch; S2 writes the real `wrangler.jsonc`):
 ```sql
 CREATE TABLE mailboxes (
   id              TEXT PRIMARY KEY,                 -- mbx_…
-  tenant_id       TEXT NOT NULL UNIQUE,             -- the platform's tenant id; one mailbox per tenant in v1
+  business_id     TEXT NOT NULL UNIQUE,             -- the platform's business id; one mailbox per business in v1
   address         TEXT NOT NULL UNIQUE,             -- lower-case, e.g. hello@example.com
   status          TEXT NOT NULL CHECK (status IN ('provisioned','active','suspended','closed')),
   ses_tenant      TEXT,                             -- SES tenant name (D7); NULL until it exists
@@ -143,8 +143,8 @@ CREATE TABLE mailboxes (
 The operator provisions a mailbox by inserting one row with status
 `provisioned` (a script prints the SQL; `wrangler d1 execute` runs it; the
 operator's tooling can take this over later). The Directory is the authority for existence,
-tenant and lifecycle; the Mailbox object is the authority for keys, messages
-and policy. The Mailbox copies id, tenant and address from the Directory the
+business and lifecycle; the Mailbox object is the authority for keys, messages
+and policy. The Mailbox copies id, business and address from the Directory the
 first time it is touched and refuses to be re-initialized with different
 values.
 
@@ -152,7 +152,7 @@ values.
 
 ```sql
 CREATE TABLE identity (only INTEGER PRIMARY KEY CHECK (only = 1), mailbox_id TEXT NOT NULL,
-  tenant_id TEXT NOT NULL, address TEXT NOT NULL, display_name TEXT NOT NULL DEFAULT '');
+  business_id TEXT NOT NULL, address TEXT NOT NULL, display_name TEXT NOT NULL DEFAULT '');
 CREATE TABLE keys (key_id TEXT PRIMARY KEY, public_key BLOB NOT NULL, created_at TEXT NOT NULL,
   created_by TEXT NOT NULL, retired_at TEXT);
 CREATE TABLE key_wraps (id TEXT PRIMARY KEY, key_id TEXT NOT NULL REFERENCES keys(key_id),
@@ -179,7 +179,7 @@ CREATE TABLE audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, acto
   action TEXT NOT NULL, detail TEXT NOT NULL);   -- never message content
 ```
 
-R2 bucket `platform-mail`, one object per message: `mbx/<mailboxId>/msg/<messageId>`
+R2 bucket `proprietor-mail`, one object per message: `mbx/<mailboxId>/msg/<messageId>`
 holding the sealed raw message. Nothing else is written to R2.
 
 ## 4. `MailService` — the RPC surface
@@ -195,7 +195,7 @@ why). The "Returns" column below is the `value` of an `ok` result.
 
 | Method | Needs `mbx` | Role | Returns / does |
 |---|---|---|---|
-| `mailboxes(cap)` | no | any | `[{ id, address, status }]` for the capability's tenant, so the module can show "not set up", "set up your inbox" or the inbox |
+| `mailboxes(cap)` | no | any | `[{ id, address, status }]` for the capability's business, so the module can show "not set up", "set up your inbox" or the inbox |
 | `mailbox(cap)` | yes | open | `{ id, address, status, displayName, keys[], wraps[], policy }` — wraps are ciphertext; `policy` includes `delivery` and `forwardTo` (M10) |
 | `enroll(cap, { publicKey, wraps[] })` | yes | owner | only when `provisioned`; recomputes the keyId; requires one `recovery` wrap (M5); sets Directory `active` |
 | `addWrap(cap, wrap)` / `removeWrap(cap, wrapId)` | yes | owner | the last recovery wrap cannot be removed |
@@ -242,12 +242,12 @@ stand in for them.
 **Cloudflare** (Terraform, in the operator's infrastructure code, applied the
 way the operator applies every change there):
 
-- D1 `platform-mail`, R2 bucket `platform-mail` (private, no public access), the
+- D1 `proprietor-mail`, R2 bucket `proprietor-mail` (private, no public access), the
   Worker itself (deployed with Workers Builds).
 - **Receiving for the first mailbox's domain** (D4): `cloudflare_email_routing_dns`
   on that zone (writes the MX and the apex SPF; the SES MAIL FROM subdomain is
   separate and untouched), and one `cloudflare_email_routing_rule`:
-  `hello@example.com` → worker `platform-mail`. DMARC for the domain in monitor
+  `hello@example.com` → worker `proprietor-mail`. DMARC for the domain in monitor
   mode if it is still absent. The Terraform credential needs the Email Routing
   permissions.
 - Nothing for Access: Mail has no web surface.
@@ -262,7 +262,7 @@ way the operator applies every change there):
   tenant-scoped suppression; the per-domain set keeps that convention literally
   true.
 - Their event destination goes to **Mail's own** SNS topic and SQS queue
-  (`platform-mail-events`), never to another application's event feed: client
+  (`proprietor-mail-events`), never to another application's event feed: client
   recipients and subjects must not land in any other database.
 - A new IAM principal for client mail, policy to be checked in the IAM
   policy simulator before it is attached:
@@ -342,7 +342,7 @@ files) is kept in the operator's private deployment notes.
 4. **Dual delivery.** Set the mailbox's delivery to `store-and-forward` with
    `forwardTo` = the address the rule forwards to today (already a verified
    destination on the account), then change the rule's action from `forward`
-   to `worker platform-mail`. The Worker forwards first and stores second
+   to `worker proprietor-mail`. The Worker forwards first and stores second
    (§5), so the existing mailbox keeps receiving everything even if storage
    fails. The owner's dashboard shows "Also forwarded to <that address>".
 5. **Watch for two to four weeks**: forwards attempted vs succeeded (must be
@@ -379,7 +379,7 @@ message first.
 The inbox's route group in the dashboard (a separate application; a change on
 that side). Screens:
 
-- **Not set up** (no mailbox for the tenant): "Your inbox isn't set up yet."
+- **Not set up** (no mailbox for the business): "Your inbox isn't set up yet."
 - **Set up** (owner, mailbox `provisioned`): generate the key pair in the
   browser → create a passkey with PRF and wrap → show the recovery key once,
   have the owner confirm four characters of it → `enroll`. If the device's

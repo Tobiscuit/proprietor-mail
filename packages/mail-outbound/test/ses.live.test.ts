@@ -13,7 +13,7 @@ import { ALTERNATIVE, MIXED, TEXT_ONLY } from "./fixtures";
  *
  *   SES_TEST_ACCESS_KEY_ID=… SES_TEST_SECRET_ACCESS_KEY=… \
  *   SES_TEST_FROM=hello@example.com SES_TEST_CONFIGURATION_SET=send-example-mail \
- *   npm test -w @platform-mail/outbound -- test/ses.live.test.ts
+ *   npm test -w @proprietor/mail-outbound -- test/ses.live.test.ts
  *
  * Use a principal that sends client mail only. A credential whose SES events
  * feed another application's data would put these test sends into it.
@@ -61,7 +61,7 @@ describe.skipIf(!LIVE)("SES live, mailbox simulator only", () => {
   });
 
   async function sendTo(shape: ComposedMessage, to: string) {
-    const msg: ComposedMessage = { ...shape, from: { name: "platform-mail live test", address: from }, to: [{ address: to }], cc: [], bcc: [], replyTo: [] };
+    const msg: ComposedMessage = { ...shape, from: { name: "proprietor-mail live test", address: from }, to: [{ address: to }], cc: [], bcc: [], replyTo: [] };
     const built = buildMime(msg, { messageIdDomain: from.split("@")[1]! });
     assertSimulatorOnly(built.recipients);
     const { providerMessageId } = await mailer.send({

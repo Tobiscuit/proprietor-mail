@@ -29,8 +29,8 @@ describe("wrangler.jsonc", () => {
   });
 
   it("has the plan's bindings and a SQLite-backed Mailbox class", () => {
-    expect(config.d1_databases).toEqual([expect.objectContaining({ binding: "DIRECTORY", database_name: "platform-mail" })]);
-    expect(config.r2_buckets).toEqual([{ binding: "MAIL", bucket_name: "platform-mail" }]);
+    expect(config.d1_databases).toEqual([expect.objectContaining({ binding: "DIRECTORY", database_name: "proprietor-mail" })]);
+    expect(config.r2_buckets).toEqual([{ binding: "MAIL", bucket_name: "proprietor-mail" }]);
     expect(config.durable_objects).toEqual({ bindings: [{ name: "Mailbox", class_name: "Mailbox" }] });
     expect(config.migrations).toEqual([{ tag: "v1", new_sqlite_classes: ["Mailbox"] }]);
   });

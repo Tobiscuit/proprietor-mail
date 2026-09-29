@@ -2,13 +2,13 @@
   // A stand-in for the dashboard, for LOCAL runs only (test/README.md). Never
   // deployed: no account, no routes, and its only binding is to the Mail
   // Worker's MailService entrypoint, which the local dev registry resolves to
-  // the `wrangler dev` session running platform-mail.
+  // the `wrangler dev` session running proprietor-mail.
   "$schema": "../../node_modules/wrangler/config-schema.json",
-  "name": "platform-mail-local-driver",
+  "name": "proprietor-mail-local-driver",
   "main": "driver.ts",
   "compatibility_date": "2026-08-15",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "preview_urls": false,
-  "services": [{ "binding": "MAIL", "service": "platform-mail", "entrypoint": "MailService" }]
+  "services": [{ "binding": "MAIL", "service": "proprietor-mail", "entrypoint": "MailService" }]
 }

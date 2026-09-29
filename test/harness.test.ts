@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 describe("harness", () => {
   it("answers 404 to every HTTP request: no public surface", async () => {
     for (const path of ["/", "/api/v1/mailboxes", "/cdn-cgi/anything", "/mcp"]) {
-      const res = await exports.default.fetch(new Request(`https://platform-mail.test${path}`));
+      const res = await exports.default.fetch(new Request(`https://proprietor-mail.test${path}`));
       expect(res.status).toBe(404);
       await res.body?.cancel();
     }

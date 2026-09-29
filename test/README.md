@@ -18,7 +18,7 @@ One `vitest run`, three kinds of project (`vitest.config.ts`):
 |---|---|---|
 | `worker` | workerd (`@cloudflare/vitest-pool-workers` 0.22.0) | everything under `test/` except `test/node/`: a real D1 with `migrations/` applied, real SQLite-backed Durable Objects, a real R2 simulation |
 | `packages/*` | Node, with each package's **own** `vitest.config.ts` | S1's and S3's tests (none while they are stubs) |
-| `node` | Node | `test/node/`: the provisioning script, the `wrangler.jsonc` fitness checks, and the escape guard's own judgement |
+| `node` | Node | `test/node/`: the provisioning script, the `wrangler.jsonc` fitness checks, the escape guard's own judgement, and the names check (`names.test.ts`: no old name outside `specs/`) |
 
 `npm run typecheck` runs TypeScript 7 over `src/` and `test/` (and each
 package's own typecheck).
@@ -40,8 +40,8 @@ package's own typecheck).
   rejects, that is a bug, and the escape guard says so.
 - **Storage is isolated per test file**, not per test: every test makes fresh
   mailbox ids.
-- **End-to-end tests** (`test/e2e.test.ts`) put the real `@platform-mail/crypto`
-  and `@platform-mail/outbound` behind the ports and skip on each package's
+- **End-to-end tests** (`test/e2e.test.ts`) put the real `@proprietor/mail-crypto`
+  and `@proprietor/mail-outbound` behind the ports and skip on each package's
   `IMPLEMENTED` flag, so they ran as soon as S1 and S3 were merged.
 
 ### The escape guard: exceptions that escape an RPC hop fail the run
@@ -112,13 +112,13 @@ Two local sessions: the Mail Worker on :8787 (the local email endpoint
 reaches the primary worker of a session), and `test/local/driver.ts` on
 :8788, a stand-in for the dashboard that mints capabilities with the public
 TEST key and calls `MailService` over a real service binding; the local dev
-registry connects the two (`env.MAIL (platform-mail#MailService) … [connected]`).
+registry connects the two (`env.MAIL (proprietor-mail#MailService) … [connected]`).
 Everything is `--local`; nothing touches an account. From the repository root:
 
 ```sh
-npx wrangler d1 migrations apply platform-mail --local
-node scripts/provision-mailbox.ts --tenant tnt_local --address hello@example.test > /tmp/provision.sql
-npx wrangler d1 execute platform-mail --local --file /tmp/provision.sql
+npx wrangler d1 migrations apply proprietor-mail --local
+node scripts/provision-mailbox.ts --business biz_local --address hello@example.test > /tmp/provision.sql
+npx wrangler d1 execute proprietor-mail --local --file /tmp/provision.sql
 
 # The capability key is the public TEST key from contracts/capability-v1.vectors.json, not a secret.
 printf '%s\n' "MAIL_CAPABILITY_KEYS='{\"test-2026-09\":\"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\"}'" > /tmp/mail-local.env  # pragma: allowlist secret (public test key)
@@ -126,11 +126,11 @@ npx wrangler dev --local --port 8787 --inspector-port 9231 --env-file /tmp/mail-
 npx wrangler dev --local -c test/local/driver.wrangler.jsonc --port 8788 --inspector-port 9232   # a second terminal
 
 M=<the mbx_ id from /tmp/provision.sql>
-curl -s -X POST "http://localhost:8788/enroll?tenant=tnt_local&mbx=$M"
+curl -s -X POST "http://localhost:8788/enroll?business=biz_local&mbx=$M"
 curl -s -X POST "http://localhost:8787/cdn-cgi/local/email?from=ana@example.com&to=hello@example.test&format=json" --data-binary @test/local/sample.eml
-curl -s "http://localhost:8788/list?tenant=tnt_local&mbx=$M"
-curl -s "http://localhost:8788/open?tenant=tnt_local&mbx=$M"
-curl -s "http://localhost:8788/refuse?tenant=tnt_local&mbx=$M"   # a refusal, across two processes, as a value
+curl -s "http://localhost:8788/list?business=biz_local&mbx=$M"
+curl -s "http://localhost:8788/open?business=biz_local&mbx=$M"
+curl -s "http://localhost:8788/refuse?business=biz_local&mbx=$M"   # a refusal, across two processes, as a value
 ```
 
 The driver prints Mail's answers as the dashboard will branch on them: an ok
@@ -149,7 +149,7 @@ ports 8797/8798 because 8787 was already in use):
 unknown address  → {"outcome":"ok","rejectReason":"No such mailbox",…}
 provisioned      → {"outcome":"ok","rejectReason":"This mailbox is not accepting mail",…}
 /refuse          → {"ok":false,"error":{"name":"CapabilityRejected","message":"capability rejected: expired","reason":"expired"}}
-/list, tenant_x  → {"refused":{"name":"NotFound","message":"not found"}}
+/list, business_x  → {"refused":{"name":"NotFound","message":"not found"}}
 /enroll          → {"keyId":"dcb51e21bad5f954d952328b3398f464"}
 /enroll again    → {"refused":{"name":"InvalidRequest","message":"invalid request: the mailbox is not awaiting enrolment"}}
 deliver          → {"outcome":"ok","forwards":[],"replies":[],"events":[{"type":"received",…}]}

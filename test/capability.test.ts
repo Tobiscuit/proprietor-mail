@@ -16,7 +16,7 @@ const keys = parseCapabilityKeys(JSON.stringify(TEST_CAPABILITY_KEYS));
 
 function claims(over: Json = {}, lifetime = 60): Json {
   return {
-    ...canonicalClaims({ sub: "acc_1", tenant: "tnt_1", mbx: "mbx_1", role: "owner", iat: NOW, jti: "jti-1", lifetime }),
+    ...canonicalClaims({ sub: "acc_1", business: "biz_1", mbx: "mbx_1", role: "owner", iat: NOW, jti: "jti-1", lifetime }),
     ...over,
   };
 }
@@ -40,10 +40,10 @@ describe("capability v1: verification (contracts/capability-v1.md)", () => {
   it("accepts a well-formed token and returns exactly its claims", async () => {
     const token = await signToken(canonicalHeader(TEST_KID), claims(), KEY);
     expect(await verifyCapability(token, keys, NOW)).toEqual({
-      iss: "platform-dashboard",
-      aud: "platform-mail",
+      iss: "proprietor-dashboard",
+      aud: "proprietor-mail",
       sub: "acc_1",
-      tenant: "tnt_1",
+      business: "biz_1",
       mbx: "mbx_1",
       role: "owner",
       iat: NOW,
@@ -92,10 +92,10 @@ describe("capability v1: verification (contracts/capability-v1.md)", () => {
 
   // Rule 4: iss and aud exactly.
   it("rule 4: refuses a wrong aud, a wrong iss, and an aud array", async () => {
-    await expectRefused(await signToken(canonicalHeader(TEST_KID), claims({ aud: "platform-dashboard" }), KEY), "invalid");
-    await expectRefused(await signToken(canonicalHeader(TEST_KID), claims({ iss: "platform-mail" }), KEY), "invalid");
+    await expectRefused(await signToken(canonicalHeader(TEST_KID), claims({ aud: "proprietor-dashboard" }), KEY), "invalid");
+    await expectRefused(await signToken(canonicalHeader(TEST_KID), claims({ iss: "proprietor-mail" }), KEY), "invalid");
     await expectRefused(
-      await signToken(canonicalHeader(TEST_KID), claims({ aud: ["platform-mail", "elsewhere"] }), KEY),
+      await signToken(canonicalHeader(TEST_KID), claims({ aud: ["proprietor-mail", "elsewhere"] }), KEY),
       "invalid",
     );
   });
@@ -119,15 +119,15 @@ describe("capability v1: verification (contracts/capability-v1.md)", () => {
 
   // Rule 6: the identity claims, and jti (required since the 2026-09-26 amendment).
   it.each([
-    ["a missing tenant", { tenant: undefined }],
-    ["an empty tenant", { tenant: "" }],
+    ["a missing business", { business: undefined }],
+    ["an empty business", { business: "" }],
     ["a missing sub", { sub: undefined }],
     ["an empty sub", { sub: "" }],
     ["a role outside the two", { role: "admin" }],
     ["a missing jti", { jti: undefined }],
     ["an empty jti", { jti: "" }],
     ["an empty mbx", { mbx: "" }],
-    ["a numeric tenant", { tenant: 7 }],
+    ["a numeric business", { business: 7 }],
   ])("rule 6: refuses %s", async (_what, over) => {
     const c = claims(over);
     for (const [k, v] of Object.entries(c)) if (v === undefined) delete c[k];

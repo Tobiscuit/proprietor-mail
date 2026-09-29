@@ -1,5 +1,5 @@
 /**
- * @platform-mail/outbound - turn a composed message into MIME and hand it to
+ * @proprietor/mail-outbound - turn a composed message into MIME and hand it to
  * Amazon SES (API v2, raw content).
  *
  * This file is the API in code form (specs/001-inbox-module/plan.md §6).
@@ -21,7 +21,7 @@ export const IMPLEMENTED: boolean = true;
 
 export class NotImplemented extends Error {
   constructor(what: string) {
-    super(`@platform-mail/outbound: ${what} is not implemented yet (slice S3)`);
+    super(`@proprietor/mail-outbound: ${what} is not implemented yet (slice S3)`);
     this.name = "NotImplemented";
   }
 }
@@ -249,7 +249,7 @@ export interface RawSendRequest {
   fromAddress: string;
   recipients: string[];
   configurationSet: string;
-  /** The SES tenant of the business (spec D7); omitted until the tenant exists. */
+  /** The SES tenant of the business (spec D7); omitted until the SES tenant exists. */
   tenantName?: string;
 }
 
@@ -351,7 +351,7 @@ const AWS_REGION = /^[a-z]{2}(?:-[a-z]+)+-\d{1,2}$/;
 
 /**
  * Configuration set names: "up to 64 alphanumeric characters … hyphens (-)
- * and underscores (_)" (SES quotas page). Tenant names: "up to 64
+ * and underscores (_)" (SES quotas page). SES tenant names: "up to 64
  * alphanumeric characters, including letters, numbers, hyphens (-) and
  * underscores (_) only" (TenantName in the SES v2 service model).
  */

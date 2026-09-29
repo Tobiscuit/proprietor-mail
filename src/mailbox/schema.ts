@@ -6,7 +6,7 @@
 // agentic-inbox's workers/durableObject/migrations.ts (tracking table renamed
 // to mailbox_migrations; every migration runs inside transactionSync; the
 // BEGIN/COMMIT stripping was dropped because nothing here writes them). The
-// schema itself is platform-mail's own (plan.md §3): sealed headers and key
+// schema itself is proprietor-mail's own (plan.md §3): sealed headers and key
 // envelopes only, no message content in any column.
 
 import { SYSTEM_FOLDERS } from "./folders";
@@ -23,7 +23,7 @@ export const mailboxMigrations: Migration[] = [
     name: "0001_mailbox",
     sql: `
       CREATE TABLE identity (only INTEGER PRIMARY KEY CHECK (only = 1), mailbox_id TEXT NOT NULL,
-        tenant_id TEXT NOT NULL, address TEXT NOT NULL, display_name TEXT NOT NULL DEFAULT '');
+        business_id TEXT NOT NULL, address TEXT NOT NULL, display_name TEXT NOT NULL DEFAULT '');
       CREATE TABLE keys (key_id TEXT PRIMARY KEY, public_key BLOB NOT NULL, created_at TEXT NOT NULL,
         created_by TEXT NOT NULL, retired_at TEXT);
       CREATE TABLE key_wraps (id TEXT PRIMARY KEY, key_id TEXT NOT NULL REFERENCES keys(key_id),

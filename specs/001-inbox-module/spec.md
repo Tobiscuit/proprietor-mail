@@ -4,6 +4,12 @@ Status: written 2026-09-26. Spec only; nothing is deployed and no live
 infrastructure was changed. The six seams with the dashboard were answered by
 its maintainers the same day and are recorded in `plan.md` §1.
 
+Renamed 2026-09-28, before any mailbox was enrolled (D11): the module is
+`proprietor-mail` (formerly `platform-mail`), its packages are
+`@proprietor/mail-crypto` and `@proprietor/mail-outbound`, and what the
+platform calls a business is called a business here too (formerly "tenant").
+"SES tenant" keeps its name: it is Amazon's term for an SES feature.
+
 Companion documents: `domain-model.md` (the DDD pass and the gaps it found),
 `plan.md` (architecture, contracts, infrastructure, moving a forwarded address
 to the inbox), `tasks.md` (the build slices), `../../contracts/` (the
@@ -16,7 +22,7 @@ sign in; it is not published here.
 
 ## 1. Requirements
 
-- **One mailbox per business**, isolated per tenant, read inside the ONE
+- **One mailbox per business**, isolated from every other business, read inside the ONE
   dashboard (a route group in the dashboard app, in the dashboard's design
   system, themed from each client's own website). No full-page mail app, no
   iframes for composition, no module federation.
@@ -27,7 +33,7 @@ sign in; it is not published here.
 - **Inbound** through Cloudflare Email Routing to a Worker, handed to a
   per-mailbox agent (Agents SDK `onEmail` / `routeAgentEmail`).
   **Outbound** through Amazon SES, not through Cloudflare's own sending.
-- **Identity** is the platform login plus per-tenant membership. The module
+- **Identity** is the platform login plus per-business membership. The module
   turns on when a site's manifest declares `has.email`.
 - **The AI agent** from cloudflare/agentic-inbox keeps its tools, reconciled
   with zero-access. The safe default is built: the assistant is OFF for every
@@ -158,14 +164,14 @@ messages, pull request titles and bodies, comments and specs.
 | # | Decision | Recommendation |
 |---|---|---|
 | **D1** | **Which zero-access option — A, B or C — and therefore what the assistant can be.** | **C, with A as every mailbox's default.** Build A now (it is the design already on record for client mail: encrypt on arrival with the client's public key, private key only on the client's devices, recovery key shown once, decrypt in the browser). Offer "ask about one message" as the first AI feature, because it discloses one message rather than the whole mailbox. Build the standing opt-in (key escrow) only after the operator approves Option B's wording as the text an owner sees when turning it on. Never offer Option B as a platform-wide default. |
-| **D2** | **The browser trust boundary.** With the no-iframes rule, the key lives in the same page as the whole dashboard, so every dashboard deploy is inside the mail trust boundary. | **For v1, accept it and disclose it** (Option A's second limit says so), and shrink what can go wrong inside it: the dashboard's maintainers have committed its shell, from its first step, to a strict nonce CSP, enforced Trusted Types, zero third-party scripts, and loading the inbox code on inbox routes only, each with a test. Before the first client mailbox exists: open-source `platform-mail` (the Mail Worker and `mail-crypto`) under Apache-2.0 and publish a SHA-256 manifest of the dashboard's client bundle for every deploy, so the claim "published" becomes true; serve a WAICT integrity manifest as well, knowing that only Firefox Nightly checks it today. If a client ever needs more, the stronger design is a separate-origin key vault page, which needs an explicit exception to the no-iframes rule — not recommended for v1. |
+| **D2** | **The browser trust boundary.** With the no-iframes rule, the key lives in the same page as the whole dashboard, so every dashboard deploy is inside the mail trust boundary. | **For v1, accept it and disclose it** (Option A's second limit says so), and shrink what can go wrong inside it: the dashboard's maintainers have committed its shell, from its first step, to a strict nonce CSP, enforced Trusted Types, zero third-party scripts, and loading the inbox code on inbox routes only, each with a test. Before the first client mailbox exists: open-source `proprietor-mail` (the Mail Worker and `mail-crypto`) under Apache-2.0 and publish a SHA-256 manifest of the dashboard's client bundle for every deploy, so the claim "published" becomes true; serve a WAICT integrity manifest as well, knowing that only Firefox Nightly checks it today. If a client ever needs more, the stronger design is a separate-origin key vault page, which needs an explicit exception to the no-iframes rule — not recommended for v1. |
 | **D3** | **A sandboxed frame for message bodies.** Email HTML is hostile input. Rendering it in the dashboard page means one sanitizer bypass runs script in the page that holds the key. agentic-inbox renders it in a `srcdoc` iframe with a sandbox and a strict CSP. | **Allow it as a security control, not as composition.** One `srcdoc` frame with `sandbox` and neither `allow-scripts` nor `allow-same-origin` (so it can neither run script nor share the page's origin), set through a Trusted Types policy, remote images blocked until the owner clicks "show images", fixed to the reading pane with its own scrolling (it cannot report its height without script). This is the only frame the module uses. The dashboard's maintainers agreed to exactly this on 2026-09-26. |
 | **D4** | **The first mailbox's address.** Today the operator's business domain has no MX record and receives no mail: an earlier decision kept it for sending only, and the operator's own mail goes to another domain. | **`hello@` on the operator's business domain**, with Email Routing enabled on that domain (MX + SPF at the apex; the SES MAIL FROM subdomain is unaffected). This changes the earlier decision for that one domain. It dogfoods exactly what clients will get, on the brand the platform is sold under. |
 | **D5** | **The dashboard's final hostname, before anyone enrolls a mail key.** Passkeys are bound to a domain (the WebAuthn RP ID), and the dashboard is moving to a new hostname. | **REOPENED 2026-09-26 (see above).** **Choose the final host first and use exactly that host as the RP ID.** Do not use a parent domain: every subdomain of it, including a marketing site hosted elsewhere, could then ask the same passkey for the same secret. If the host ever changes again, owners re-enroll with their recovery key. The dashboard's maintainers agree, which puts the hostname on the critical path. |
 | **D6** | **Lost keys mean lost mail.** The recovery key is shown once and never stored by the platform. If an owner loses every device passkey and the recovery key, nobody — the operator included — can open the stored mail. | **Accept it, and say it at setup.** Enrollment requires saving the recovery key (a printable sheet) before the mailbox activates. Support's answer to "I lost everything" is: your old mail cannot be recovered; new mail will arrive once you set up a new key. |
 | **D7** | **SES isolation for client mail** (the dashboard maintainers' answer (d) plus a newer SES feature). | **One SES tenant per client business** (SES "tenants": `TenantName` on `SendEmail`, a reputation policy and a pause switch per tenant, tenant-level suppression — AWS docs, checked 2026-09-26), a client-mail configuration set with its own event destination (one per sending domain, `plan.md` §6), and a client-mail IAM principal whose policy names only client identities, that configuration set and `ses:FromAddress` values that are mailbox addresses. Client-mail events go to Mail's own SNS/SQS feed, never to the feed of the platform's notification mail, so client recipients and subjects never reach another application's database. Also restrict the platform's existing notification sender to its own `ses:FromAddress`, so neither key can send as the other. Agreed with the dashboard's maintainers on 2026-09-26. Infrastructure only; specified in `plan.md` §6, not applied. |
 | **D8** | **Metadata the platform can see**, even under Option A (§4). | **Accept and publish the list** in the owner-facing "How your mail is protected" page. Minimize: the Mail Worker never logs addresses or subjects, and the bounce/complaint consumer keeps only the recipient address and the result. |
-| **D9** | **Who may open a mailbox.** The operator is an editor member of client tenants (so they can support clients in the dashboard). Tenant membership must not mean mail access. | **Only owners open a mailbox by default** (`openRoles: ["owner"]`), and the key ceremony runs on the owner's own device. The operator never enrolls a key for a client, never sees a client's recovery key, and never sets a client's mailbox up "to save them time". |
+| **D9** | **Who may open a mailbox.** The operator is an editor member of client businesses (so they can support clients in the dashboard). Business membership must not mean mail access. | **Only owners open a mailbox by default** (`openRoles: ["owner"]`), and the key ceremony runs on the owner's own device. The operator never enrolls a key for a client, never sees a client's recovery key, and never sets a client's mailbox up "to save them time". |
 | **D10** | **The repository's license, when opened.** | **Apache-2.0**, matching the upstream the adapted code comes from, and allowing anyone to verify builds. |
 
 ## 4. What the platform can see, even under Option A
@@ -191,10 +197,10 @@ browser.
 
 ```
                     Cloudflare Email Routing                Amazon SES
-                    (MX for the business domain)            (client tenant)
+                    (MX for the business domain)            (SES tenant)
                           │ rule: hello@ → Worker                ▲
                           ▼                                      │ raw MIME
-  ┌──────────────────── platform-mail Worker ──────────────────────────────┐
+  ┌──────────────────── proprietor-mail Worker ────────────────────────────┐
   │ email()  → routeAgentEmail(resolver = Directory lookup, D1)             │
   │             │                                                          │
   │             ▼                                                          │
@@ -209,7 +215,7 @@ browser.
                                │ service binding (RPC); ciphertext out,
                                │ plaintext in only for send
   ┌──────────── dashboard Worker (separate application) ───────────────────┐
-  │ shell: Access JWT → session → memberships → tenant chooser             │
+  │ shell: Access JWT → session → memberships → business chooser           │
   │ app/(modules)/inbox/…  server actions → MailService                    │
   └────────────────────────────▲───────────────────────────────────────────┘
                                │ HTML + ciphertext
@@ -254,7 +260,7 @@ then encrypts the Sent copy exactly like an arriving message and stores it.
 Drafts are encrypted in the browser before they are saved; the server never
 sees a draft in the clear.
 
-**First setup.** The operator creates the mailbox (a Directory row: tenant,
+**First setup.** The operator creates the mailbox (a Directory row: business,
 address, status `provisioned`). The owner opens Inbox on the dashboard and is
 walked through setup on their own device: the browser generates the mailbox
 key pair, enrolls a passkey, shows the recovery key once and asks the owner to

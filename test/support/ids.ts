@@ -2,7 +2,7 @@
  * Test-side ids in the contract's shape (contracts/envelope-v1.md,
  * "Identifiers"): `<prefix>_<26 lowercase Crockford base32 characters of 16
  * random bytes>`. The Worker's production ids come from `newId` in
- * @platform-mail/crypto (slice S1); tests make their own so they never depend
+ * @proprietor/mail-crypto (slice S1); tests make their own so they never depend
  * on that stub.
  */
 const CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz";
@@ -26,6 +26,6 @@ export function testId(prefix: "mbx" | "msg" | "drf" | "wrp"): string {
 
 export const freshMailboxId = () => testId("mbx");
 
-export function freshTenantId(): string {
-  return `tnt_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+export function freshBusinessId(): string {
+  return `biz_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
 }

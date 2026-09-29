@@ -1,5 +1,5 @@
-import type { MailboxPublicKey, MessageHeader, SealedMessage } from "@platform-mail/crypto";
-import type { BuildOptions, BuiltMessage, ComposedMessage, RawSendRequest } from "@platform-mail/outbound";
+import type { MailboxPublicKey, MessageHeader, SealedMessage } from "@proprietor/mail-crypto";
+import type { BuildOptions, BuiltMessage, ComposedMessage, RawSendRequest } from "@proprietor/mail-outbound";
 
 /**
  * What the Mailbox needs from the outside, as narrow interfaces. Production
@@ -41,7 +41,7 @@ export interface RawMailer {
  * dashboard ships it.
  */
 export interface NewMailSignal {
-  unread(event: { tenantId: string; mailboxId: string; unread: number }): Promise<void>;
+  unread(event: { businessId: string; mailboxId: string; unread: number }): Promise<void>;
 }
 
 export interface Clock {

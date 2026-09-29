@@ -1,4 +1,4 @@
-import { SendRejected } from "@platform-mail/outbound";
+import { SendRejected } from "@proprietor/mail-outbound";
 import { runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";

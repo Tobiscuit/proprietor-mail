@@ -1,8 +1,8 @@
 {
-  "name": "@platform-mail/outbound",
+  "name": "@proprietor/mail-outbound",
   "version": "0.0.0",
   "private": true,
-  "description": "MIME builder and Amazon SES v2 raw sender for platform-mail. No bindings; runs in Workers and Node.",
+  "description": "MIME builder and Amazon SES v2 raw sender for proprietor-mail. No bindings; runs in Workers and Node.",
   "license": "Apache-2.0",
   "type": "module",
   "sideEffects": false,

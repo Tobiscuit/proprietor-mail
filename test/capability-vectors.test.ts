@@ -25,7 +25,7 @@ describe("contracts/capability-v1.vectors.json", () => {
       "iat-6s-in-future",
       "unknown-kid",
       "flipped-payload-byte",
-      "missing-tenant",
+      "missing-business",
       "missing-jti",
     ]) {
       expect(names).toContain(required);
@@ -36,7 +36,7 @@ describe("contracts/capability-v1.vectors.json", () => {
     const cap = await verifyCapability(vectors.valid.canonicalToken, keys, vectors.now);
     expect(cap).toEqual(vectors.valid.claims);
     // The canonical serialization's order (contract amendment, 2026-09-26).
-    expect(Object.keys(vectors.valid.claims)).toEqual(["iss", "aud", "sub", "tenant", "mbx", "role", "iat", "exp", "jti"]);
+    expect(Object.keys(vectors.valid.claims)).toEqual(["iss", "aud", "sub", "business", "mbx", "role", "iat", "exp", "jti"]);
     expect(Object.keys(vectors.valid.header)).toEqual(["alg", "typ", "kid"]);
     expect((vectors.valid.claims.exp as number) - (vectors.valid.claims.iat as number)).toBe(60);
   });

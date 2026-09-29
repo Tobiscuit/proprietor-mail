@@ -1,11 +1,11 @@
 {
-  "name": "@platform-mail/crypto",
+  "name": "@proprietor/mail-crypto",
   "version": "0.0.0",
-  "description": "Envelope v1 and key wrapping for platform-mail (contracts/envelope-v1.md). Runs in the browser and in Workers.",
+  "description": "Envelope v1 and key wrapping for proprietor-mail (contracts/envelope-v1.md). Runs in the browser and in Workers.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Tobiscuit/platform-mail.git",
+    "url": "git+https://github.com/Tobiscuit/proprietor-mail.git",
     "directory": "packages/mail-crypto"
   },
   "type": "module",

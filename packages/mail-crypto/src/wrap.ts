@@ -1,7 +1,7 @@
 /**
  * Wrapping the mailbox private key (contracts/envelope-v1.md "Wrapping the
  * private key"): kek = HKDF-SHA256(ikm = secret, salt = wrapId,
- * info = "platform-mail/v1/kek/" + kind), and one AES-256-GCM block over the
+ * info = "proprietor-mail/v1/kek/" + kind), and one AES-256-GCM block over the
  * raw 32-byte private key, bound to mailbox, wrap id, kind and key id.
  */
 import { base64url, copy, fromBase64url, utf8 } from "./bytes";
@@ -22,7 +22,7 @@ function assertSecret(secret: unknown): asserts secret is Uint8Array {
 async function kek(ikm: Uint8Array, wrapId: string, kind: string, usage: "encrypt" | "decrypt"): Promise<CryptoKey> {
   const base = await crypto.subtle.importKey("raw", copy(ikm), "HKDF", false, ["deriveKey"]);
   return crypto.subtle.deriveKey(
-    { name: "HKDF", hash: "SHA-256", salt: utf8(wrapId), info: utf8(`platform-mail/v1/kek/${kind}`) }, // pragma: allowlist secret (HKDF parameter names, no value)
+    { name: "HKDF", hash: "SHA-256", salt: utf8(wrapId), info: utf8(`proprietor-mail/v1/kek/${kind}`) }, // pragma: allowlist secret (HKDF parameter names, no value)
     base,
     { name: "AES-GCM", length: 256 },
     false,

@@ -51,7 +51,7 @@ export async function buildCapabilityVectors(): Promise<CapabilityVectors> {
   const now = VECTOR_NOW;
   const base = {
     sub: "acc_vector_owner",
-    tenant: "tnt_vector",
+    business: "biz_vector",
     mbx: "mbx_0123456789abcdefghjkmnpqrs",
     role: "owner" as const,
   };
@@ -64,21 +64,21 @@ export async function buildCapabilityVectors(): Promise<CapabilityVectors> {
   const validClaims = claims();
   const canonicalToken = await signToken(header, validClaims, KEY);
 
-  const tenantAt = JSON.stringify(validClaims).indexOf('"tenant":"') + '"tenant":"'.length;
-  const flipped = flipPayloadByte(canonicalToken, tenantAt);
+  const businessAt = JSON.stringify(validClaims).indexOf('"business":"') + '"business":"'.length;
+  const flipped = flipPayloadByte(canonicalToken, businessAt);
 
   const refused: RefusedVector[] = [
     { name: "alg-none", rule: 1, reason: "invalid", breaks: 'alg is "none" and the signature is empty', token: await signToken(canonicalHeader(TEST_KID, "none"), claims({}, 60, now, "vector-jti-0001"), KEY) },
     { name: "alg-hs512", rule: 1, reason: "invalid", breaks: "alg is HS512 (signed correctly for HS512 with the right key)", token: await signToken(canonicalHeader(TEST_KID, "HS512"), claims({}, 60, now, "vector-jti-0002"), KEY) },
     { name: "unknown-kid", rule: 2, reason: "invalid", breaks: "kid names no configured key", token: await signToken(canonicalHeader("unknown-2026-01"), claims({}, 60, now, "vector-jti-0003"), KEY) },
-    { name: "flipped-payload-byte", rule: 3, reason: "invalid", breaks: "bit 0 of the first byte of the tenant value is flipped after signing", token: flipped },
+    { name: "flipped-payload-byte", rule: 3, reason: "invalid", breaks: "bit 0 of the first byte of the business value is flipped after signing", token: flipped },
     { name: "wrong-key", rule: 3, reason: "invalid", breaks: "signed with a key that is not the one kid names", token: await signToken(header, claims({}, 60, now, "vector-jti-0004"), OTHER_KEY) },
-    { name: "wrong-aud", rule: 4, reason: "invalid", breaks: 'aud is "platform-dashboard"', token: await signToken(header, claims({ aud: "platform-dashboard" }, 60, now, "vector-jti-0005"), KEY) },
-    { name: "wrong-iss", rule: 4, reason: "invalid", breaks: 'iss is "platform-mail"', token: await signToken(header, claims({ iss: "platform-mail" }, 60, now, "vector-jti-0006"), KEY) },
+    { name: "wrong-aud", rule: 4, reason: "invalid", breaks: 'aud is "proprietor-dashboard"', token: await signToken(header, claims({ aud: "proprietor-dashboard" }, 60, now, "vector-jti-0005"), KEY) },
+    { name: "wrong-iss", rule: 4, reason: "invalid", breaks: 'iss is "proprietor-mail"', token: await signToken(header, claims({ iss: "proprietor-mail" }, 60, now, "vector-jti-0006"), KEY) },
     { name: "lifetime-61", rule: 5, reason: "invalid", breaks: "exp - iat = 61", token: await signToken(header, claims({}, 61, now, "vector-jti-0007"), KEY) },
     { name: "expired-by-6s", rule: 5, reason: "expired", breaks: "exp is 6 seconds before now (iat = now - 66)", token: await signToken(header, claims({}, 60, now - 66, "vector-jti-0008"), KEY) },
     { name: "iat-6s-in-future", rule: 5, reason: "invalid", breaks: "iat is 6 seconds after now", token: await signToken(header, claims({}, 60, now + 6, "vector-jti-0009"), KEY) },
-    { name: "missing-tenant", rule: 6, reason: "invalid", breaks: "no tenant claim", token: await signToken(header, claims({ tenant: undefined }, 60, now, "vector-jti-0010"), KEY) },
+    { name: "missing-business", rule: 6, reason: "invalid", breaks: "no business claim", token: await signToken(header, claims({ business: undefined }, 60, now, "vector-jti-0010"), KEY) },
     { name: "missing-jti", rule: 6, reason: "invalid", breaks: "no jti claim (jti is required: amendment of 2026-09-26)", token: await signToken(header, claims({ jti: undefined }), KEY) },
     { name: "role-admin", rule: 6, reason: "invalid", breaks: 'role is "admin"', token: await signToken(header, claims({ role: "admin" }, 60, now, "vector-jti-0011"), KEY) },
   ];
@@ -87,8 +87,8 @@ export async function buildCapabilityVectors(): Promise<CapabilityVectors> {
     contract: "contracts/capability-v1.md",
     version: 1,
     conformance: [
-      "Minting: a token conforms when it verifies under the reference verifier (platform-mail src/capability.ts, verifyCapability) with `keys` at `now` and decodes to exactly `valid.claims`.",
-      "Byte-identical tokens are NOT a conformance requirement. `valid.canonicalToken` is what the canonical serialization produces (header keys in the order alg, typ, kid; claims in the order iss, aud, sub, tenant, mbx, role, iat, exp, jti; exp = iat + 60), given as a convenience.",
+      "Minting: a token conforms when it verifies under the reference verifier (proprietor-mail src/capability.ts, verifyCapability) with `keys` at `now` and decodes to exactly `valid.claims`.",
+      "Byte-identical tokens are NOT a conformance requirement. `valid.canonicalToken` is what the canonical serialization produces (header keys in the order alg, typ, kid; claims in the order iss, aud, sub, business, mbx, role, iat, exp, jti; exp = iat + 60), given as a convenience.",
       "Verifying: a verifier conforms when it accepts `valid.canonicalToken` at `now`, returning `valid.claims`, and refuses every token in `refused` with exactly the listed `reason`.",
       "`keys` is the MAIL_CAPABILITY_KEYS form (key id -> base64url of 32 bytes). It is a fixed, public TEST key: 32 sequential bytes 0x00..0x1f. It must never be configured in a deployed Worker.",
     ],

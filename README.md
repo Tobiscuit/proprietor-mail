@@ -1,4 +1,4 @@
-# platform-mail
+# proprietor-mail
 
 The Inbox module of a small business platform: one mailbox per business,
 read inside the platform's dashboard, with mail that **the operator of the
@@ -12,8 +12,8 @@ that receives, stores and sends mail, and the code that handles the keys:
 | Path | What it is |
 |---|---|
 | `src/`, `migrations/` | The Mail Worker (Cloudflare Workers, Agents SDK): receives mail from Email Routing, seals and stores it, serves ciphertext to the dashboard over RPC, sends through Amazon SES |
-| `packages/mail-crypto/` | `@platform-mail/crypto`: the envelope format and key wrapping. The Worker uses it to seal; the owner's browser uses it to generate keys, unlock and decrypt |
-| `packages/mail-outbound/` | `@platform-mail/outbound`: an RFC 5322 / MIME builder and an SES v2 raw sender |
+| `packages/mail-crypto/` | `@proprietor/mail-crypto`: the envelope format and key wrapping. The Worker uses it to seal; the owner's browser uses it to generate keys, unlock and decrypt |
+| `packages/mail-outbound/` | `@proprietor/mail-outbound`: an RFC 5322 / MIME builder and an SES v2 raw sender |
 | `contracts/` | The byte formats and RPC contracts, with test vectors: `envelope-v1`, `capability-v1`, `mail-service-v1` |
 | `specs/001-inbox-module/` | The spec (what and why, and the decisions), the domain model, the plan, the task list |
 
@@ -96,7 +96,7 @@ spec §2 and plan §9.
   is `{ ok: true, value }` or `{ ok: false, error }`.
 
 The invariants the Worker keeps (no plaintext at rest, no key no mail, no
-private key on the server, one tenant per mailbox for life, and more) are
+private key on the server, one business per mailbox for life, and more) are
 listed in `specs/001-inbox-module/domain-model.md` §3, each with a test.
 
 ## Running the tests
@@ -121,7 +121,7 @@ The run also fails if workerd logs an exception that escaped an RPC call
 (`test/README.md`). A live SES test exists and is skipped unless credentials
 for the SES mailbox simulator are set.
 
-## Verifying a release of `@platform-mail/crypto`
+## Verifying a release of `@proprietor/mail-crypto`
 
 A tag `mail-crypto-vX.Y.Z` on `main` makes CI build one tarball and one
 `SHA256SUMS` (the package's `src/`, file by file), attest both with GitHub
@@ -131,8 +131,8 @@ trusted publishing, and attach both files to a GitHub release
 hand. To check them:
 
 ```sh
-REPO=Tobiscuit/platform-mail
-PKG=@platform-mail/crypto
+REPO=Tobiscuit/proprietor-mail
+PKG=@proprietor/mail-crypto
 V=0.1.0                                   # the version you are checking
 TGZ="$(echo "${PKG#@}" | tr / -)-$V.tgz"  # the tarball's file name
 
@@ -167,7 +167,7 @@ npm only lets a trusted publisher be added to a package that already exists,
 so the first release takes one manual step:
 
 1. Publish a placeholder with no code (a `package.json` and a README) as
-   `@platform-mail/crypto@0.0.0-reserved`, from a maintainer's machine with
+   `@proprietor/mail-crypto@0.0.0-reserved`, from a maintainer's machine with
    2FA, and deprecate it.
 2. Add the trusted publisher, staging only, and refuse tokens (npm 11.15.0 or
    later; `$REPO` and `$PKG` as above):

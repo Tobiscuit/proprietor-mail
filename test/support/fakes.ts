@@ -1,5 +1,5 @@
-import type { MailboxPublicKey, MessageHeader, SealedMessage } from "@platform-mail/crypto";
-import type { BuildOptions, BuiltMessage, ComposedMessage, RawSendRequest } from "@platform-mail/outbound";
+import type { MailboxPublicKey, MessageHeader, SealedMessage } from "@proprietor/mail-crypto";
+import type { BuildOptions, BuiltMessage, ComposedMessage, RawSendRequest } from "@proprietor/mail-outbound";
 import type { Clock, IdSource, MailboxPorts, MimeBuilder, NewMailSignal, RawMailer, Sealer } from "../../src/ports";
 import { base64urlFromBytes } from "./capability-tokens";
 import { testId } from "./ids";
@@ -99,9 +99,9 @@ export class FakeMailer implements RawMailer {
 }
 
 export class FakeSignal implements NewMailSignal {
-  readonly events: { tenantId: string; mailboxId: string; unread: number }[] = [];
+  readonly events: { businessId: string; mailboxId: string; unread: number }[] = [];
   failWith: Error | undefined;
-  async unread(event: { tenantId: string; mailboxId: string; unread: number }): Promise<void> {
+  async unread(event: { businessId: string; mailboxId: string; unread: number }): Promise<void> {
     if (this.failWith !== undefined) throw this.failWith;
     this.events.push({ ...event });
   }
