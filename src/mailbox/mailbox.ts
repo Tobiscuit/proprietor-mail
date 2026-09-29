@@ -2,7 +2,7 @@ import { Agent } from "agents";
 import type { AgentEmail } from "agents/email";
 import { LIMITS } from "@proprietor/mail-outbound";
 import type { Role } from "../capability";
-import { Directory, type DirectoryEntry } from "../directory/directory";
+import { Directory, type DirectoryEntry, normalizeAddress } from "../directory/directory";
 import type { Env } from "../env";
 import {
   AssistantUnavailable,
@@ -272,7 +272,9 @@ export class Mailbox extends Agent<Env> {
   private async storeArrival(email: AgentEmail, entry: DirectoryEntry, key: { keyId: string; publicKey: Uint8Array }): Promise<string> {
     const raw = await email.getRaw();
     // A message the parser cannot read is still stored, with an empty header.
-    const header = inboundHeader(await parseMessage(raw), email.from);
+    // The envelope recipient goes into the sealed header in the Directory's
+    // form, so the browser can match it against the mailbox's addresses.
+    const header = inboundHeader(await parseMessage(raw), { from: email.from, to: normalizeAddress(email.to) });
     const messageId = this.ports.ids.messageId();
     const sealed = await this.seal(key, messageId, header, raw);
     await this.storeSealed({

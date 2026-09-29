@@ -51,6 +51,11 @@ function toEntry(row: Row): DirectoryEntry {
   };
 }
 
+/** The Directory's form of an address: trimmed, lower-case. The one normalisation, used wherever an address is compared. */
+export function normalizeAddress(address: string): string {
+  return address.trim().toLowerCase();
+}
+
 export class Directory {
   constructor(private readonly db: D1Database) {}
 
@@ -63,7 +68,7 @@ export class Directory {
   async byAddress(address: string): Promise<DirectoryEntry | null> {
     const row = await this.db
       .prepare(`SELECT ${COLUMNS} FROM mailboxes WHERE address = ?`)
-      .bind(address.trim().toLowerCase())
+      .bind(normalizeAddress(address))
       .first<Row>();
     return row === null ? null : toEntry(row);
   }

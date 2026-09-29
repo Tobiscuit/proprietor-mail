@@ -13,6 +13,7 @@ const HEADER_KEYS = [
   "v",
   "direction",
   "envelopeFrom",
+  "envelopeTo",
   "from",
   "to",
   "cc",
@@ -66,12 +67,13 @@ const FULL = crlf([
 
 describe("MessageHeader for an arriving message (contracts/envelope-v1.md)", () => {
   it("has every key, in the contract's order, with the values parsed", async () => {
-    const header = inboundHeader(await parseMessage(FULL), "bounce@x.example");
+    const header = inboundHeader(await parseMessage(FULL), { from: "bounce@x.example", to: "hello@example.com" });
     expect(Object.keys(header)).toEqual(HEADER_KEYS);
     expect(header).toEqual({
       v: 1,
       direction: "in",
       envelopeFrom: "bounce@x.example",
+      envelopeTo: "hello@example.com",
       from: { name: "Ana Ruiz", address: "ana@example.com" },
       // A group is flattened into its members.
       to: [
@@ -98,13 +100,13 @@ describe("MessageHeader for an arriving message (contracts/envelope-v1.md)", () 
   it("keeps bcc empty for arriving mail, even when a Bcc header is present", async () => {
     const header = inboundHeader(
       await parseMessage(crlf(["From: a@b.test", "To: c@d.test", "Bcc: hidden@e.test", "Subject: s", "", "body"])),
-      "a@b.test",
+      { from: "a@b.test", to: "hello@example.com" },
     );
     expect(header.bcc).toEqual([]);
   });
 
   it("uses null and empty values for what is absent, and null for an unparseable Date", async () => {
-    const header = inboundHeader(await parseMessage(crlf(["Date: sometime soon", "", "just a body"])), "x@y.test");
+    const header = inboundHeader(await parseMessage(crlf(["Date: sometime soon", "", "just a body"])), { from: "x@y.test", to: "hello@example.com" });
     expect(Object.keys(header)).toEqual(HEADER_KEYS);
     expect(header).toMatchObject({
       from: null,
@@ -120,9 +122,9 @@ describe("MessageHeader for an arriving message (contracts/envelope-v1.md)", () 
   });
 
   it("stores whatever parsed when the parser gives up: never loses mail to a parser", () => {
-    const header = inboundHeader(null, "sender@x.test");
+    const header = inboundHeader(null, { from: "sender@x.test", to: "hello@example.com" });
     expect(Object.keys(header)).toEqual(HEADER_KEYS);
-    expect(header).toMatchObject({ direction: "in", envelopeFrom: "sender@x.test", subject: "", snippet: "", from: null });
+    expect(header).toMatchObject({ direction: "in", envelopeFrom: "sender@x.test", envelopeTo: "hello@example.com", subject: "", snippet: "", from: null });
   });
 
   it("returns null, rather than throwing, when postal-mime refuses a message", async () => {
@@ -133,14 +135,14 @@ describe("MessageHeader for an arriving message (contracts/envelope-v1.md)", () 
 
   it("makes the snippet from the text body: at most 200 characters, whitespace collapsed", async () => {
     const long = "word ".repeat(100) + "tail";
-    const header = inboundHeader(await parseMessage(crlf(["Subject: s", "", long])), "a@b.test");
+    const header = inboundHeader(await parseMessage(crlf(["Subject: s", "", long])), { from: "a@b.test", to: "hello@example.com" });
     expect([...header.snippet].length).toBe(200);
     expect(header.snippet).not.toMatch(/\s{2,}/);
   });
 
   it("counts the snippet in characters, not UTF-16 units: no split surrogate pair", async () => {
     const body = "😀".repeat(250);
-    const header = inboundHeader(await parseMessage(crlf(["Content-Type: text/plain; charset=utf-8", "", body])), "a@b.test");
+    const header = inboundHeader(await parseMessage(crlf(["Content-Type: text/plain; charset=utf-8", "", body])), { from: "a@b.test", to: "hello@example.com" });
     expect([...header.snippet]).toHaveLength(200);
     expect(header.snippet).toBe("😀".repeat(200));
   });
@@ -148,7 +150,7 @@ describe("MessageHeader for an arriving message (contracts/envelope-v1.md)", () 
   it("makes the snippet from HTML when there is no text part", async () => {
     const header = inboundHeader(
       await parseMessage(crlf(["Content-Type: text/html; charset=utf-8", "", "<p>Hello <b>there</b></p><p>friend</p>"])),
-      "a@b.test",
+      { from: "a@b.test", to: "hello@example.com" },
     );
     expect(header.snippet).toMatch(/^Hello there\s?friend$/);
   });
@@ -157,14 +159,14 @@ describe("MessageHeader for an arriving message (contracts/envelope-v1.md)", () 
 describe("the 64 KiB ceiling", () => {
   it("keeps the last 20 references when there are too many", async () => {
     const refs = Array.from({ length: 5000 }, (_, i) => `<ref-${i}-${"x".repeat(20)}@example.com>`).join(" ");
-    const header = inboundHeader(await parseMessage(crlf([`References: ${refs}`, "Subject: s", "", "b"])), "a@b.test");
+    const header = inboundHeader(await parseMessage(crlf([`References: ${refs}`, "Subject: s", "", "b"])), { from: "a@b.test", to: "hello@example.com" });
     expect(byteLength(header)).toBeLessThanOrEqual(MAX_HEADER_BYTES);
     expect(header.references).toHaveLength(20);
     expect(header.references.at(-1)).toBe(`ref-4999-${"x".repeat(20)}@example.com`);
   });
 
   it("leaves a header that already fits exactly as it is", async () => {
-    const header = inboundHeader(await parseMessage(FULL), "a@b.test");
+    const header = inboundHeader(await parseMessage(FULL), { from: "a@b.test", to: "hello@example.com" });
     expect(fitHeader(header)).toBe(header);
   });
 
@@ -181,13 +183,15 @@ describe("the 64 KiB ceiling", () => {
       "",
       "b",
     ]);
-    const header = inboundHeader(await parseMessage(raw), "a@b.test");
+    const header = inboundHeader(await parseMessage(raw), { from: "a@b.test", to: "hello@example.com" });
     expect(byteLength(header)).toBeLessThanOrEqual(MAX_HEADER_BYTES);
     expect(Object.keys(header)).toEqual(HEADER_KEYS);
     expect(header).toEqual({
       v: 1,
       direction: "in",
       envelopeFrom: "a@b.test",
+      // Kept by the minimal header: which address the message arrived for is not content the raw message repeats.
+      envelopeTo: "hello@example.com",
       from: { name: "Ana", address: "ana@example.com" },
       to: [],
       cc: [],
@@ -205,7 +209,7 @@ describe("the 64 KiB ceiling", () => {
 
   it("the minimal header drops a `from` whose JSON is 1 KiB or more", () => {
     const header = minimalHeader({
-      v: 1, direction: "in", envelopeFrom: null, from: { name: "n".repeat(2000), address: "a@b.test" }, to: [], cc: [], bcc: [],
+      v: 1, direction: "in", envelopeFrom: null, envelopeTo: null, from: { name: "n".repeat(2000), address: "a@b.test" }, to: [], cc: [], bcc: [],
       replyTo: [], subject: "", date: null, messageId: null, inReplyTo: null, references: [], snippet: "", attachments: [],
     });
     expect(header.from).toBeNull();
@@ -213,7 +217,7 @@ describe("the 64 KiB ceiling", () => {
 });
 
 describe("MessageHeader for a Sent copy", () => {
-  it("is direction out, from the mailbox, with bcc kept and no envelope sender", () => {
+  it("is direction out, from the mailbox, with bcc kept and no envelope sender or recipient", () => {
     const header = outboundHeader({
       from: { name: "Example", address: "hello@example.com" },
       to: [{ address: "ana@example.com" }],
@@ -232,6 +236,7 @@ describe("MessageHeader for a Sent copy", () => {
       v: 1,
       direction: "out",
       envelopeFrom: null,
+      envelopeTo: null,
       from: { name: "Example", address: "hello@example.com" },
       to: [{ name: "", address: "ana@example.com" }],
       cc: [{ name: "Bob", address: "bob@example.org" }],

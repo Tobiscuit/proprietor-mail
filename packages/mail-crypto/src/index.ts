@@ -63,7 +63,10 @@ export interface AttachmentSummary {
 export interface MessageHeader {
   v: 1;
   direction: "in" | "out";
+  /** SMTP MAIL FROM; null for sent mail. */
   envelopeFrom: string | null;
+  /** SMTP RCPT TO: which of the mailbox's addresses the message arrived for; null for sent mail. */
+  envelopeTo: string | null;
   from: Address | null;
   to: Address[];
   cc: Address[];
