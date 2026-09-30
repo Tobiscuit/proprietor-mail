@@ -148,6 +148,17 @@ describe("sesRawMailer: the signed request", () => {
     expect(JSON.parse(calls[0]!.body)).not.toHaveProperty("TenantName");
   });
 
+  it("carries message tags as EmailTags (API_MessageTag: Name and Value), and none when there are none", async () => {
+    const { impl, calls } = fakeFetch(() => sesAnswer(200, { MessageId: "m" }));
+    const mailer = sesRawMailer(CREDS, { fetch: impl });
+    await mailer.send(request({ tags: [{ name: "mailbox", value: "mbx_0123456789abcdefghjkmnpqrs" }] }));
+    expect(JSON.parse(calls[0]!.body).EmailTags).toEqual([{ Name: "mailbox", Value: "mbx_0123456789abcdefghjkmnpqrs" }]);
+    await mailer.send(request());
+    expect(JSON.parse(calls[1]!.body)).not.toHaveProperty("EmailTags");
+    await mailer.send(request({ tags: [] }));
+    expect(JSON.parse(calls[2]!.body)).not.toHaveProperty("EmailTags");
+  });
+
   it("uses the global fetch when none is injected", async () => {
     const { impl, calls } = fakeFetch(() => sesAnswer(200, { MessageId: "global" }));
     vi.stubGlobal("fetch", impl);
@@ -253,6 +264,11 @@ describe("sesRawMailer: refuses before calling SES", () => {
     ["an oversized message", { raw: new Uint8Array(LIMITS.maxRawBytes + 1) }],
     ["no configuration set", { configurationSet: "" }],
     ["an invalid SES tenant name", { tenantName: "client example" }],
+    // MessageTag: ASCII letters, digits, underscores and dashes only, at most 256 characters.
+    ["a tag name with a space", { tags: [{ name: "mail box", value: "x" }] }],
+    ["a tag value with a colon", { tags: [{ name: "mailbox", value: "mbx:1" }] }],
+    ["an empty tag value", { tags: [{ name: "mailbox", value: "" }] }],
+    ["an overlong tag name", { tags: [{ name: "a".repeat(257), value: "x" }] }],
   ] as const)("%s", async (_what, overrides) => {
     const { impl, calls } = fakeFetch(() => sesAnswer(200, { MessageId: "m" }));
     await expect(sesRawMailer(CREDS, { fetch: impl }).send(request(overrides as Partial<RawSendRequest>))).rejects.toBeInstanceOf(

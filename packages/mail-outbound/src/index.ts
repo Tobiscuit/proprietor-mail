@@ -243,6 +243,16 @@ export interface SesCredentials {
   region: string;
 }
 
+/**
+ * A message tag (API_MessageTag): SES echoes it back in every event it
+ * publishes for the message, as `mail.tags`. Name and value: ASCII letters,
+ * digits, underscores and dashes, at most 256 characters each.
+ */
+export interface MessageTag {
+  name: string;
+  value: string;
+}
+
 export interface RawSendRequest {
   raw: Uint8Array;
   /** Must equal the From header's address; SES authorizes on it (ses:FromAddress). */
@@ -251,6 +261,8 @@ export interface RawSendRequest {
   configurationSet: string;
   /** The SES tenant of the business (spec D7); omitted until the SES tenant exists. */
   tenantName?: string;
+  /** Sent as `EmailTags`; Mail names the mailbox here, and routes the events by it (plan.md §13). */
+  tags?: MessageTag[];
 }
 
 export interface RawMailer {
@@ -310,6 +322,7 @@ export function sesRawMailer(
         Content: { Raw: { Data: base64(req.raw) } },
         ConfigurationSetName: req.configurationSet,
         ...(req.tenantName !== undefined ? { TenantName: req.tenantName } : {}),
+        ...(req.tags !== undefined && req.tags.length > 0 ? { EmailTags: req.tags.map((t) => ({ Name: t.name, Value: t.value })) } : {}),
       });
       const signed = await aws.sign(endpoint, { method: "POST", headers: { "content-type": "application/json" }, body });
 
@@ -357,6 +370,9 @@ const AWS_REGION = /^[a-z]{2}(?:-[a-z]+)+-\d{1,2}$/;
  */
 const SES_NAME = /^[A-Za-z0-9_-]{1,64}$/;
 
+/** MessageTag Name and Value: "ASCII letters (a–z, A–Z), numbers (0–9), underscores (_), or dashes (-)", at most 256 characters. */
+const MESSAGE_TAG = /^[A-Za-z0-9_-]{1,256}$/;
+
 /**
  * SendEmail's throttling errors: TooManyRequestsException (HTTP 429,
  * API_SendEmail) and ThrottlingException (HTTP 400, CommonErrors; the
@@ -381,6 +397,13 @@ function checkRawSendRequest(req: RawSendRequest): void {
   });
   if (!SES_NAME.test(req.configurationSet)) throw new InvalidMessage("configurationSet is not an SES configuration set name");
   if (req.tenantName !== undefined && !SES_NAME.test(req.tenantName)) throw new InvalidMessage("tenantName is not an SES tenant name");
+  if (req.tags !== undefined) {
+    if (!Array.isArray(req.tags)) throw new InvalidMessage("tags is not a list");
+    req.tags.forEach((t, i) => {
+      if (t === null || typeof t !== "object" || !MESSAGE_TAG.test(t.name)) throw new InvalidMessage(`tags[${i}].name is not an SES message tag name`);
+      if (!MESSAGE_TAG.test(t.value)) throw new InvalidMessage(`tags[${i}].value is not an SES message tag value`);
+    });
+  }
 }
 
 function accepted(status: number, text: string): { providerMessageId: string } {
