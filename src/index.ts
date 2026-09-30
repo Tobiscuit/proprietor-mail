@@ -1,3 +1,4 @@
+import { runDeliverabilityFeed } from "./deliverability/feed";
 import type { Env } from "./env";
 import { handleEmail } from "./inbound/email-handler";
 
@@ -16,5 +17,12 @@ export default {
   // (spec §8) and is settled by tasks.md S8 before any address is routed here.
   async email(message: ForwardableEmailMessage, env: Env, _ctx: ExecutionContext): Promise<void> {
     await handleEmail(message, env);
+  },
+
+  // The cron (wrangler.jsonc `triggers`): the deliverability feed (plan.md §13).
+  // A failure to reach the queue throws, so the run shows as failed; nothing
+  // is lost, the queue keeps what was not deleted.
+  async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
+    await runDeliverabilityFeed(env, controller.cron);
   },
 } satisfies ExportedHandler<Env>;

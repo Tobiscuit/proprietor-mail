@@ -25,7 +25,17 @@ export type MailErrorName =
   | "RateLimited"
   | "SendFailed"
   | "AssistantUnavailable"
+  | "RecipientSuppressed"
   | "InternalError";
+
+/** One recipient `send` refused (domain-model M11): its position in the request, never its address. */
+export interface SuppressedRecipient {
+  field: "to" | "cc" | "bcc";
+  index: number;
+  reason: "bounce" | "complaint";
+  /** ISO 8601: the first event that suppressed it. */
+  since: string;
+}
 
 export interface MailError {
   name: MailErrorName;
@@ -37,6 +47,8 @@ export interface MailError {
   retryAfterSeconds?: number;
   /** SendFailed only. */
   retryable?: boolean;
+  /** RecipientSuppressed only. */
+  suppressed?: SuppressedRecipient[];
 }
 
 export type MailResult<T> = { ok: true; value: T } | { ok: false; error: MailError };
@@ -65,6 +77,9 @@ export function publicCopy(error: MailError): MailError {
   if (error.name === "CapabilityRejected") copy.reason = error.reason === "expired" ? "expired" : "invalid";
   if (error.name === "RateLimited") copy.retryAfterSeconds = typeof error.retryAfterSeconds === "number" ? error.retryAfterSeconds : 60;
   if (error.name === "SendFailed") copy.retryable = error.retryable === true;
+  if (error.name === "RecipientSuppressed") {
+    copy.suppressed = (error.suppressed ?? []).map((s) => ({ field: s.field, index: s.index, reason: s.reason, since: s.since }));
+  }
   return copy;
 }
 
@@ -127,6 +142,13 @@ export class SendFailed extends Refusal {
 export class AssistantUnavailable extends Refusal {
   constructor() {
     super({ name: "AssistantUnavailable", message: "the assistant is not available (spec decision D1)" });
+  }
+}
+
+/** M11: the caller learns which positions, and shows the addresses from its own copy of the request. */
+export class RecipientSuppressed extends Refusal {
+  constructor(suppressed: SuppressedRecipient[]) {
+    super({ name: "RecipientSuppressed", message: "a recipient is suppressed after a bounce or complaint", suppressed });
   }
 }
 

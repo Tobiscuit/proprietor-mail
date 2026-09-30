@@ -67,11 +67,11 @@ describe("S2k: the same daily housekeeping prunes sends after 30 days and the au
     valueOf(await mail().send(await capFor(mb), sendRequest("at-the-limit")));
 
     mb.ports.clock.advance(30 * DAY); // "older" is 30 days and 1 ms old; "at-the-limit" exactly 30 days
-    expect(await mb.stub.dailyHousekeeping()).toEqual({ trash: 0, sends: 1, audit: 0 });
+    expect(await mb.stub.dailyHousekeeping()).toEqual({ trash: 0, sends: 1, audit: 0, suppression: 0 });
     expect(await sql(mb, "SELECT idempotency_key FROM sends")).toEqual([{ idempotency_key: "at-the-limit" }]);
 
     mb.ports.clock.advance(1);
-    expect(await mb.stub.dailyHousekeeping()).toEqual({ trash: 0, sends: 1, audit: 0 });
+    expect(await mb.stub.dailyHousekeeping()).toEqual({ trash: 0, sends: 1, audit: 0, suppression: 0 });
     expect(await sql(mb, "SELECT idempotency_key FROM sends")).toEqual([]);
   });
 
@@ -92,11 +92,11 @@ describe("S2k: the same daily housekeeping prunes sends after 30 days and the au
     expect(before.map((r) => r.action)).toEqual(["mailbox-initialized", "key-enrolled", "policy-changed"]);
 
     mb.ports.clock.advance(365 * DAY); // the first two are 365 days and 1 ms old; policy-changed exactly 365 days
-    expect(await mb.stub.dailyHousekeeping()).toEqual({ trash: 0, sends: 0, audit: 2 });
+    expect(await mb.stub.dailyHousekeeping()).toEqual({ trash: 0, sends: 0, audit: 2, suppression: 0 });
     expect((await sql<{ action: string }>(mb, "SELECT action FROM audit ORDER BY id")).map((r) => r.action)).toEqual(["policy-changed"]);
 
     mb.ports.clock.advance(1);
-    expect(await mb.stub.dailyHousekeeping()).toEqual({ trash: 0, sends: 0, audit: 1 });
+    expect(await mb.stub.dailyHousekeeping()).toEqual({ trash: 0, sends: 0, audit: 1, suppression: 0 });
     expect(await sql(mb, "SELECT action FROM audit")).toEqual([]);
   });
 

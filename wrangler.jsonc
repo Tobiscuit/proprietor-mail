@@ -11,23 +11,27 @@
   "compatibility_date": "2026-08-15",
   "compatibility_flags": ["nodejs_compat"],
 
-  // No public HTTP surface at all (plan.md §3): reached by Email Routing and
-  // by service binding, nothing else. `fetch` answers 404 to everything.
+  // No public HTTP surface at all (plan.md §3): reached by Email Routing, by
+  // service binding and by its own cron, nothing else. `fetch` answers 404 to
+  // everything.
   "workers_dev": false,
   "preview_urls": false,
 
-  // Logs carry ids, sizes and outcomes only (domain-model M1, spec D8).
-  "observability": { "enabled": true },
+  // The Worker's own log lines carry ids, sizes, counts and outcomes only
+  // (domain-model M1, spec D8). Invocation logs are off: Workers Logs would
+  // otherwise record each email invocation with its envelope recipient
+  // (domain-model G25, spec D20).
+  "observability": { "enabled": true, "logs": { "invocation_logs": false } },
 
-  // The Mail Directory: Mail's own D1, never another application's.
-  // PLACEHOLDER database_id. Nothing remote has been created and nothing here
-  // creates it: `wrangler d1 create` is part of plan.md §6, applied by nobody
-  // yet. Local runs (`wrangler dev --local`, the tests) never read this id.
+  // The Mail Directory: Mail's own D1, never another application's. Named by
+  // name only (domain-model G24): wrangler resolves the database by
+  // `database_name`, so no resource identifier is published with the code.
+  // The database is created with wrangler before the first deploy (plan.md
+  // §15); local runs (`wrangler dev --local`, the tests) use the name as is.
   "d1_databases": [
     {
       "binding": "DIRECTORY",
       "database_name": "proprietor-mail",
-      "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "migrations"
     }
   ],
@@ -45,6 +49,11 @@
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Mailbox"] }],
 
+  // The deliverability feed (plan.md §13): every five minutes, `scheduled()`
+  // reads Mail's own SES events queue and hands bounces and complaints to
+  // their mailboxes.
+  "triggers": { "crons": ["*/5 * * * *"] },
+
   "vars": {
     "SES_REGION": "us-east-1"
   }
@@ -52,8 +61,10 @@
   // Secrets (the operator's secret store → process environment →
   // `wrangler secret put` reading stdin; never argv and never a kept file):
   //   MAIL_CAPABILITY_KEYS   the capability keys (contracts/capability-v1.md)
-  //   SES_ACCESS_KEY_ID      the client-mail IAM principal (plan.md §6)
-  //   SES_SECRET_ACCESS_KEY  the client-mail IAM principal
+  //   SES_ACCESS_KEY_ID      the client-mail IAM principal (plan.md §6); it
+  //   SES_SECRET_ACCESS_KEY    sends through SES and reads the events queue
+  //   MAIL_EVENTS_QUEUE_URL  Mail's own SES events queue (plan.md §13); a
+  //                          secret because it names the AWS account
   //
   // The new-mail signal (plan.md §1, seam 4). Until the dashboard Worker exports
   // `MailSignals`, the NewMailSignal port has a no-op adapter; then:
