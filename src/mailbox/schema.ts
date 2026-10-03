@@ -57,6 +57,20 @@ export const mailboxMigrations: Migration[] = [
         action TEXT NOT NULL, detail TEXT NOT NULL);
     `,
   },
+  {
+    // Suppression (domain-model M11, spec D15): a recipient who bounced
+    // permanently or complained, as HMAC-SHA-256 of the lower-cased address
+    // under this mailbox's own random key, never the address. The key is
+    // made the first time an event is recorded. Rows lapse a year after
+    // last_at (the daily housekeeping).
+    name: "0002_suppression",
+    sql: `
+      CREATE TABLE suppression_key (only INTEGER PRIMARY KEY CHECK (only = 1), key BLOB NOT NULL, created_at TEXT NOT NULL);
+      CREATE TABLE suppression (recipient_hash TEXT PRIMARY KEY,
+        reason TEXT NOT NULL CHECK (reason IN ('bounce','complaint')), first_at TEXT NOT NULL, last_at TEXT NOT NULL);
+      CREATE INDEX suppression_by_last ON suppression(last_at);
+    `,
+  },
 ];
 
 /**

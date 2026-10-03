@@ -12,13 +12,16 @@ import {
   MailboxNotActive,
   NotFound,
   RateLimited,
+  RecipientSuppressed,
   Refusal,
   SendFailed,
+  type SuppressedRecipient,
   errorName,
   internalError,
   ok,
   refused,
 } from "../errors";
+import { hashRecipient, newSuppressionKey } from "../deliverability/suppression";
 import { type LogValue, logAlert, logEvent } from "../log";
 import type { MessageHeader } from "@proprietor/mail-crypto";
 import { inboundHeader, minimalHeader, outboundHeader, parseMessage } from "../mail/header";
@@ -57,6 +60,8 @@ export const TRASH_DAYS = 30;
 export const SENDS_KEPT_DAYS = 30;
 /** Audit rows are kept one year. */
 export const AUDIT_KEPT_DAYS = 365;
+/** A suppressed recipient lapses one year after its last bounce or complaint (domain-model M11). */
+export const SUPPRESSION_KEPT_DAYS = 365;
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** agentic-inbox's limits, domain-model M7. */
 export const SENDS_PER_HOUR = 20;
@@ -639,20 +644,28 @@ export class Mailbox extends Agent<Env> {
         // may have accepted it, so it is NEVER sent again under this key.
         throw new SendFailed(this.sendsInFlight.has(req.idempotencyKey));
       }
-
-      // M7, rate: counted over sends made or in flight.
-      this.checkRate(now);
-      const configurationSet = ctx.mailbox.sesConfigurationSet;
-      if (configurationSet === null) {
-        logAlert("mailbox-without-configuration-set", { mailbox: this.name });
-        throw new SendFailed(false);
-      }
-
-      // Reserve the key before the first await, so a concurrent repeat sees it.
-      this.ctx.storage.sql.exec("INSERT INTO sends (idempotency_key, created_at) VALUES (?, ?)", req.idempotencyKey, now.toISOString());
-      const release = () => this.ctx.storage.sql.exec("DELETE FROM sends WHERE idempotency_key = ?", req.idempotencyKey);
+      // The key is marked in flight before the first await (the suppression
+      // hashes), so a concurrent repeat is told to ask again shortly rather
+      // than racing this call to the reservation.
+      if (this.sendsInFlight.has(req.idempotencyKey)) throw new SendFailed(true);
       this.sendsInFlight.add(req.idempotencyKey);
       try {
+        // M11: a recipient who bounced permanently or complained is refused
+        // here, before the key is reserved and before the rate limit counts it.
+        const suppressed = await this.suppressedRecipients(req);
+        if (suppressed.length > 0) throw new RecipientSuppressed(suppressed);
+
+        // M7, rate: counted over sends made or in flight.
+        this.checkRate(now);
+        const configurationSet = ctx.mailbox.sesConfigurationSet;
+        if (configurationSet === null) {
+          logAlert("mailbox-without-configuration-set", { mailbox: this.name });
+          throw new SendFailed(false);
+        }
+
+        // Reserve the key: from here a repeat returns this call's result.
+        this.ctx.storage.sql.exec("INSERT INTO sends (idempotency_key, created_at) VALUES (?, ?)", req.idempotencyKey, now.toISOString());
+        const release = () => this.ctx.storage.sql.exec("DELETE FROM sends WHERE idempotency_key = ?", req.idempotencyKey);
         return await this.sendReserved(ctx, req, key, identity, now, configurationSet, release);
       } finally {
         this.sendsInFlight.delete(req.idempotencyKey);
@@ -710,6 +723,8 @@ export class Mailbox extends Agent<Env> {
         recipients: built.recipients,
         configurationSet,
         ...(ctx.mailbox.sesTenant === null ? {} : { tenantName: ctx.mailbox.sesTenant }),
+        // SES echoes this tag in every event for the message; the feed routes by it alone (plan.md §13, G22).
+        tags: [{ name: "mailbox", value: this.name }],
       }));
     } catch (err) {
       const rejected = err as { status?: unknown; retryable?: unknown };
@@ -809,22 +824,95 @@ export class Mailbox extends Agent<Env> {
     });
   }
 
+  // ---- deliverability (M11, M12; the feed in src/deliverability) ------------------------
+
+  /**
+   * A permanent bounce or a complaint from the feed: each recipient becomes a
+   * keyed hash (spec D15) with the reason and the first and last dates. An
+   * upsert, so the same event twice changes nothing (M12); only a recipient
+   * new to the table is audited, as a count. Not reached through MailService.
+   */
+  async recordDeliveryEvent(entry: DirectoryEntry, event: unknown): Promise<MailResult<{ recipients: number; added: number }>> {
+    return this.answer("recordDeliveryEvent", async () => {
+      await this.ensureIdentity(entry, "system:deliverability");
+      const e = v.object(event, "delivery event", ["kind", "recipients", "at"]);
+      const kind = v.oneOf(e.kind, "kind", ["bounce", "complaint"] as const);
+      const recipients = [...new Set(v.array(e.recipients, "recipients", LIMITS.maxRecipients).map((r, i) => normalizeAddress(v.address(r, `recipient ${i + 1}`))))];
+      if (recipients.length === 0) throw new InvalidRequest("at least one recipient");
+      const at = typeof e.at === "string" && !Number.isNaN(Date.parse(e.at)) ? new Date(Date.parse(e.at)).toISOString() : invalid("event time");
+      const key = this.suppressionKey(true)!;
+      const hashes = await Promise.all(recipients.map((r) => hashRecipient(key, r)));
+      let added = 0;
+      this.ctx.storage.transactionSync(() => {
+        for (const hash of hashes) {
+          if (this.rows("SELECT 1 FROM suppression WHERE recipient_hash = ?", hash).length === 0) added += 1;
+          this.ctx.storage.sql.exec(
+            `INSERT INTO suppression (recipient_hash, reason, first_at, last_at) VALUES (?, ?, ?, ?)
+             ON CONFLICT(recipient_hash) DO UPDATE SET
+               reason = CASE WHEN excluded.reason = 'complaint' THEN 'complaint' ELSE reason END,
+               first_at = MIN(first_at, excluded.first_at),
+               last_at = MAX(last_at, excluded.last_at)`,
+            hash,
+            kind,
+            at,
+            at,
+          );
+        }
+        if (added > 0) this.audit("system:deliverability", "recipient-suppressed", { reason: kind, recipients: added });
+      });
+      return { recipients: recipients.length, added };
+    });
+  }
+
+  /** M11: every recipient of the request, hashed under the mailbox's key and looked up; positions only, never addresses. */
+  private async suppressedRecipients(req: ParsedSendRequest): Promise<SuppressedRecipient[]> {
+    const key = this.suppressionKey(false);
+    if (key === null) return [];
+    const hits: SuppressedRecipient[] = [];
+    for (const [field, list] of [
+      ["to", req.to],
+      ["cc", req.cc],
+      ["bcc", req.bcc],
+    ] as const) {
+      for (const [index, recipient] of list.entries()) {
+        const row = this.rows<{ reason: "bounce" | "complaint"; first_at: string }>(
+          "SELECT reason, first_at FROM suppression WHERE recipient_hash = ?",
+          await hashRecipient(key, recipient.address),
+        )[0];
+        if (row !== undefined) hits.push({ field, index, reason: row.reason, since: row.first_at });
+      }
+    }
+    return hits;
+  }
+
+  /** The mailbox's own random HMAC key (spec D15), made the first time an event is recorded; null until then when `create` is false. */
+  private suppressionKey(create: boolean): Uint8Array | null {
+    const row = this.rows<{ key: ArrayBuffer }>("SELECT key FROM suppression_key")[0];
+    if (row !== undefined) return new Uint8Array(row.key);
+    if (!create) return null;
+    const key = newSuppressionKey();
+    this.ctx.storage.sql.exec("INSERT INTO suppression_key (only, key, created_at) VALUES (1, ?, ?)", key, this.now());
+    return key;
+  }
+
   // ---- housekeeping (M9, tasks.md S2k) --------------------------------------------------
 
   /**
    * The daily alarm (HOUSEKEEPING_CRON): empties Trash of messages 30 days in
-   * it (M9), then deletes `sends` rows more than 30 days old and audit rows
-   * more than a year old. A row exactly at its limit stays. Not reached over
-   * RPC by MailService; a failure throws into the Agents SDK's scheduler
-   * (agents 0.24.0), which retries the job and runs the cron again next day.
+   * it (M9), then deletes `sends` rows more than 30 days old, audit rows more
+   * than a year old, and suppression entries whose last event is more than a
+   * year old (M11). A row exactly at its limit stays. Not reached over RPC by
+   * MailService; a failure throws into the Agents SDK's scheduler (agents
+   * 0.24.0), which retries the job and runs the cron again next day.
    */
-  async dailyHousekeeping(): Promise<{ trash: number; sends: number; audit: number }> {
+  async dailyHousekeeping(): Promise<{ trash: number; sends: number; audit: number; suppression: number }> {
     const trash = await this.purgeExpiredTrash();
     const now = this.ports.clock.now().getTime();
     const sends = this.deleteOlderThan("sends", "created_at", new Date(now - SENDS_KEPT_DAYS * DAY_MS));
     const audit = this.deleteOlderThan("audit", "at", new Date(now - AUDIT_KEPT_DAYS * DAY_MS));
-    logEvent("housekeeping", { mailbox: this.safeName(), trash, sends, audit });
-    return { trash, sends, audit };
+    const suppression = this.deleteOlderThan("suppression", "last_at", new Date(now - SUPPRESSION_KEPT_DAYS * DAY_MS));
+    logEvent("housekeeping", { mailbox: this.safeName(), trash, sends, audit, suppression });
+    return { trash, sends, audit, suppression };
   }
 
   /** Deletes every message that has been in Trash for 30 days: the R2 object, then the row. */
@@ -841,7 +929,7 @@ export class Mailbox extends Agent<Env> {
   }
 
   /** Rows whose ISO timestamp is before `cutoff`; the table and column are this file's constants, never input. */
-  private deleteOlderThan(table: "sends" | "audit", column: "created_at" | "at", cutoff: Date): number {
+  private deleteOlderThan(table: "sends" | "audit" | "suppression", column: "created_at" | "at" | "last_at", cutoff: Date): number {
     return this.rows(`DELETE FROM ${table} WHERE ${column} < ? RETURNING 1`, cutoff.toISOString()).length;
   }
 

@@ -35,12 +35,21 @@ describe("wrangler.jsonc", () => {
     expect(config.migrations).toEqual([{ tag: "v1", new_sqlite_classes: ["Mailbox"] }]);
   });
 
-  it("points at no real database: the id is a placeholder until plan.md §6 is applied", () => {
-    const [d1] = config.d1_databases as { database_id: string }[];
-    expect(d1!.database_id).toBe("00000000-0000-0000-0000-000000000000");
+  it("names the database by name only: no database id, so no resource identifier is published (G24)", () => {
+    const [d1] = config.d1_databases as Record<string, unknown>[];
+    expect(d1).toEqual({ binding: "DIRECTORY", database_name: "proprietor-mail", migrations_dir: "migrations" });
+    expect(JSON.stringify(config)).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/);
   });
 
   it("carries no secret: only the SES region as a plain var", () => {
     expect(config.vars).toEqual({ SES_REGION: "us-east-1" });
+  });
+
+  it("runs the deliverability feed every five minutes (plan.md §13)", () => {
+    expect(config.triggers).toEqual({ crons: ["*/5 * * * *"] });
+  });
+
+  it("keeps Workers Logs on, with invocation logs off: no envelope recipient in the operator's logs (G25, D20)", () => {
+    expect(config.observability).toEqual({ enabled: true, logs: { invocation_logs: false } });
   });
 });

@@ -14,10 +14,17 @@ export interface Env {
   Mailbox: DurableObjectNamespace<Mailbox>;
   /** Secret: JSON object of key id → base64url 32-byte HS256 key (contracts/capability-v1.md). */
   MAIL_CAPABILITY_KEYS: string;
-  /** Secrets: the client-mail SES principal (plan.md §6). */
+  /** Secrets: the client-mail SES principal (plan.md §6). It also reads the events queue. */
   SES_ACCESS_KEY_ID: string;
   SES_SECRET_ACCESS_KEY: string;
   SES_REGION: string;
+  /**
+   * Secret: the URL of Mail's own SES events queue (plan.md §13), set after the
+   * first deploy (plan.md §15). A secret rather than a var because it names
+   * the AWS account. Until it is set, the cron raises an operator alert and
+   * does nothing else.
+   */
+  MAIL_EVENTS_QUEUE_URL: string;
 }
 
 declare global {
