@@ -303,7 +303,7 @@ virtual authenticator; the frame under the shell's policy.
 
 - [x] the operator's private runbook with the real values and commands
   (architect)
-- [ ] parked Terraform in the operator's infrastructure checkout: Mail's D1
+- [x] parked Terraform in the operator's infrastructure checkout: Mail's D1
   and R2, configuration set, events feed, SES tenant and associations, the
   sending principal's policy, the probe's rule, and the routing switch as a
   full replacement of today's rules file (architect)
@@ -327,6 +327,8 @@ virtual authenticator; the frame under the shell's policy.
   operator's private runbook for that client
 
 Audited 2026-09-29: PR #11, 528 passed; a mutation that drops the `from` guard fails `test/send.test.ts`.
+
+Audited 2026-10-03: PR #12, 563 passed; a mutation that drops the suppression check in `send` fails six tests in `test/deliverability.test.ts`.
 
 ## P — Publication  *(2026-09-26)*
 
