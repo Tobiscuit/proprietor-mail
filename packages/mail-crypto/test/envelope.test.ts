@@ -221,6 +221,9 @@ describe("S1b refusals when sealing", () => {
   test("a MessageHeader without one of its keys is refused (every key is always present)", async () => {
     const { snippet: _, ...missing } = smallHeader;
     await expect(sealMessage(pub, ids, missing as MessageHeader, smallRaw)).rejects.toBeInstanceOf(TypeError);
+    // envelopeTo joined v1 on 2026-09-28 (slice S2b), before anything was sealed under it: it is as required as the rest.
+    const { envelopeTo: __, ...earlierForm } = smallHeader;
+    await expect(sealMessage(pub, ids, earlierForm as MessageHeader, smallRaw)).rejects.toBeInstanceOf(TypeError);
   });
 });
 

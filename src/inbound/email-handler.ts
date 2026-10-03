@@ -8,11 +8,13 @@ import { logEvent } from "../log";
  *
  * `routeAgentEmail` asks the resolver which Agent owns the message. The
  * resolver reads the Mail Directory by the ENVELOPE recipient (never a header,
- * which the sender controls) and answers with the binding name and the mailbox
- * id: agents 0.24.0 matches `agentName` against the env's binding names (as
- * written, kebab-case or lower-case), not class names, then calls the Agent's
- * `_onEmail` over RPC, which runs `Mailbox.onEmail`. An unknown address has no
- * route, and `onNoRoute` rejects it.
+ * which the sender controls), through its addresses table, so any of a
+ * mailbox's addresses reaches the one mailbox (plan.md §12), and answers with
+ * the binding name and the mailbox id: agents 0.24.0 matches `agentName`
+ * against the env's binding names (as written, kebab-case or lower-case), not
+ * class names, then calls the Agent's `_onEmail` over RPC, which runs
+ * `Mailbox.onEmail`. An unknown address has no route, and `onNoRoute` rejects
+ * it.
  *
  * Status, size and everything after are the Mailbox's to check: it is the one
  * place that knows the policy, and it re-reads the Directory itself.

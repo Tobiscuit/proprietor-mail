@@ -117,7 +117,7 @@ Everything is `--local`; nothing touches an account. From the repository root:
 
 ```sh
 npx wrangler d1 migrations apply proprietor-mail --local
-node scripts/provision-mailbox.ts --business biz_local --address hello@example.test > /tmp/provision.sql
+node scripts/provision-mailbox.ts --business biz_local --address hello@example.test > /tmp/provision.sql   # repeat --address for further addresses; the first is the primary
 npx wrangler d1 execute proprietor-mail --local --file /tmp/provision.sql
 
 # The capability key is the public TEST key from contracts/capability-v1.vectors.json, not a secret.

@@ -10,7 +10,7 @@ export const HEADER_JSON_MAX_BYTES = 64 * 1024;
 const REFERENCES_KEPT = 20;
 
 const HEADER_KEYS = [
-  "v", "direction", "envelopeFrom", "from", "to", "cc", "bcc", "replyTo", "subject",
+  "v", "direction", "envelopeFrom", "envelopeTo", "from", "to", "cc", "bcc", "replyTo", "subject",
   "date", "messageId", "inReplyTo", "references", "snippet", "attachments",
 ] as const satisfies readonly (keyof MessageHeader)[];
 

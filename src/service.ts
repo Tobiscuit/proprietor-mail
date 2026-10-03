@@ -77,10 +77,13 @@ export async function mailboxRpc(env: Env, mailboxId: string): Promise<MailboxRp
 
 type Stub = MailboxRpc;
 
-/** One row of `mailboxes()`: enough to show "not set up", "set up your inbox" or the inbox. */
+/** One row of `mailboxes()`: enough to show "not set up", "set up your inbox" or the inbox, and to offer a From. */
 export interface MailboxSummary {
   id: string;
+  /** The primary address. */
   address: string;
+  /** Every address that delivers to the mailbox, the primary first (plan.md §12). */
+  addresses: string[];
   status: string;
 }
 
@@ -88,7 +91,14 @@ export class MailService extends WorkerEntrypoint<Env> {
   /** The capability's business's mailboxes, for "not set up" / "set up your inbox" / the inbox. Any member role. */
   async mailboxes(cap: string): Promise<MailResult<MailboxSummary[]>> {
     return this.call("mailboxes", cap, async (capability) =>
-      ok((await new Directory(this.env.DIRECTORY).forBusiness(capability.business)).map((m) => ({ id: m.id, address: m.address, status: m.status }))),
+      ok(
+        (await new Directory(this.env.DIRECTORY).forBusiness(capability.business)).map((m) => ({
+          id: m.id,
+          address: m.address,
+          addresses: m.addresses,
+          status: m.status,
+        })),
+      ),
     );
   }
 

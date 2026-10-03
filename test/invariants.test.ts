@@ -170,6 +170,23 @@ describe("M1: no plaintext at rest, and none in a log", () => {
     expect(search(haystacks, m)).toEqual([]);
   });
 
+  it("seals which address a message arrived for: a further address is in no table, object or log of the mailbox (G13, plan.md §12)", async () => {
+    const tag = crypto.randomUUID().slice(0, 8);
+    const mb = await provisionMailbox({ addresses: [`further-${tag}@example.com`] });
+    const alias = mb.addresses[1]!;
+    const email = incomingEmail(markedMessage(markers(), alias), { to: alias });
+    await worker.email!(email.message, env, createExecutionContext());
+    expect(email.rejects).toEqual([]);
+    expect(mb.ports.sealer.sealed[0]!.header.envelopeTo).toBe(alias);
+    valueOf(await mail().list(await capFor(mb), { folder: "inbox" }));
+
+    // The Directory holds the address in the clear by design (it routes by it); nothing else may.
+    const haystacks = (await everything(mb, captured, diagnostics.messages)).filter((h) => !h.where.startsWith("directory "));
+    expect(haystacks.some((h) => h.where.startsWith("mailbox sqlite messages"))).toBe(true);
+    expect(haystacks.some((h) => h.where.startsWith("r2 mbx/"))).toBe(true);
+    expect(search(haystacks, { alias })).toEqual([]);
+  });
+
   it("keeps even a message the parser gave up on out of every log and table", async () => {
     const mb = await provisionMailbox();
     const m = markers();

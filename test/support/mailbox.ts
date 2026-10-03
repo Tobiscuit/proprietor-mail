@@ -15,7 +15,10 @@ import { bytesFromBase64url } from "./capability-tokens";
 export interface TestMailbox {
   id: string;
   businessId: string;
+  /** The primary. */
   address: string;
+  /** Every address that delivers to it, the primary first (plan.md §12). */
+  addresses: string[];
   stub: DurableObjectStub<Mailbox>;
   ports: FakePorts;
   /** Present once a key is enrolled. */
@@ -29,27 +32,34 @@ export interface TestKey {
   privateKey: Uint8Array; // pragma: allowlist secret (a field name, not a value)
 }
 
+/** The rows the provisioning printer produces: the mailbox, then an `addresses` row per address, the primary first (D-2). */
 export async function insertMailboxRow(row: {
   id: string;
   businessId: string;
   address: string;
+  /** Further addresses, after the primary. */
+  addresses?: string[];
   status: MailboxStatus;
   sesTenant?: string | null;
   sesConfigurationSet?: string | null;
 }): Promise<void> {
-  await env.DIRECTORY.prepare(
-    "INSERT INTO mailboxes (id, business_id, address, status, ses_tenant, ses_configuration_set, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-  )
-    .bind(
+  const at = new Date().toISOString();
+  await env.DIRECTORY.batch([
+    env.DIRECTORY.prepare(
+      "INSERT INTO mailboxes (id, business_id, address, status, ses_tenant, ses_configuration_set, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).bind(
       row.id,
       row.businessId,
       row.address,
       row.status,
       row.sesTenant === undefined ? "client-test" : row.sesTenant,
       row.sesConfigurationSet === undefined ? "send-test-mail" : row.sesConfigurationSet,
-      new Date().toISOString(),
-    )
-    .run();
+      at,
+    ),
+    ...[row.address, ...(row.addresses ?? [])].map((address) =>
+      env.DIRECTORY.prepare("INSERT INTO addresses (address, mailbox_id, created_at) VALUES (?, ?, ?)").bind(address, row.id, at),
+    ),
+  ]);
 }
 
 export async function setStatus(id: string, status: MailboxStatus): Promise<void> {
@@ -100,6 +110,7 @@ export function callContext(mb: TestMailbox, opts: { role?: Role; accountId?: st
       id: mb.id,
       businessId: mb.businessId,
       address: mb.address,
+      addresses: mb.addresses,
       status: opts.status ?? "active",
       sesTenant: "client-test",
       sesConfigurationSet: "send-test-mail",
@@ -117,23 +128,25 @@ export function callContext(mb: TestMailbox, opts: { role?: Role; accountId?: st
  * exactly as enrolment leaves it.
  */
 export async function provisionMailbox(
-  opts: { status?: MailboxStatus; enroll?: boolean; sesConfigurationSet?: string | null } = {},
+  opts: { status?: MailboxStatus; enroll?: boolean; sesConfigurationSet?: string | null; addresses?: string[] } = {},
 ): Promise<TestMailbox> {
   const status = opts.status ?? "active";
   const id = freshMailboxId();
   const businessId = freshBusinessId();
   const address = `hello.${id.slice(4, 12)}@mail.test`;
+  const addresses = [address, ...(opts.addresses ?? [])];
   await insertMailboxRow({
     id,
     businessId,
     address,
+    addresses: addresses.slice(1),
     status: "provisioned",
     ...(opts.sesConfigurationSet === undefined ? {} : { sesConfigurationSet: opts.sesConfigurationSet }),
   });
   const stub = await mailboxStub(id);
   const ports = fakePorts();
   await injectPorts(stub, ports);
-  const mb: TestMailbox = { id, businessId, address, stub, ports };
+  const mb: TestMailbox = { id, businessId, address, addresses, stub, ports };
   if (opts.enroll ?? status !== "provisioned") {
     const key = await newKeyPair();
     valueOf(

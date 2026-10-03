@@ -7,6 +7,7 @@ import type { Mailbox } from "../src/mailbox/mailbox";
 import { type CapturedConsole, captureConsole } from "./support/console";
 import { crlf, incomingEmail, sampleMessage } from "./support/email";
 import { expectEmailThrow } from "./support/escapes";
+import { testId } from "./support/ids";
 import { provisionMailbox, type TestMailbox } from "./support/mailbox";
 import { valueOf } from "./support/results";
 
@@ -88,7 +89,7 @@ describe("arrival: the plan.md §5 table", () => {
     await deliver(email.message);
     expect(email.rejects).toEqual([]);
     const sealed = mb.ports.sealer.sealed[0]!;
-    expect(sealed.header).toMatchObject({ direction: "in", envelopeFrom: "sender@x.test", subject: "", snippet: "", from: null });
+    expect(sealed.header).toMatchObject({ direction: "in", envelopeFrom: "sender@x.test", envelopeTo: mb.address, subject: "", snippet: "", from: null });
     expect(sealed.raw).toEqual(raw);
     expect((await stored(mb)).rows).toHaveLength(1);
   });
@@ -181,7 +182,8 @@ describe("arrival: what a stored message is", () => {
     const sealed = mb.ports.sealer.sealed[0]!;
     expect(sealed.pub).toEqual({ keyId: mb.key!.keyId, publicKey: mb.key!.publicKey });
     expect(sealed.raw).toEqual(raw);
-    expect(sealed.header).toMatchObject({ direction: "in", envelopeFrom: "bounce@example.com", subject: "Quote please" });
+    // envelopeTo is the envelope recipient (plan.md §12): sealed with the rest, never in a table.
+    expect(sealed.header).toMatchObject({ direction: "in", envelopeFrom: "bounce@example.com", envelopeTo: mb.address, subject: "Quote please" });
 
     const { rows, objects } = await stored(mb);
     expect(rows).toEqual([
@@ -218,12 +220,27 @@ describe("arrival: what a stored message is", () => {
     expect((await stored(mb)).rows).toHaveLength(1);
   });
 
-  it("finds the mailbox whatever the case of the envelope recipient", async () => {
+  it("delivers to a mailbox through any of its addresses, and seals which one it was (G12, G13)", async () => {
+    const mb = await provisionMailbox({ addresses: [`team.${testId("mbx").slice(4, 12)}@mail.test`] });
+    const alias = mb.addresses[1]!;
+    for (const to of [alias, mb.address]) {
+      const email = incomingEmail(sampleMessage({ to }), { to });
+      await deliver(email.message);
+      expect(email.rejects).toEqual([]);
+    }
+    expect((await stored(mb)).rows).toHaveLength(2);
+    expect(mb.ports.sealer.sealed.map((s) => s.header.envelopeTo)).toEqual([alias, mb.address]);
+    // Every copy is sealed to the one mailbox key, under the one mailbox id.
+    expect(mb.ports.sealer.sealed.map((s) => s.ids.mailboxId)).toEqual([mb.id, mb.id]);
+  });
+
+  it("finds the mailbox whatever the case of the envelope recipient, and seals envelopeTo in the Directory's form", async () => {
     const mb = await provisionMailbox();
-    const email = incomingEmail(sampleMessage({ to: mb.address }), { to: mb.address.toUpperCase() });
+    const email = incomingEmail(sampleMessage({ to: mb.address }), { to: ` ${mb.address.toUpperCase()} ` });
     await deliver(email.message);
     expect(email.rejects).toEqual([]);
     expect((await stored(mb)).rows).toHaveLength(1);
+    expect(mb.ports.sealer.sealed[0]!.header.envelopeTo).toBe(mb.address);
   });
 
   it("never loses a message to the header ceiling: a few thousand To: recipients are stored", async () => {

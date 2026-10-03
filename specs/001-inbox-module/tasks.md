@@ -301,7 +301,7 @@ virtual authenticator; the frame under the shell's policy.
 
 ### S8 — Activation kit (`plan.md` §15) — runbook and Terraform: architect; scripts: [ ] not started
 
-- [ ] the operator's private runbook with the real values and commands
+- [x] the operator's private runbook with the real values and commands
   (architect)
 - [ ] parked Terraform in the operator's infrastructure checkout: Mail's D1
   and R2, configuration set, events feed, SES tenant and associations, the
@@ -325,6 +325,8 @@ virtual authenticator; the frame under the shell's policy.
 
 - [H] the reversible move to dual delivery in `plan.md` §8, from the
   operator's private runbook for that client
+
+Audited 2026-09-29: PR #11, 528 passed; a mutation that drops the `from` guard fails `test/send.test.ts`.
 
 ## P — Publication  *(2026-09-26)*
 

@@ -45,7 +45,10 @@ export interface PolicyView {
 
 export interface MailboxView {
   id: string;
+  /** The primary address: the identity and the default From. */
   address: string;
+  /** Every address that delivers to the mailbox, the primary first (plan.md §12). */
+  addresses: string[];
   status: MailboxStatus;
   displayName: string;
   keys: KeyView[];

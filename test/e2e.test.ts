@@ -76,6 +76,26 @@ describe.skipIf(!CRYPTO)("with the real @proprietor/mail-crypto (S1)", () => {
     expect(header.snippet).toBe("Hola, ¿cuánto cuesta?");
   });
 
+  it("seals which of the mailbox's addresses a message arrived for, and the owner's key opens it (G13, plan.md §12)", async () => {
+    const ports = realCryptoPorts();
+    const mb = await provisionMailbox({ status: "provisioned", addresses: [`team.${mailCrypto.newId("mbx").slice(4, 12)}@mail.test`] });
+    await injectPorts(mb.stub, ports);
+    const { publicKey, privateKey } = await mailCrypto.generateMailboxKey();
+    const recovery = mailCrypto.newRecoveryKey();
+    const wrap = await mailCrypto.wrapPrivateKey(privateKey, { mailboxId: mb.id, wrapId: mailCrypto.newId("wrp"), kind: "recovery", secret: recovery.secret }); // pragma: allowlist secret (S1's parameter name; a fresh test recovery key)
+    valueOf(await mail().enroll(await capFor(mb), { publicKey: base64urlFromBytes(publicKey.publicKey), wraps: [{ ...wrap, label: "Recovery key" }] }));
+
+    const alias = mb.addresses[1]!;
+    const email = incomingEmail(sampleMessage({ to: alias }), { to: alias.toUpperCase() });
+    await worker.email!(email.message, env, createExecutionContext());
+    expect(email.rejects).toEqual([]);
+
+    const [item] = valueOf(await mail().list(await capFor(mb), { folder: "inbox" })).items;
+    const header = await mailCrypto.openHeader(privateKey, { mailboxId: mb.id, messageId: item!.id }, { keyEnvelope: item!.keyEnvelope, header: item!.header });
+    expect(header.envelopeTo).toBe(alias);
+    expect(header.envelopeFrom).toBe("bounce@example.com");
+  });
+
   it("recomputes the same keyId S1 computes, and the stored wrap unlocks to the advertised key (G7)", async () => {
     const { mb, publicKey, recovery, enrolled } = await enrolledWithRealKey(realCryptoPorts());
     expect(enrolled.keyId).toBe(publicKey.keyId);

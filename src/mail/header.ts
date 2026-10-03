@@ -72,12 +72,26 @@ function byteLength(content: ArrayBuffer | Uint8Array | string): number {
   return typeof content === "string" ? new TextEncoder().encode(content).length : content.byteLength;
 }
 
-/** The header of an arriving message. `parsed` is null when the parser gave up. */
-export function inboundHeader(parsed: Email | null, envelopeFrom: string): MessageHeader {
+/** The SMTP envelope of an arriving message, as Email Routing hands it over. */
+export interface Envelope {
+  /** MAIL FROM. */
+  from: string;
+  /** RCPT TO: the one of the mailbox's addresses this copy arrived for (plan.md §12). */
+  to: string;
+}
+
+/**
+ * The header of an arriving message. `parsed` is null when the parser gave up.
+ * The envelope is trusted over any header the sender wrote: `envelopeTo` is
+ * what lets the browser merge the copies of one message sent to two of the
+ * mailbox's addresses, and reply from the address it arrived at (G13).
+ */
+export function inboundHeader(parsed: Email | null, envelope: Envelope): MessageHeader {
   const header: MessageHeader = {
     v: 1,
     direction: "in",
-    envelopeFrom,
+    envelopeFrom: envelope.from,
+    envelopeTo: envelope.to,
     from: firstAddress(parsed?.from),
     to: addressesOf(parsed?.to),
     cc: addressesOf(parsed?.cc),
@@ -117,7 +131,7 @@ export interface OutboundHeaderInput {
   attachments?: { filename: string; mimeType: string; content: Uint8Array; inline?: boolean }[];
 }
 
-/** The header of the Sent copy: direction out, from the mailbox, bcc kept, no envelope sender. */
+/** The header of the Sent copy: direction out, from the mailbox, bcc kept, no envelope sender or recipient. */
 export function outboundHeader(input: OutboundHeaderInput): MessageHeader {
   const list = (a: { name?: string; address: string }[] | undefined): Address[] =>
     (a ?? []).map((x) => ({ name: x.name ?? "", address: x.address }));
@@ -125,6 +139,7 @@ export function outboundHeader(input: OutboundHeaderInput): MessageHeader {
     v: 1,
     direction: "out",
     envelopeFrom: null,
+    envelopeTo: null,
     from: { name: input.from.name, address: input.from.address },
     to: list(input.to),
     cc: list(input.cc),
@@ -171,7 +186,7 @@ export function fitHeader(header: MessageHeader): MessageHeader {
 /**
  * The header for mail whose full header cannot fit (thousands of recipients or
  * attachments), as the contract defines it: the same v, direction,
- * envelopeFrom, date, messageId and inReplyTo; `from` only if its JSON is
+ * envelopeFrom, envelopeTo, date, messageId and inReplyTo; `from` only if its JSON is
  * under 1 KiB; every list emptied; the subject cut to 200 characters; no
  * snippet. It is also what the Worker retries with when `sealMessage` throws
  * RangeError. The kept strings are additionally bounded to 998 characters, the
@@ -185,6 +200,7 @@ export function minimalHeader(header: MessageHeader): MessageHeader {
     v: 1,
     direction: header.direction,
     envelopeFrom: line(header.envelopeFrom),
+    envelopeTo: line(header.envelopeTo),
     from: fromFits ? header.from : null,
     to: [],
     cc: [],

@@ -2,7 +2,7 @@ import { Agent } from "agents";
 import type { AgentEmail } from "agents/email";
 import { LIMITS } from "@proprietor/mail-outbound";
 import type { Role } from "../capability";
-import { Directory, type DirectoryEntry } from "../directory/directory";
+import { Directory, type DirectoryEntry, normalizeAddress } from "../directory/directory";
 import type { Env } from "../env";
 import {
   AssistantUnavailable,
@@ -272,7 +272,9 @@ export class Mailbox extends Agent<Env> {
   private async storeArrival(email: AgentEmail, entry: DirectoryEntry, key: { keyId: string; publicKey: Uint8Array }): Promise<string> {
     const raw = await email.getRaw();
     // A message the parser cannot read is still stored, with an empty header.
-    const header = inboundHeader(await parseMessage(raw), email.from);
+    // The envelope recipient goes into the sealed header in the Directory's
+    // form, so the browser can match it against the mailbox's addresses.
+    const header = inboundHeader(await parseMessage(raw), { from: email.from, to: normalizeAddress(email.to) });
     const messageId = this.ports.ids.messageId();
     const sealed = await this.seal(key, messageId, header, raw);
     await this.storeSealed({
@@ -343,6 +345,8 @@ export class Mailbox extends Agent<Env> {
       return {
         id: identity.mailbox_id,
         address: identity.address,
+        // Read from the Directory on every call: addresses are its to grant (plan.md §12).
+        addresses: ctx.mailbox.addresses,
         status: ctx.mailbox.status,
         displayName: identity.display_name,
         keys: this.rows<{ key_id: string; public_key: ArrayBuffer; created_at: string; created_by: string; retired_at: string | null }>(
@@ -665,9 +669,16 @@ export class Mailbox extends Agent<Env> {
     configurationSet: string,
     release: () => void,
   ): Promise<SendResult> {
-    // M6: From is the mailbox, whatever the request said. The request has no
-    // `from` field at all (the shape check refuses one); this is the only From.
-    const from = identity.display_name === "" ? { address: identity.address } : { name: identity.display_name, address: identity.address };
+    // M6 as amended (plan.md §12, D14): From is one of the mailbox's own
+    // addresses, the primary unless the request names another of them, checked
+    // against the Directory's addresses on every call. The display name is the
+    // mailbox's. Refused before anything is built, and the key is freed.
+    const fromAddress = req.from ?? identity.address;
+    if (!ctx.mailbox.addresses.includes(fromAddress)) {
+      release();
+      throw new InvalidRequest("from is not one of the mailbox's addresses");
+    }
+    const from = identity.display_name === "" ? { address: fromAddress } : { name: identity.display_name, address: fromAddress };
     let built;
     try {
       built = this.ports.mime.build(
@@ -683,7 +694,7 @@ export class Mailbox extends Agent<Env> {
           ...(req.references.length > 0 ? { references: req.references } : {}),
           ...(req.attachments.length > 0 ? { attachments: req.attachments } : {}),
         },
-        { messageIdDomain: identity.address.slice(identity.address.lastIndexOf("@") + 1), now },
+        { messageIdDomain: fromAddress.slice(fromAddress.lastIndexOf("@") + 1), now },
       );
     } catch (err) {
       release();
@@ -695,7 +706,7 @@ export class Mailbox extends Agent<Env> {
     try {
       ({ providerMessageId } = await this.ports.mailer.send({
         raw: built.raw,
-        fromAddress: identity.address,
+        fromAddress,
         recipients: built.recipients,
         configurationSet,
         ...(ctx.mailbox.sesTenant === null ? {} : { tenantName: ctx.mailbox.sesTenant }),
@@ -721,7 +732,7 @@ export class Mailbox extends Agent<Env> {
     let messageId: string | null = null;
     try {
       const header = outboundHeader({
-        from: { name: identity.display_name, address: identity.address },
+        from: { name: identity.display_name, address: fromAddress },
         to: req.to,
         cc: req.cc,
         bcc: req.bcc,
@@ -1035,6 +1046,8 @@ const IDEMPOTENCY_KEY = /^[A-Za-z0-9_.:-]{1,200}$/;
 
 export interface ParsedSendRequest {
   idempotencyKey: string;
+  /** One of the mailbox's addresses, in the Directory's form; the primary when absent. Checked in `sendReserved`. */
+  from?: string;
   to: v.Recipient[];
   cc: v.Recipient[];
   bcc: v.Recipient[];
@@ -1050,6 +1063,7 @@ export interface ParsedSendRequest {
 function parseSendRequest(value: unknown): ParsedSendRequest {
   const r = v.object(value, "send request", [
     "idempotencyKey",
+    "from",
     "to",
     "cc",
     "bcc",
@@ -1069,6 +1083,8 @@ function parseSendRequest(value: unknown): ParsedSendRequest {
   if (to.length === 0) throw new InvalidRequest("at least one recipient in to is required");
   // M7: at most 50 recipients a message, across to, cc and bcc.
   if (to.length + cc.length + bcc.length > LIMITS.maxRecipients) throw new InvalidRequest(`at most ${LIMITS.maxRecipients} recipients`);
+  // A bare address, never a name: the display name is the mailbox's (M6).
+  const from = v.optional(r.from, (f) => normalizeAddress(v.address(f, "from")));
   const html = v.optional(r.html, (h) => v.text(h, "html", { max: 5_000_000 }));
   const inReplyTo = v.optional(r.inReplyTo, (x) => (typeof x === "string" && BARE_ID.test(x) ? x : invalid("in-reply-to")));
   const draftId = v.optional(r.draftId, (d) => v.id(d, "draft id", "drf"));
@@ -1089,6 +1105,7 @@ function parseSendRequest(value: unknown): ParsedSendRequest {
   if (attachments.reduce((n, a) => n + a.content.byteLength, 0) > LIMITS.maxRawBytes) throw new InvalidRequest("the attachments are too large");
   return {
     idempotencyKey,
+    ...(from === undefined ? {} : { from }),
     to,
     cc,
     bcc,

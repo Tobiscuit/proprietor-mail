@@ -29,8 +29,8 @@ async function sendsRows(mb: TestMailbox) {
   return runInDurableObject(mb.stub, (_i, state) => state.storage.sql.exec("SELECT * FROM sends").toArray());
 }
 
-describe("M6: only the owner sends, and always as the mailbox", () => {
-  it("builds From from the mailbox's address and display name, and SES authorizes on that address", async () => {
+describe("M6: only the owner sends, and always as one of the mailbox's addresses", () => {
+  it("builds From from the primary address and the display name by default, and SES authorizes on that address", async () => {
     const mb = await provisionMailbox();
     valueOf(await mail().setPolicy(await capFor(mb), { displayName: "Example" }));
     valueOf(await mail().send(await capFor(mb), request()));
@@ -38,9 +38,32 @@ describe("M6: only the owner sends, and always as the mailbox", () => {
     expect(mb.ports.mailer.sent[0]!.fromAddress).toBe(mb.address);
   });
 
-  it("refuses a request that tries to choose From (or Reply-To), and sends nothing", async () => {
+  it("sends as another of the mailbox's addresses when `from` names one (plan.md §12, D14): MIME, SES, Message-ID domain and the Sent copy", async () => {
+    const mb = await provisionMailbox({ addresses: [`team.${testId("mbx").slice(4, 12)}@other.test`] });
+    const alias = mb.addresses[1]!;
+    valueOf(await mail().setPolicy(await capFor(mb), { displayName: "Example" }));
+    const result = valueOf(await mail().send(await capFor(mb), request({ from: alias.toUpperCase() })));
+    expect(mb.ports.mime.built[0]!.msg.from).toEqual({ name: "Example", address: alias });
+    expect(mb.ports.mime.built[0]!.opts.messageIdDomain).toBe("other.test");
+    expect(mb.ports.mailer.sent[0]!.fromAddress).toBe(alias);
+    expect(mb.ports.sealer.sealed.at(-1)!.header).toMatchObject({ direction: "out", from: { name: "Example", address: alias } });
+    expect(result.messageId).not.toBeNull();
+  });
+
+  it("refuses a `from` outside the mailbox's addresses: nothing is sent, and the idempotency key is not spent", async () => {
     const mb = await provisionMailbox();
-    for (const field of [{ from: { address: "ceo@bank.example" } }, { replyTo: [{ address: "x@evil.example" }] }]) {
+    const outside = request({ from: "ceo@bank.example", idempotencyKey: "k-from" });
+    expect(refusalOf(await mail().send(await capFor(mb), outside))).toEqual({ name: "InvalidRequest", message: "invalid request: from is not one of the mailbox's addresses" });
+    expect(mb.ports.mailer.sent).toEqual([]);
+    expect(await sendsRows(mb)).toEqual([]);
+    // The same key then sends, once, from the primary.
+    valueOf(await mail().send(await capFor(mb), request({ idempotencyKey: "k-from" })));
+    expect(mb.ports.mailer.sent).toHaveLength(1);
+  });
+
+  it("refuses a `from` that is not an address, or a Reply-To, and sends nothing", async () => {
+    const mb = await provisionMailbox();
+    for (const field of [{ from: { address: mb.address } }, { from: "not an address" }, { replyTo: [{ address: "x@evil.example" }] }]) {
       expect(refusalOf(await mail().send(await capFor(mb), request(field)))).toMatchObject({ name: "InvalidRequest" });
     }
     expect(mb.ports.mailer.sent).toEqual([]);
