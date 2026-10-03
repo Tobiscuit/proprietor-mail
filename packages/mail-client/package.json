@@ -1,0 +1,19 @@
+{
+  "name": "@proprietor/mail-client",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The browser half of the inbox: key ceremony, unlock, open, threads, search, the one sandboxed frame (contracts/mail-client-v1.md).",
+  "license": "Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@proprietor/mail-crypto": "0.0.0"
+  }
+}

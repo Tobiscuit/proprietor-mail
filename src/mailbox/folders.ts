@@ -2,7 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 //
-// Modified by Operator, 2026-09: adapted from agentic-inbox's shared/folders.ts.
+// Modified by Juan Ramirez (Proprietor Systems), 2026-09: adapted from agentic-inbox's shared/folders.ts.
 // The drafts folder's id is `drafts` (plan.md §3), the six system folders are
 // seeded by the Mailbox schema and are fixed (domain-model M8), and the
 // display-name helpers and tool descriptions were dropped (the UI is elsewhere).
