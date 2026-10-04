@@ -2,10 +2,14 @@
  * The mailbox key pair: X25519 through Web Crypto only.
  *
  * A MailboxPrivateKey is an opaque, frozen handle `{ keyId }`. What it stands
- * for lives in a module-private WeakMap: a NON-extractable X25519 CryptoKey
- * used for decryption, and the clamped 32-byte scalar, which only
- * wrapPrivateKey reads (an unlocked key must be re-wrappable, e.g. to enrol
- * another passkey). Nothing reaches either through a property, JSON,
+ * for lives in a module-private WeakMap: an X25519 CryptoKey used for
+ * decryption, with its public half. The private key is never read as bytes
+ * by this module (D21, domain-model K1): a fresh key is made by
+ * `generateKey`, a stored one is opened by `unwrapKey`, and a wrap is made by
+ * `wrapKey`, so the scalar exists only inside Web Crypto. A key is wrappable
+ * only when it was generated here (so that enrollment can wrap it) or when
+ * an unlock asked for `wrappable` for that one operation; every other key is
+ * non-extractable. Nothing reaches the key through a property, JSON,
  * structuredClone or postMessage; a clone or a forged `{ keyId }` is refused.
  */
 import { bytesEqual, concat, copy, toHex } from "./bytes";
@@ -33,6 +37,9 @@ const PKCS8_X25519_PREFIX = Uint8Array.of(
   0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x04, 0x22, 0x04, 0x20,
 );
 
+/** The PKCS #8 form Web Crypto exports and imports for an X25519 private key: the prefix and the scalar, 48 bytes. */
+export const PKCS8_X25519_BYTES = PKCS8_X25519_PREFIX.length + 32;
+
 /** u = 9, the X25519 base point (RFC 7748 §4.1): the public key is X25519(k, 9) (§6.1). */
 const BASE_POINT = Uint8Array.of(9, ...new Uint8Array(31));
 
@@ -40,10 +47,10 @@ export interface KeyMaterial {
   readonly keyId: string;
   /** Raw X25519 public key, 32 bytes. */
   readonly publicKey: Uint8Array<ArrayBuffer>;
-  /** For HPKE: a non-extractable private key and its (extractable) public key. */
+  /** For HPKE: the private key and its (extractable) public key. */
   readonly keyPair: CryptoKeyPair;
-  /** The clamped private scalar. Read only by wrapPrivateKey. */
-  readonly scalar: Uint8Array<ArrayBuffer>;
+  /** True when the private CryptoKey is extractable, which only `wrapPrivateKey` relies on (K1). */
+  readonly wrappable: boolean;
 }
 
 const materials = new WeakMap<object, KeyMaterial>();
@@ -65,30 +72,47 @@ export async function keyIdOf(publicKey: Uint8Array): Promise<string> {
 }
 
 /**
- * Builds a private key from a raw 32-byte X25519 private key. The input is
- * clamped first (RFC 9180 §7.1.2: DeserializePrivateKey MUST clamp its input),
- * which does not change the key: X25519 clamps the scalar before use anyway.
+ * Wraps a private CryptoKey (from generateKey, unwrapKey or a test import) in
+ * a handle. The public key is computed as X25519(k, 9) with `deriveBits`
+ * against the base point, so the private key is never exported.
  */
-export async function importPrivateScalar(raw: Uint8Array): Promise<MailboxPrivateKey> {
+export async function fromPrivateCryptoKey(privateKey: CryptoKey): Promise<MailboxPrivateKey> { // pragma: allowlist secret (a parameter type, not a value)
+  const basePoint = await crypto.subtle.importKey("raw", BASE_POINT, X25519, true, []);
+  const publicKey = new Uint8Array(await crypto.subtle.deriveBits(x25519Peer(basePoint), privateKey, 256));
+  const publicCryptoKey = await crypto.subtle.importKey("raw", publicKey, X25519, true, []);
+  const material: KeyMaterial = {
+    keyId: await keyIdOf(publicKey),
+    publicKey,
+    keyPair: { privateKey, publicKey: publicCryptoKey },
+    wrappable: privateKey.extractable,
+  };
+  const handle: MailboxPrivateKey = Object.freeze({ keyId: material.keyId }); // pragma: allowlist secret (a type annotation, not a secret)
+  materials.set(handle, material);
+  return handle;
+}
+
+/** A fresh key pair made inside Web Crypto: wrappable, because enrollment must wrap it, and never exported to JavaScript. */
+export async function generatePrivateKey(): Promise<MailboxPrivateKey> {
+  const pair = (await crypto.subtle.generateKey(X25519, true, ["deriveBits"])) as CryptoKeyPair;
+  return fromPrivateCryptoKey(pair.privateKey);
+}
+
+/**
+ * A private key from a raw 32-byte X25519 private key, for the test vectors
+ * and tests (the browser never sees a scalar). The input is clamped first
+ * (RFC 9180 §7.1.2: DeserializePrivateKey MUST clamp its input), which does
+ * not change the key: X25519 clamps the scalar before use anyway.
+ */
+export async function importPrivateScalar(raw: Uint8Array, options?: { wrappable?: boolean }): Promise<MailboxPrivateKey> {
   if (!(raw instanceof Uint8Array) || raw.length !== 32) throw new TypeError("an X25519 private key is exactly 32 bytes");
   const scalar = clamp(raw);
   const pkcs8 = concat(PKCS8_X25519_PREFIX, scalar);
   try {
-    const privateKey = await crypto.subtle.importKey("pkcs8", pkcs8, X25519, false, ["deriveBits"]);
-    const basePoint = await crypto.subtle.importKey("raw", BASE_POINT, X25519, true, []);
-    const publicKey = new Uint8Array(await crypto.subtle.deriveBits(x25519Peer(basePoint), privateKey, 256));
-    const publicCryptoKey = await crypto.subtle.importKey("raw", publicKey, X25519, true, []);
-    const material: KeyMaterial = {
-      keyId: await keyIdOf(publicKey),
-      publicKey,
-      keyPair: { privateKey, publicKey: publicCryptoKey },
-      scalar,
-    };
-    const handle: MailboxPrivateKey = Object.freeze({ keyId: material.keyId }); // pragma: allowlist secret (a type annotation, not a secret)
-    materials.set(handle, material);
-    return handle;
+    const privateKey = await crypto.subtle.importKey("pkcs8", pkcs8, X25519, options?.wrappable === true, ["deriveBits"]);
+    return await fromPrivateCryptoKey(privateKey);
   } finally {
     pkcs8.fill(0);
+    scalar.fill(0);
   }
 }
 
@@ -117,23 +141,32 @@ export function publicKeyMatches(material: KeyMaterial, pub: MailboxPublicKey): 
 
 /**
  * True when this runtime's Web Crypto has native X25519 with every operation
- * this package uses (pkcs8 and raw import, deriveBits, generateKey, raw
- * export). There is no pure-JavaScript fallback (see the README), so a page
- * can call this before a passkey ceremony and ask for a browser update
- * instead of failing halfway through.
+ * this package uses (generateKey, pkcs8 and raw import, deriveBits, raw
+ * export, and wrapKey/unwrapKey of a PKCS #8 key under AES-GCM). There is no
+ * pure-JavaScript fallback (see the README), so a page can call this before
+ * a passkey ceremony and ask for a browser update instead of failing halfway
+ * through.
  */
 export async function x25519Supported(): Promise<boolean> {
   try {
     const probe = clamp(new Uint8Array(32).fill(0x2a));
-    const privateKey = await crypto.subtle.importKey("pkcs8", concat(PKCS8_X25519_PREFIX, probe), X25519, false, ["deriveBits"]);
+    const privateKey = await crypto.subtle.importKey("pkcs8", concat(PKCS8_X25519_PREFIX, probe), X25519, true, ["deriveBits"]);
     const basePoint = await crypto.subtle.importKey("raw", BASE_POINT, X25519, true, []);
     await crypto.subtle.deriveBits(x25519Peer(basePoint), privateKey, 256);
     const pair = (await crypto.subtle.generateKey(X25519, true, ["deriveBits"])) as CryptoKeyPair;
     const exported = await crypto.subtle.exportKey("raw", pair.publicKey);
+    const kek = (await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["wrapKey", "unwrapKey"])) as CryptoKey;
+    const iv = new Uint8Array(12);
+    const wrapped = await crypto.subtle.wrapKey("pkcs8", privateKey, kek, { name: "AES-GCM", iv });
+    const unwrapped = await crypto.subtle.unwrapKey("pkcs8", wrapped, kek, { name: "AES-GCM", iv }, X25519, false, ["deriveBits"]);
     // workers-types returns ArrayBuffer | JsonWebKey for every format; "raw" is always an ArrayBuffer.
-    return exported instanceof ArrayBuffer && exported.byteLength === 32;
+    return (
+      exported instanceof ArrayBuffer &&
+      exported.byteLength === 32 &&
+      wrapped.byteLength === PKCS8_X25519_BYTES + 16 &&
+      unwrapped.extractable === false
+    );
   } catch {
     return false;
   }
 }
-

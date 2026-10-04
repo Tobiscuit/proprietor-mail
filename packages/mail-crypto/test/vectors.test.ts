@@ -25,6 +25,8 @@ import { importPrivateScalar } from "../src/keys";
 import { b64urlDecode, b64urlEncode, fromHex, hex, sha256, utf8 } from "./reference";
 
 const vectorsPath = resolve(dirname(fileURLToPath(import.meta.url)), "../../../contracts/envelope-v1.vectors.json");
+/** The wrap's plaintext is the key's PKCS #8 PrivateKeyInfo (RFC 8410): this prefix, then the 32-byte scalar (D21). */
+const PKCS8_PREFIX = "302e020100300506032b656e04220420";
 
 interface MessageVector {
   name: string;
@@ -110,7 +112,7 @@ async function contractUnwrap(v: WrapVector, ikm: Uint8Array<ArrayBuffer>): Prom
     ["decrypt"],
   );
   const block = b64urlDecode(wrapped);
-  expect(block.length).toBe(61);
+  expect(block.length).toBe(77); // 0x01 || iv (12) || AES-256-GCM(PKCS #8 PrivateKeyInfo, 48 bytes) || tag (16)
   expect(block[0]).toBe(0x01);
   const aad = "proprietor-mail/v1/wrap|" + mailboxId + "|" + id + "|" + kind + "|" + keyId;
   return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: block.subarray(1, 13), additionalData: utf8(aad) }, kek, block.subarray(13)));
@@ -189,7 +191,7 @@ describe("S1f vectors: every positive vector opens", () => {
     const unwrapped = await unwrapPrivateKey(v.wrap, { mailboxId, secret: fromHex(v.prfOutput!) }); // pragma: allowlist secret (a test vector field)
     expect(unwrapped.keyId).toBe(mailboxKey.keyId);
     expect(await publicKeyMatches(unwrapped, pub)).toBe(true);
-    expect(hex(await contractUnwrap(v, fromHex(v.prfOutput!)))).toBe(mailboxKey.skRm);
+    expect(hex(await contractUnwrap(v, fromHex(v.prfOutput!)))).toBe(PKCS8_PREFIX + mailboxKey.skRm);
   });
 
   test("recovery wrap (with its display string): parse, unwrap, public key check", async () => {
@@ -201,7 +203,7 @@ describe("S1f vectors: every positive vector opens", () => {
     const unwrapped = await unwrapPrivateKey(v.wrap, { mailboxId, secret: parsed }); // pragma: allowlist secret (a test variable)
     expect(unwrapped.keyId).toBe(mailboxKey.keyId);
     expect(await publicKeyMatches(unwrapped, pub)).toBe(true);
-    expect(hex(await contractUnwrap(v, fromHex(v.recoveryKey!)))).toBe(mailboxKey.skRm);
+    expect(hex(await contractUnwrap(v, fromHex(v.recoveryKey!)))).toBe(PKCS8_PREFIX + mailboxKey.skRm);
   });
 });
 

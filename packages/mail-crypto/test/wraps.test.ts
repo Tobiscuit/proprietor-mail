@@ -41,6 +41,11 @@ async function referenceKek(ikm: Uint8Array<ArrayBuffer>, wrapId: string, kind: 
 const wrapAad = (mbx: string, wrapId: string, kind: string, keyId: string) =>
   utf8(`proprietor-mail/v1/wrap|${mbx}|${wrapId}|${kind}|${keyId}`);
 
+/** RFC 8410 PrivateKeyInfo prefix for an X25519 key, before the 32-byte scalar (contracts/envelope-v1.md). */
+const PKCS8_PREFIX = "302e020100300506032b656e04220420";
+/** Any 32 bytes stand in for a raw scalar in the old-form wrap below: the length is what is refused. */
+const materialScalar = () => crypto.getRandomValues(new Uint8Array(32));
+
 describe("S1d prfInput", () => {
   test('prf.eval.first = SHA-256("proprietor-mail/v1/prf|" + mailboxId + "|" + wrapId), 32 bytes', async () => {
     const wrapId = newId("wrp");
@@ -61,7 +66,7 @@ describe("S1d wraps", () => {
     const wrap = await wrapPrivateKey(priv, { mailboxId, wrapId, kind, secret });
     expect(wrap).toEqual({ id: wrapId, keyId: pub.keyId, kind, wrapped: expect.any(String) });
     const block = b64urlDecode(wrap.wrapped);
-    expect(block.length).toBe(1 + 12 + 32 + 16);
+    expect(block.length).toBe(1 + 12 + 48 + 16); // D21: the plaintext is the 48-byte PKCS #8 PrivateKeyInfo
     expect(block[0]).toBe(0x01);
 
     const unwrapped = await unwrapPrivateKey(wrap, { mailboxId, secret });
@@ -72,9 +77,9 @@ describe("S1d wraps", () => {
     expect(await openHeader(unwrapped, ids, sealed)).toStrictEqual(smallHeader);
   });
 
-  test("the wrap is the contract's bytes: HKDF-SHA256 KEK, AES-256-GCM over the clamped raw private key", async () => {
+  test("the wrap is the contract's bytes: HKDF-SHA256 KEK, AES-256-GCM over the PKCS #8 form of the clamped private key (D21)", async () => {
     const scalar = crypto.getRandomValues(new Uint8Array(32));
-    const key = await importPrivateScalar(scalar);
+    const key = await importPrivateScalar(scalar, { wrappable: true });
     const clamped = new Uint8Array(scalar);
     clamped[0] = clamped[0]! & 248;
     clamped[31] = (clamped[31]! & 127) | 64;
@@ -87,10 +92,34 @@ describe("S1d wraps", () => {
       kek,
       block.subarray(13),
     );
-    expect(hex(new Uint8Array(plain))).toBe(hex(clamped));
+    expect(hex(new Uint8Array(plain))).toBe(PKCS8_PREFIX + hex(clamped));
   });
 
-  test("portability: an unclamped raw key wrapped by another implementation unwraps to the same key pair", async () => {
+  test("K1: an unwrapped key is decrypt-only unless the unlock asked for `wrappable`", async () => {
+    const wrapId = newId("wrp");
+    const wrap = await wrapPrivateKey(priv, { mailboxId, wrapId, kind: "recovery", secret });
+    const decryptOnly = await unwrapPrivateKey(wrap, { mailboxId, secret });
+    await expect(wrapPrivateKey(decryptOnly, { mailboxId, wrapId: newId("wrp"), kind: "recovery", secret })).rejects.toBeInstanceOf(TypeError);
+    const ids = { mailboxId, messageId: newId("msg") };
+    const sealed = await sealMessage(pub, ids, smallHeader, smallRaw);
+    expect(await openHeader(decryptOnly, ids, sealed)).toStrictEqual(smallHeader);
+
+    const rewrappable = await unwrapPrivateKey(wrap, { mailboxId, secret }, { wrappable: true });
+    const again = await wrapPrivateKey(rewrappable, { mailboxId, wrapId: newId("wrp"), kind: "passkey-prf", secret });
+    expect((await unwrapPrivateKey(again, { mailboxId, secret })).keyId).toBe(pub.keyId);
+  });
+
+  test("the first form of v1 (61 bytes, the raw scalar) is refused: nothing was ever stored under it", async () => {
+    const wrapId = newId("wrp");
+    const kek = await referenceKek(secret, wrapId, "recovery");
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: wrapAad(mailboxId, wrapId, "recovery", pub.keyId) }, kek, materialScalar());
+    const wrap: KeyWrap = { id: wrapId, keyId: pub.keyId, kind: "recovery", wrapped: b64urlEncode(new Uint8Array([0x01, ...iv, ...new Uint8Array(ct)])) };
+    expect(b64urlDecode(wrap.wrapped).length).toBe(61);
+    await expectDecryptionFailed(unwrapPrivateKey(wrap, { mailboxId, secret }));
+  });
+
+  test("portability: an unclamped key wrapped by another implementation unwraps to the same key pair", async () => {
     // RFC 7748 §6.1, Alice: an unclamped scalar, as a pure-JS fallback might serialize it.
     const alice = fromHex("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a");
     const alicePublic = "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a";
@@ -101,7 +130,7 @@ describe("S1d wraps", () => {
     const ct = await crypto.subtle.encrypt(
       { name: "AES-GCM", iv, additionalData: wrapAad(mailboxId, wrapId, "passkey-prf", keyId) },
       kek,
-      alice,
+      fromHex(PKCS8_PREFIX + hex(alice)),
     );
     const wrap: KeyWrap = {
       id: wrapId,
