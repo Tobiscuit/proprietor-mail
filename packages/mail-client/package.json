@@ -23,7 +23,7 @@
     "postal-mime": "4.0.4"
   },
   "devDependencies": {
-    "esbuild": "0.28.1",
+    "esbuild": "0.28.2",
     "playwright": "1.63.0"
   }
 }
