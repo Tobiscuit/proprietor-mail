@@ -67,10 +67,11 @@ let policy: PolicyLike | null | undefined;
 /**
  * The one string the policy accepts right now, or null: renderBody sets it
  * around each of its two createHTML uses and clears it after. Under
- * enforcement DOMParser.parseFromString is a sink too, so DOMPurify gets the
- * message's HTML through this policy as well: that string only ever reaches
- * DOMPurify's detached parse document, never a live one. The final document
- * is the only TrustedHTML that reaches a live sink, the frame's srcdoc.
+ * enforcement the HTML parser API (`parseFromString`) is a sink too, so
+ * DOMPurify gets the message's HTML through this policy as well: that string
+ * only ever reaches DOMPurify's detached parse document, never a live one.
+ * The final document is the only TrustedHTML that reaches a live sink, the
+ * frame's srcdoc.
  */
 let expected: string | null = null;
 
@@ -206,9 +207,9 @@ function sanitise(html: string, ctx: RenderContext): { markup: string; styles: s
   current = ctx;
   let root: Node | null;
   try {
-    // DOMPurify parses through DOMParser.parseFromString, a Trusted Types sink: it gets this
-    // package's policy (never its own `dompurify` one), which accepts the message's HTML for this
-    // call only. The parse document is detached; nothing in it runs.
+    // DOMPurify parses through the HTML parser API (`parseFromString`), a Trusted Types sink: it
+    // gets this package's policy (never its own `dompurify` one), which accepts the message's HTML
+    // for this call only. The parse document is detached; nothing in it runs.
     root = accepting(html, () =>
       p.sanitize(html, {
         USE_PROFILES: { html: true },

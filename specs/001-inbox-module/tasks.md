@@ -273,7 +273,7 @@ is stored or logged in the clear (the marker scan extended to recipients);
 SQS requests signed and shaped as the SQS JSON protocol documents; a batch
 with a failed delete is retried, not lost.
 
-### S6a — `@proprietor/mail-client` (K1, G17, G18, G23) — [x] built 2026-10-04
+### S6a — `@proprietor/mail-client` (K1, G17, G18, G23) — [x] built 2026-10-04 (PR #13)
 
 **Contract:** `contracts/mail-client-v1.md`; the stub in
 `packages/mail-client`. **Owns:** `packages/mail-client/**`; in
