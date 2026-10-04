@@ -329,7 +329,7 @@ virtual authenticator; the frame under the shell's policy.
   and R2, configuration set, events feed, SES tenant and associations, the
   sending principal's policy, the probe's rule, and the routing switch as a
   full replacement of today's rules file (architect)
-- [ ] scripts (builder): secrets from the secret store into `wrangler secret
+- [x] scripts (builder): secrets from the secret store into `wrangler secret
   put` through standard input; the provisioning printer's address rows (with
   S2b); and **an operator CLI for `MailAdmin`** (`setDelivery`, `suspend`,
   `resume`). `MailAdmin` is bound to nothing on purpose, so without this CLI
@@ -351,6 +351,8 @@ virtual authenticator; the frame under the shell's policy.
 Audited 2026-09-29: PR #11, 528 passed; a mutation that drops the `from` guard fails `test/send.test.ts`.
 
 Audited 2026-10-03: PR #12, 563 passed; a mutation that drops the suppression check in `send` fails six tests in `test/deliverability.test.ts`.
+
+Audited 2026-10-04: PR #13, 625 passed, browser suites green in CI; a mutation that drops the advertised-key check (K2) fails `test/unlock.test.ts`.
 
 ## P — Publication  *(2026-09-26)*
 
