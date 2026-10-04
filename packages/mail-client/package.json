@@ -9,11 +9,21 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "files": [
+    "src/"
+  ],
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json"
+    "test:browsers": "MAIL_CLIENT_BROWSER_TESTS=1 vitest run",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json"
   },
   "dependencies": {
-    "@proprietor/mail-crypto": "0.0.0"
+    "@proprietor/mail-crypto": "0.0.0",
+    "dompurify": "3.4.16",
+    "postal-mime": "4.0.4"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.1",
+    "playwright": "1.63.0"
   }
 }
