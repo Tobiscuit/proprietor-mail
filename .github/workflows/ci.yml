@@ -36,3 +36,23 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+
+  # The mail-client's browser tests (contracts/mail-client-v1.md, "Tests this contract requires"):
+  # real Chromium, Firefox and WebKit through Playwright, a page under the dashboard's exact policy
+  # with Trusted Types enforced, and Chromium's virtual authenticator with PRF. They run only here
+  # and on request (`npm run test:browsers -w @proprietor/mail-client`), never silently skipped.
+  browsers:
+    name: mail-client in Chromium, Firefox and WebKit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium firefox webkit
+      - run: npm run test:browsers -w @proprietor/mail-client

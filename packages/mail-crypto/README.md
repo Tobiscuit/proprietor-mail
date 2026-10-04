@@ -57,32 +57,35 @@ would put a second, non-constant-time (BigInt) X25519 implementation inside
 the key-handling code to serve only stale browsers.
 
 The fallback stays possible later without migrating anything, because wraps
-carry the private key as its raw 32 bytes, as the contract requires. Until
-then, a runtime without X25519 surfaces Web Crypto's own `NotSupportedError`
-(never `DecryptionFailed`). `x25519Supported()` lets a page check first and
-ask for a browser update before a passkey ceremony.
+carry the private key in its standard PKCS #8 form, as the contract requires.
+Until then, a runtime without X25519 surfaces Web Crypto's own
+`NotSupportedError` (never `DecryptionFailed`). `x25519Supported()` lets a
+page check first and ask for a browser update before a passkey ceremony.
 
 ### The private key never leaves the module
 
 `MailboxPrivateKey` is a frozen `{ keyId }` handle. What it stands for lives
-in a module-private `WeakMap`:
-
-- a **non-extractable** X25519 `CryptoKey` (with its public half), used for
-  every decryption;
-- the **clamped 32-byte scalar**, read by one function only: `wrapPrivateKey`.
+in a module-private `WeakMap`: an X25519 `CryptoKey` (with its public half),
+used for every decryption. **This module never reads the private key as
+bytes** (D21, domain-model K1): a fresh key comes from `generateKey`, a stored
+one is opened by `unwrapKey`, and a wrap is made by `wrapKey`, which
+serializes (PKCS #8) and encrypts inside Web Crypto in one step.
 
 No property, `JSON.stringify`, `structuredClone`/`postMessage` or spread
-reaches either. A clone, or a forged `{ keyId }`, is refused with a
+reaches the key. A clone, or a forged `{ keyId }`, is refused with a
 `TypeError`.
 
-The scalar is kept because an unlocked key must stay re-wrappable: enrolling
-another passkey wraps the same key under a new PRF output. Web Crypto cannot
-wrap a non-extractable key, so a non-extractable `CryptoKey` on its own could
-not do this. This is also the honest limit of any design here. Code running
-in the page can call `wrapPrivateKey` with a secret of its choosing, so the
-page is the trust boundary (spec §2, Decision D2), not this module. What the
-module does guarantee is that the key is never exposed by accident: through
-logging, serialization, storage or a message to another context.
+A key is **wrappable** (extractable, for `wrapKey` only) in two cases: it was
+just generated, because enrollment must wrap it; or `unwrapPrivateKey` was
+called with `{ wrappable: true }`, which an unlock does only for the one
+operation that wraps the key again (another passkey, a new recovery key).
+Every other unwrapped key is non-extractable and decrypt-only, and
+`wrapPrivateKey` refuses it with a `TypeError`. The honest limit remains:
+code running in the page can unlock with the person's secret and wrap the
+key under one of its choosing, so the page is the trust boundary (spec §2,
+Decision D2), not this module. What the module guarantees is that the key is
+never exposed by accident, and that an unlocked session holds nothing that
+can be wrapped.
 
 The public key is computed as X25519(k, 9) with `deriveBits` against the base
 point (RFC 7748 §6.1, checked against its test vector), so the private
@@ -97,11 +100,12 @@ RFC 9180 says `SerializePrivateKey` MUST clamp its output and
 the RFC's own test vectors carry unclamped `skRm`. So this package clamps
 twice:
 
-- **At generation**: the scalar is random bytes, clamped once. The raw bytes
-  in a wrap are therefore the clamped scalar.
-- **On unwrap**: the input is clamped again. An unclamped key wrapped by
-  another implementation still unwraps to the same key pair. A test does this
-  with RFC 7748's Alice key.
+- **At generation**: Web Crypto's `generateKey` produces a clamped scalar;
+  the PKCS #8 bytes inside a wrap carry it.
+- **On unwrap**: Web Crypto clamps before every use, so an unclamped key
+  wrapped by another implementation still unwraps to the same key pair. A
+  test does this with RFC 7748's Alice key. The test vectors import a known
+  scalar through `importPrivateScalar`, which clamps it first.
 
 Clamping never changes the key, because X25519 clamps before use.
 

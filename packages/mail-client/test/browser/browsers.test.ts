@@ -151,6 +151,9 @@ describe.each(chosen)("%s under the dashboard's policy", (name) => {
     expect(html).toContain(`<img id="logo" src="data:image/png;base64,${b64(PNG_1x1)}" alt="logo">`);
     expect(html).toContain(`<style nonce="${server.nonce}">`);
     expect(html).toContain(".x{color:green;background:none}");
+    expect(html).not.toMatch(/\sstyle=/i);
+    expect(html).toContain(".pm-inline-1{background:none;color:red}");
+    expect(html).toContain('<div class="pm-inline-2">div</div>');
     expect(html).not.toMatch(/<style(?![^>]*nonce=)/i);
     expect(html).toContain('<meta charset="utf-8">');
     expect(html).not.toContain("http-equiv");
@@ -170,7 +173,9 @@ describe.each(chosen)("%s under the dashboard's policy", (name) => {
         logoWidth: logo?.naturalWidth ?? -1,
         handlers: Array.from(document.querySelectorAll("*")).flatMap((el) => Array.from(el.attributes).map((a) => a.name)).filter((n) => n.startsWith("on")),
         origin: location.origin,
-        remoteImg: document.getElementById("remote") !== null,
+        remoteSrc: document.getElementById("remote")?.getAttribute("src") ?? null,
+        divColor: getComputedStyle(document.querySelector("div.pm-inline-2")!).color,
+        cellColor: getComputedStyle(document.querySelector("td")!).color,
         forms: document.forms.length,
       };
     });
@@ -181,7 +186,10 @@ describe.each(chosen)("%s under the dashboard's policy", (name) => {
     expect(inside.logoWidth).toBe(1);
     expect(inside.handlers).toEqual([]);
     expect(inside.origin).toBe("null");
-    expect(inside.remoteImg).toBe(false);
+    expect(inside.remoteSrc).toBeNull();
+    // Inline style attributes survive as class rules in the nonce-stamped sheet (style-src-attr would refuse them).
+    expect(inside.divColor).toBe("rgb(0, 0, 255)");
+    expect(inside.cellColor).toBe("rgb(255, 0, 0)");
     expect(inside.forms).toBe(0);
     expect(server.remoteImageHits()).toBe(0);
   });
@@ -216,12 +224,13 @@ describe.each(chosen)("%s under the dashboard's policy", (name) => {
 
   test("showInFrame refuses a frame without the allowed sandbox, a forged body and a disposed one; renderBody refuses a missing nonce", async () => {
     const body: SerializedBody = { text: "x", html: null, attachments: [] };
-    for (const sandbox of [null, "", "allow-scripts", "allow-same-origin", "allow-forms", "allow-top-navigation", "allow-popups allow-scripts", "allow-top-navigation-by-user-activation", "allow-modals"]) {
+    for (const sandbox of [null, "allow-scripts", "allow-same-origin", "allow-forms", "allow-top-navigation", "allow-popups allow-scripts", "allow-top-navigation-by-user-activation", "allow-modals"]) {
       const result = await page.evaluate(([b, s]) => harness.render(b, s, null), [body, sandbox] as const);
       expect(result.ok, `sandbox=${JSON.stringify(sandbox)}`).toBe(false);
       if (!result.ok) expect(result.error.name).toBe("UnsafeFrame");
     }
-    for (const sandbox of ["allow-popups", "allow-popups allow-popups-to-escape-sandbox", "ALLOW-POPUPS"]) {
+    // An empty sandbox attribute is the strictest sandbox of all.
+    for (const sandbox of ["", "allow-popups", "allow-popups allow-popups-to-escape-sandbox", "ALLOW-POPUPS"]) {
       const result = await page.evaluate(([b, s]) => harness.render(b, s, null), [body, sandbox] as const);
       expect(result.ok, sandbox).toBe(true);
     }
@@ -242,9 +251,19 @@ describe.each(chosen)("%s under the dashboard's policy", (name) => {
     const control = await page.evaluate(() => harness.stringSrcdoc());
     expect(control.threw).toBe(enforced);
     const violations = await page.evaluate(() => harness.violations());
-    const policyViolations = violations.filter((v) => v.directive === "trusted-types");
-    expect(policyViolations, "no `dompurify` or other policy was attempted").toEqual([]);
-    expect(violations.filter((v) => v.directive.startsWith("img-src") || v.directive.startsWith("style-src") || v.directive.startsWith("script-src"))).toEqual([]);
+    expect(violations.filter((v) => v.directive === "trusted-types"), "no `dompurify` or other policy was attempted").toEqual([]);
+    // DOMPurify parses the message into a detached document that inherits the page's policy, so the
+    // message's own <style> elements and style attributes are reported as refused inline styles
+    // there (they never render there anyway). Nothing else may be reported: no script, image,
+    // frame or connection was attempted by the page.
+    // The harness's two deliberate controls (an innerHTML probe, the plain-string srcdoc above) are
+    // reported as refused sinks: that is enforcement working. The message's <base> is reported by
+    // the detached parse too, before the sanitiser removes it.
+    const expected = (v: { directive: string; blocked: string; sample: string }) =>
+      (/^style-src(?:-elem|-attr)?$/.test(v.directive) && v.blocked === "inline") ||
+      (v.directive === "require-trusted-types-for" && /^(?:Element innerHTML\|<b>probe<\/b>|HTMLIFrameElement srcdoc\|<p>plain string<\/p>)/.test(v.sample)) ||
+      v.directive === "base-uri";
+    expect(violations.filter((v) => !expected(v))).toEqual([]);
     expect(POLICY_NAME).toBe("proprietor-mail#srcdoc");
   });
 

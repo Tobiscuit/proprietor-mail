@@ -11,7 +11,7 @@
  * nothing but the string renderBody is about to hand it. showInFrame refuses
  * a frame whose sandbox is missing or wider than popups, then assigns it.
  */
-import DOMPurify from "dompurify";
+import DOMPurify, { type Config } from "dompurify";
 import { base64 } from "./bytes";
 import { UnsafeFrame, UnsupportedBrowser } from "./errors";
 import type { BodyAttachment, MailBody, RenderedBody, TrustedHtml } from "./types";
@@ -57,13 +57,21 @@ interface RenderContext {
 
 interface PolicyLike {
   createHTML(input: string): TrustedHtml;
+  createScriptURL(input: string): unknown;
 }
 interface TrustedTypesLike {
   createPolicy(name: string, rules: { createHTML: (input: string) => string; createScriptURL: (input: string) => string }): PolicyLike;
 }
 
 let policy: PolicyLike | null | undefined;
-/** The one string the policy will accept, set by renderBody for the duration of one createHTML call. */
+/**
+ * The one string the policy accepts right now, or null: renderBody sets it
+ * around each of its two createHTML uses and clears it after. Under
+ * enforcement DOMParser.parseFromString is a sink too, so DOMPurify gets the
+ * message's HTML through this policy as well: that string only ever reaches
+ * DOMPurify's detached parse document, never a live one. The final document
+ * is the only TrustedHTML that reaches a live sink, the frame's srcdoc.
+ */
 let expected: string | null = null;
 
 function policyFor(): PolicyLike | null {
@@ -75,7 +83,8 @@ function policyFor(): PolicyLike | null {
   }
   policy = tt.createPolicy(POLICY_NAME, {
     createHTML(input: string): string {
-      if (expected === null || input !== expected) throw new TypeError(`${POLICY_NAME} accepts only HTML that renderBody produced`);
+      // DOMPurify also asks for an empty TrustedHTML when it is configured; harmless, and only while renderBody runs.
+      if (expected === null || (input !== expected && input !== "")) throw new TypeError(`${POLICY_NAME} accepts only what renderBody hands it, while it runs`);
       return input;
     },
     createScriptURL(): string {
@@ -85,15 +94,20 @@ function policyFor(): PolicyLike | null {
   return policy;
 }
 
-function trust(html: string): TrustedHtml | string {
-  const p = policyFor();
-  if (p === null) return html;
+/** Runs `use` while the policy accepts exactly `html`, and nothing else before or after. */
+function accepting<T>(html: string, use: () => T): T {
   expected = html;
   try {
-    return p.createHTML(html);
+    return use();
   } finally {
     expected = null;
   }
+}
+
+function trust(html: string): TrustedHtml | string {
+  const p = policyFor();
+  if (p === null) return html;
+  return accepting(html, () => p.createHTML(html));
 }
 
 // ---- CSS ---------------------------------------------------------------------
@@ -188,21 +202,26 @@ function escapeHtml(text: string): string {
 /** Sanitised body markup (inside <html>, as DOMPurify returned it) and the sanitised CSS of its <style> elements. */
 function sanitise(html: string, ctx: RenderContext): { markup: string; styles: string[] } {
   const p = purifierFor();
+  const tt = policyFor();
   current = ctx;
   let root: Node | null;
   try {
-    root = p.sanitize(html, {
-      USE_PROFILES: { html: true },
-      WHOLE_DOCUMENT: true,
-      RETURN_DOM: true,
-      FORBID_TAGS,
-      FORBID_ATTR,
-      ALLOWED_URI_REGEXP: /^(?:https?|mailto):/i,
-      ALLOW_DATA_ATTR: false,
-      ALLOW_UNKNOWN_PROTOCOLS: false,
-      // No DOMPurify policy: this package's policy is the only one, and it accepts only the final document.
-      TRUSTED_TYPES_POLICY: null,
-    });
+    // DOMPurify parses through DOMParser.parseFromString, a Trusted Types sink: it gets this
+    // package's policy (never its own `dompurify` one), which accepts the message's HTML for this
+    // call only. The parse document is detached; nothing in it runs.
+    root = accepting(html, () =>
+      p.sanitize(html, {
+        USE_PROFILES: { html: true },
+        WHOLE_DOCUMENT: true,
+        RETURN_DOM: true,
+        FORBID_TAGS,
+        FORBID_ATTR,
+        ALLOWED_URI_REGEXP: /^(?:https?|mailto):/i,
+        ALLOW_DATA_ATTR: false,
+        ALLOW_UNKNOWN_PROTOCOLS: false,
+        TRUSTED_TYPES_POLICY: tt as unknown as Config["TRUSTED_TYPES_POLICY"],
+      }),
+    );
   } finally {
     current = null;
   }
@@ -214,6 +233,21 @@ function sanitise(html: string, ctx: RenderContext): { markup: string; styles: s
     if (css.trim().length > 0) styles.push(css);
     style.remove();
   }
+  // Inline `style` attributes would be refused by the inherited policy (style-src-attr has no
+  // nonce), so each becomes a class rule in the nonce-stamped stylesheet; the hook above already
+  // scrubbed their declarations.
+  const inline: string[] = [];
+  let n = 0;
+  for (const el of Array.from(element.querySelectorAll("[style]"))) {
+    const css = el.getAttribute("style") ?? "";
+    el.removeAttribute("style");
+    if (css.trim().length === 0) continue;
+    n += 1;
+    const name = `pm-inline-${n}`;
+    el.setAttribute("class", `${el.getAttribute("class") ?? ""} ${name}`.trim());
+    inline.push(`.${name}{${css}}`);
+  }
+  if (inline.length > 0) styles.push(inline.join("\n"));
   return { markup: element.outerHTML, styles };
 }
 
