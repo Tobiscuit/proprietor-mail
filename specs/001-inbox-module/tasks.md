@@ -273,7 +273,7 @@ is stored or logged in the clear (the marker scan extended to recipients);
 SQS requests signed and shaped as the SQS JSON protocol documents; a batch
 with a failed delete is retried, not lost.
 
-### S6a — `@proprietor/mail-client` (K1, G17, G18, G23) — [ ] not started
+### S6a — `@proprietor/mail-client` (K1, G17, G18, G23) — [x] built 2026-10-04 (PR #13)
 
 **Contract:** `contracts/mail-client-v1.md`; the stub in
 `packages/mail-client`. **Owns:** `packages/mail-client/**`; in
@@ -286,6 +286,28 @@ contract, in Chromium, Firefox and WebKit under the dashboard's exact policy
 with Trusted Types enforced; PRF through Chromium's virtual authenticator
 (`hasPrf`) and through an injected double elsewhere; the mutations named
 there make the tests fail.
+
+Builder's notes (2026-10-04):
+- D21 landed first: wraps are 77 bytes (PKCS #8 inside), `unwrapPrivateKey`
+  takes `{ wrappable }`, `generateMailboxKey` uses `generateKey`, the Mailbox
+  expects 77, vectors regenerated.
+- 86 Node tests; 12 browser tests per engine, opt-in
+  (`MAIL_CLIENT_BROWSER_TESTS=1`, the CI job `browsers`). Chromium (PRF via
+  the virtual authenticator) and Firefox passed on the builder's node; WebKit
+  could not launch there (host libraries), so it is proven only by CI.
+- Found in the browser tests, both agreed-upon policy consequences: under
+  Trusted Types enforcement `DOMParser.parseFromString` is a sink, so
+  DOMPurify must be handed the package's policy (`TRUSTED_TYPES_POLICY`),
+  which accepts the message's HTML for the detached parse and the final
+  document, during a render only; and `style-src-attr` refuses an email's
+  inline `style` attributes inside the frame, so they are moved into the
+  nonce-stamped sheet as class rules. The detached parse reports the email's
+  styles and `<base>` as CSP violations on the page (harmless; S6b's report
+  endpoint will see them).
+- The frame renders under `frame-src 'self'` (the test policy): about:srcdoc
+  needs no entry of its own. Playwright 1.63's own `context.credentials` has
+  no PRF, so Chromium uses CDP `WebAuthn.addVirtualAuthenticator` with
+  `hasPrf`.
 
 ### S6b — The inbox screens, a pull request into the dashboard — [ ] not started
 
@@ -307,7 +329,7 @@ virtual authenticator; the frame under the shell's policy.
   and R2, configuration set, events feed, SES tenant and associations, the
   sending principal's policy, the probe's rule, and the routing switch as a
   full replacement of today's rules file (architect)
-- [ ] scripts (builder): secrets from the secret store into `wrangler secret
+- [x] scripts (builder): secrets from the secret store into `wrangler secret
   put` through standard input; the provisioning printer's address rows (with
   S2b); and **an operator CLI for `MailAdmin`** (`setDelivery`, `suspend`,
   `resume`). `MailAdmin` is bound to nothing on purpose, so without this CLI
@@ -329,6 +351,8 @@ virtual authenticator; the frame under the shell's policy.
 Audited 2026-09-29: PR #11, 528 passed; a mutation that drops the `from` guard fails `test/send.test.ts`.
 
 Audited 2026-10-03: PR #12, 563 passed; a mutation that drops the suppression check in `send` fails six tests in `test/deliverability.test.ts`.
+
+Audited 2026-10-04: PR #13, 625 passed, browser suites green in CI; a mutation that drops the advertised-key check (K2) fails `test/unlock.test.ts`.
 
 ## P — Publication  *(2026-09-26)*
 

@@ -34,7 +34,7 @@ const LABELS = {
 
 test("write contracts/envelope-v1.vectors.json", async () => {
   const skRm = clamp(await sha256(utf8(LABELS.mailboxKey)));
-  const priv = await importPrivateScalar(skRm);
+  const priv = await importPrivateScalar(skRm, { wrappable: true });
   const { keyId, publicKey, keyPair } = materialOf(priv);
   const pub: MailboxPublicKey = { keyId, publicKey };
   const mailboxId = newId("mbx");

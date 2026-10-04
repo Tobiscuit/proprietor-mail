@@ -27,7 +27,7 @@ import {
   sealKeyEnvelope,
 } from "./envelope";
 import {
-  importPrivateScalar,
+  generatePrivateKey,
   importPublicKey,
   keyIdOf as keyIdOfPublicKey,
   materialOf,
@@ -108,10 +108,13 @@ export interface MailboxPublicKey {
 
 /**
  * A mailbox private key held in the browser. Opaque on purpose: a frozen
- * `{ keyId }` handle whose key material (a non-extractable X25519 CryptoKey
- * and the raw scalar, read only by wrapPrivateKey) lives in a module-private
- * WeakMap. It is never serialized except inside a wrap; a clone or a forged
- * object is refused with a TypeError.
+ * `{ keyId }` handle whose key material (an X25519 CryptoKey, never read as
+ * bytes by this module: D21, K1) lives in a module-private WeakMap. It is
+ * never serialized except inside a wrap, made by Web Crypto's `wrapKey`; a
+ * clone or a forged object is refused with a TypeError. A key from
+ * `generateMailboxKey` is wrappable (enrollment must wrap it); one from
+ * `unwrapPrivateKey` is non-extractable and decrypt-only unless that unlock
+ * asked for `wrappable`.
  */
 export interface MailboxPrivateKey {
   readonly keyId: string;
@@ -128,7 +131,7 @@ export interface KeyWrap {
   id: string;
   keyId: string;
   kind: WrapKind;
-  /** base64url of 0x01 || iv || AES-256-GCM(kek, iv, aad, private key raw 32 bytes). */
+  /** base64url of 0x01 || iv || AES-256-GCM(kek, iv, aad, PKCS #8 PrivateKeyInfo of the private key, 48 bytes): 77 bytes. */
   wrapped: string;
 }
 
@@ -199,15 +202,11 @@ export async function sealMessage(
 
 // ---- API: the browser --------------------------------------------------------
 
+/** A fresh key pair, made inside Web Crypto (`generateKey`): wrappable, so that enrollment can wrap it; never exported. */
 export async function generateMailboxKey(): Promise<{ publicKey: MailboxPublicKey; privateKey: MailboxPrivateKey }> { // pragma: allowlist secret (a type)
-  const scalar = randomBytes(32);
-  try {
-    const privateKey = await importPrivateScalar(scalar);
-    const { keyId, publicKey } = materialOf(privateKey);
-    return { publicKey: { keyId, publicKey: copy(publicKey) }, privateKey };
-  } finally {
-    scalar.fill(0);
-  }
+  const privateKey = await generatePrivateKey();
+  const { keyId, publicKey } = materialOf(privateKey);
+  return { publicKey: { keyId, publicKey: copy(publicKey) }, privateKey };
 }
 
 export async function openHeader(
@@ -289,11 +288,18 @@ export async function wrapPrivateKey(
   return wrapWithSecret(priv, ctx);
 }
 
+/**
+ * Opens a wrap with `unwrapKey` into a non-extractable, decrypt-only key
+ * (K1). `wrappable: true` makes the key extractable for the one operation
+ * that wraps it again (a new passkey, a new recovery key); an unlocked
+ * session must never keep such a key.
+ */
 export async function unwrapPrivateKey(
   wrap: KeyWrap,
   ctx: { mailboxId: string; secret: Uint8Array }, // pragma: allowlist secret (a type)
+  options?: { wrappable?: boolean },
 ): Promise<MailboxPrivateKey> {
-  return unwrapWithSecret(wrap, ctx);
+  return unwrapWithSecret(wrap, ctx, options);
 }
 
 /** A new 32-byte recovery secret and the 55-character display form (11 groups of 5). */

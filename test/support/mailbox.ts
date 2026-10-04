@@ -92,11 +92,11 @@ export async function newKeyPair(): Promise<TestKey> {
   return { keyId, publicKey, privateKey };
 }
 
-/** A recovery wrap of the right SHAPE (0x01 || iv || 48 bytes). The Worker cannot tell it from a real one, by design. */
+/** A recovery wrap of the right SHAPE (0x01 || iv || 64 bytes: the PKCS #8 key and the tag, D21). The Worker cannot tell it from a real one, by design. */
 export function recoveryWrap(keyId: string, over: Record<string, unknown> = {}) {
-  const bytes = new Uint8Array(61);
+  const bytes = new Uint8Array(77);
   bytes[0] = 1;
-  bytes.set(crypto.getRandomValues(new Uint8Array(60)), 1);
+  bytes.set(crypto.getRandomValues(new Uint8Array(76)), 1);
   return { id: testId("wrp"), keyId, kind: "recovery", label: "Recovery key", wrapped: base64urlFromBytes(bytes), ...over };
 }
 

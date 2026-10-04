@@ -1120,8 +1120,8 @@ function parseWrap(value: unknown, what: string): ParsedWrap {
     kind,
     credentialId,
     label: v.text(w.label, `${what} label`, { min: 1, max: 100, singleLine: true }),
-    // 0x01 || iv (12) || AES-256-GCM of the 32-byte private key (+16 tag) = 61 bytes.
-    wrapped: v.base64url(w.wrapped, `${what} wrapped key`, { bytes: 61 }),
+    // 0x01 || iv (12) || AES-256-GCM of the key's 48-byte PKCS #8 PrivateKeyInfo (+16 tag) = 77 bytes (envelope v1, D21).
+    wrapped: v.base64url(w.wrapped, `${what} wrapped key`, { bytes: 77 }),
   };
 }
 
