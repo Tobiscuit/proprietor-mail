@@ -1,0 +1,12 @@
+{
+  // The operator's MailAdmin tool (tasks.md S8, plan.md §15 step 8). NEVER
+  // deployed: run it with `wrangler dev` (see index.ts), which binds the
+  // DEPLOYED Mail Worker's MailAdmin entrypoint remotely. MailAdmin stays
+  // bound to nothing deployed, so only an operator with the account's
+  // credentials, on his own machine, can call it.
+  "name": "proprietor-mail-admin-local",
+  "main": "index.ts",
+  "compatibility_date": "2026-09-22",
+  "workers_dev": false,
+  "services": [{ "binding": "ADMIN", "service": "proprietor-mail", "entrypoint": "MailAdmin", "remote": true }]
+}
