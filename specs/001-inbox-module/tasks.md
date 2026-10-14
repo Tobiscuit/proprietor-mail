@@ -330,14 +330,21 @@ virtual authenticator; the frame under the shell's policy.
   sending principal's policy, the probe's rule, and the routing switch as a
   full replacement of today's rules file (architect)
 - [x] scripts (builder): secrets from the secret store into `wrangler secret
-  put` through standard input; the provisioning printer's address rows (with
-  S2b); and **an operator CLI for `MailAdmin`** (`setDelivery`, `suspend`,
-  `resume`). `MailAdmin` is bound to nothing on purpose, so without this CLI
-  `plan.md` §15 step 8 has no caller. Proposed: a local `wrangler dev` with a
+  put` through standard input (the runbook's commands); the provisioning
+  printer's address rows (with S2b)
+- [x] **the operator CLI for `MailAdmin`** (`setDelivery`, `suspend`,
+  `resume`), 2026-10-14: `scripts/mail-admin/`, a local `wrangler dev` with a
   remote service binding to the deployed Worker's `MailAdmin` entrypoint, so
-  that nothing new is deployed. Whether remote bindings reach a named
-  entrypoint is checked with context7 first. The probe is a throwaway in the
-  operator's runbook, not code in this repository.
+  nothing new is deployed. Remote bindings reaching a named entrypoint were
+  confirmed in practice (wrangler 4.131, against another Worker's entrypoint,
+  2026-10-05). `MailAdmin` stays bound to nothing deployed.
+- [x] the throwaway probe (operator's runbook, not code here), 2026-10-13:
+  - **a throw is a temporary failure**: the sending server retried on its own
+    about five minutes later, with no bounce. A storage failure in `store`
+    mode delays mail, it does not lose or bounce it.
+  - **Workers Logs**: with invocation logs off, every entry of an email
+    invocation still named the envelope sender and recipient, so the
+    Worker's logs are off entirely (G25, D20).
 
 ### S7 — The assistant, "ask about one message" only  *[H: after the above; D1]*
 

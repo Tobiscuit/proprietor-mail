@@ -17,11 +17,13 @@
   "workers_dev": false,
   "preview_urls": false,
 
-  // The Worker's own log lines carry ids, sizes, counts and outcomes only
-  // (domain-model M1, spec D8). Invocation logs are off: Workers Logs would
-  // otherwise record each email invocation with its envelope recipient
-  // (domain-model G25, spec D20).
-  "observability": { "enabled": true, "logs": { "invocation_logs": false } },
+  // Workers Logs are OFF for this Worker (domain-model G25, spec D20). The
+  // S8 probe showed that every log entry from an email invocation - the
+  // Worker's own id-only lines and an exception's alike - carries the
+  // envelope sender and recipient, even with invocation logs off. So the
+  // operator would hold who wrote to whom (against D8). For a deliberate
+  // debugging session, `wrangler tail` streams live and stores nothing.
+  "observability": { "enabled": false },
 
   // The Mail Directory: Mail's own D1, never another application's. Named by
   // name only (domain-model G24): wrangler resolves the database by

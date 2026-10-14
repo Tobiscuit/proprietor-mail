@@ -49,7 +49,7 @@ describe("wrangler.jsonc", () => {
     expect(config.triggers).toEqual({ crons: ["*/5 * * * *"] });
   });
 
-  it("keeps Workers Logs on, with invocation logs off: no envelope recipient in the operator's logs (G25, D20)", () => {
-    expect(config.observability).toEqual({ enabled: true, logs: { invocation_logs: false } });
+  it("keeps Workers Logs off entirely: every entry of an email invocation names its sender and recipient (G25, D20)", () => {
+    expect(config.observability).toEqual({ enabled: false });
   });
 });
