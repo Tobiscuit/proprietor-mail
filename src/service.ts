@@ -77,6 +77,7 @@ export type MailboxRpc = Pick<
   | "upgrade"
   | "registerDevice"
   | "updateDevice"
+  | "removeDevice"
   | "setFactorKey"
   | "enroll"
   | "addWrap"
@@ -165,6 +166,15 @@ export class MailService extends WorkerEntrypoint<Env> {
   /** B7: from a device's own session, its new unlock key, tag and seal, or none (it locked). */
   async updateDevice(cap: string, request: unknown, auth?: Auth): Promise<MailResult<DeviceView>> {
     return this.#withMailbox("updateDevice", cap, auth, (stub, ctx) => stub.updateDevice(ctx, request));
+  }
+
+  /**
+   * B7, F6: removes a kept device and rotates the mailbox key in one step: the
+   * new key sealed to every remaining recipient, the old one retired with its
+   * successor seal, every other session ended. Answers the new key's id.
+   */
+  async removeDevice(cap: string, request: unknown, auth?: Auth): Promise<MailResult<{ keyId: string }>> {
+    return this.#withMailbox("removeDevice", cap, auth, (stub, ctx) => stub.removeDevice(ctx, request));
   }
 
   /** B7, F9: a factor left out of the upgrade gets its factor key, proved by another factor. */

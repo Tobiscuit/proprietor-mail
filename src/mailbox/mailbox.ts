@@ -35,6 +35,7 @@ import {
   enrolmentDevice,
   enrolmentFactors,
   registerDevice,
+  removeDevice,
   removeKeyedWrap,
   setFactorKey,
   splitFactorFields,
@@ -627,6 +628,14 @@ export class Mailbox extends Agent<Env> {
     });
   }
 
+  /** B7, F6, M18: the device goes and the key rotates, in one transaction. */
+  async removeDevice(ctx: CallContext, request: unknown): Promise<MailResult<{ keyId: string }>> {
+    return this.answer("removeDevice", async () => {
+      const access = await this.enter(ctx, "removeDevice", "owner");
+      return removeDevice(this.store(), ctx, access, request);
+    });
+  }
+
   /** B7, F9: a factor left out of the upgrade gets its factor key, proved by another factor. */
   async setFactorKey(ctx: CallContext, request: unknown): Promise<MailResult<null>> {
     return this.answer("setFactorKey", async () => {
@@ -1020,6 +1029,7 @@ export class Mailbox extends Agent<Env> {
       transaction: (fn) => this.ctx.storage.transactionSync(fn),
       now: () => this.ports.clock.now(),
       newChallengeId: () => this.ports.ids.challengeId(),
+      keyIdOf: (publicKey) => this.ports.sealer.keyIdOf(publicKey),
       activeKey: () => this.activeKey(),
       audit: (actor, action, detail) => this.audit(actor, action, detail),
       proofs: this.ports.proofs,

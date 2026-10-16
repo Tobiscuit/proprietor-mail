@@ -306,6 +306,7 @@ function sessionMethods(mb: TestMailbox): [string, (cap: string, auth?: { sessio
     ["removeWrap", (cap, auth) => mail().removeWrap(cap, testId("wrp"), auth)],
     ["registerDevice", (cap, auth) => mail().registerDevice(cap, {}, auth)],
     ["updateDevice", (cap, auth) => mail().updateDevice(cap, {}, auth)],
+    ["removeDevice", (cap, auth) => mail().removeDevice(cap, {}, auth)],
     ["setFactorKey", (cap, auth) => mail().setFactorKey(cap, {}, auth)],
   ];
 }

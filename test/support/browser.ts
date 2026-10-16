@@ -3,7 +3,7 @@ import { newId } from "@proprietor/mail-crypto";
 import { exports } from "cloudflare:workers";
 import type { Role } from "../../src/capability";
 import { base64urlFromBytes, bytesFromBase64url } from "./capability-tokens";
-import { capFor, passkeyWrap, provisionMailbox, type TestKey, type TestMailbox } from "./mailbox";
+import { capFor, newKeyPair, passkeyWrap, provisionMailbox, type TestKey, type TestMailbox } from "./mailbox";
 import { valueOf } from "./results";
 
 /**
@@ -224,4 +224,33 @@ export async function keepDevice(
     ),
   );
   return device;
+}
+
+/**
+ * F6's request, made as the browser makes it from a fresh view: a new key
+ * pair, its successor seal, a seal of the new key to every remaining device
+ * with an unlock key and every factor with a factor key, and a tag for every
+ * remaining device and keyed factor. Seals and tags are of the right shape
+ * only; Mail checks shapes and coverage, never their contents.
+ */
+export async function rotationFor(mb: TestMailbox, removedDeviceId: string) {
+  const view = valueOf(await mail().mailbox(await capFor(mb)));
+  const from = view.keys.find((k) => k.retiredAt === null)!.keyId;
+  const next = await newKeyPair();
+  const others = view.devices.filter((d) => d.id !== removedDeviceId);
+  const factors = view.wraps.filter((w) => w.factorKey !== null);
+  const rotation = {
+    from,
+    publicKey: base64urlFromBytes(next.publicKey),
+    successorSeal: fakeSeal(109),
+    seals: [
+      ...others.filter((d) => d.unlockKey !== null).map((d) => ({ to: { kind: "device" as const, id: d.id }, sealed: fakeSeal(142) })),
+      ...factors.map((f) => ({ to: { kind: "factor" as const, id: f.id }, sealed: fakeSeal(109) })),
+    ],
+    tags: [
+      ...others.map((d) => ({ to: { kind: "device" as const, id: d.id }, tag: fakeTag() })),
+      ...factors.map((f) => ({ to: { kind: "factor" as const, id: f.id }, tag: fakeTag() })),
+    ],
+  };
+  return { next, rotation };
 }
