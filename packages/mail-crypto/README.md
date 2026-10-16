@@ -144,6 +144,48 @@ uses it.
 - **Unambiguous associated data.** An id must be a non-empty string without
   `|`, the separator. Ids from `newId` always are.
 
+### Kept devices, factor keys and sessions (device-v1 Part A)
+
+[`contracts/device-v1.md`](../../contracts/device-v1.md) Part A adds formats
+next to envelope v1, and this package is their one implementation. The
+browser's half is here: `deriveFactorKey`/`factorPublicKey` (A2),
+`generateSigningKey`/`generateUnlockKey` (A3), `sealKey`/`openKeySeal`
+(A4), `bindingKey`/`bindingTag`/`verifyBindingTag` (A5), `openChallenge`
+(A6) and `signDeviceProof` (A7). The Worker's half (`sealChallenge`,
+`verifyDeviceProof`) is `src/proofs.ts`. The vectors are
+`contracts/device-v1.vectors.json` (`npm run write-device-vectors`), and
+`test/device-vectors.test.ts` reads each one a second time from the
+contract's text with OpenSSL, `@hpke/core` and raw Web Crypto.
+
+- **Factor keys** use RFC 9180 DeriveKeyPair written here, not
+  `@hpke/core`'s `deriveKeyPair`: in 1.9.0 that one imports the private
+  key extractable and leaves its PKCS #8 buffer unzeroed. Here skF is
+  non-extractable, and the secret's copy, ikm and the scalar are zeroed.
+  Checked against RFC 9180 A.1.1, `@hpke/core` and OpenSSL.
+- **A P-256 seal opens only with the recipient's key pair.** Given a
+  non-extractable private key alone, `@hpke/core` 1.9.0 recomputes the
+  public key for the KEM context and picks the even-y point
+  (`Ec._derivePublicKeyWithoutJwkExport`), the wrong point for about half
+  of all keys. `openKeySeal` takes the device's public form with its
+  private key; a test shows both behaviours.
+- **The KEK is bytes for one import.** HPKE's `export()` returns an
+  `ArrayBuffer`; it becomes a non-extractable AES-GCM key at once and is
+  zeroed. The mailbox key itself still never exists as bytes: `wrapKey`
+  and `unwrapKey` move it.
+- **Opened keys are non-extractable** unless the caller asks for
+  `wrappable` for one sealing step (Part C, K1′), and a seal is refused
+  unless it holds the key it names.
+- **Tags never throw on what Mail sent**: `verifyBindingTag` is false for
+  anything malformed. Labels must be well-formed Unicode, because
+  `TextEncoder` maps every lone surrogate to U+FFFD and two labels would
+  otherwise share a tag.
+- **A challenge's purpose and target come from the key**: a mailbox key
+  answers only session challenges for its keyId, a factor key only factor
+  challenges for its id (K4).
+- The key-seal `info` strings are 129 to 134 bytes. `@hpke/core` 1.9.0
+  enforces 2^28 bytes (its type comment's "128 bytes" is stale); RFC 9180
+  asks implementations to support at least 64.
+
 ### Errors
 
 | Error | When |
