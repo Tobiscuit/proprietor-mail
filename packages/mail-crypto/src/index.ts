@@ -325,6 +325,7 @@ export type { SealOpener, SealRecipient } from "./seals";
 export { KEY_SEAL_BYTES, openKeySeal, sealKey } from "./seals";
 export type { BindingKey, TagRecipient } from "./binding";
 export { bindingKey, bindingTag, verifyBindingTag } from "./binding";
+export { CHALLENGE_BYTES, openChallenge } from "./challenges";
 
 // ---- Internals ---------------------------------------------------------------
 
