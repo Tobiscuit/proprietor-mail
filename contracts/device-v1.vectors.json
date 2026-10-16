@@ -1,0 +1,242 @@
+{
+  "contract": "contracts/device-v1.md",
+  "about": "Test vectors for device-v1 Part A, written by packages/mail-crypto (npm run write-device-vectors -w @proprietor/mail-crypto) and checked by its test/device-vectors.test.ts. Every key and secret is SHA-256 of the public label next to it: test values only, never used for real mail. Mailbox keys are clamped X25519 scalars; P-256 scalars d are SHA-256 of their label read as a big-endian integer. Byte strings are lowercase hex, except the stored forms (sealed, tag, signature, nonce, keyEnvelope, wrapped) and the recipients' keys in tags, which are base64url without padding (RFC 4648 §5). The challenges and the device proof were made by a sealer and a signer written from the contract; Mail's are src/proofs.ts.",
+  "mailboxId": "mbx_7bayafm27twja0480w6tcr0vpq",
+  "mailboxKey": {
+    "label": "proprietor-mail/device-v1 test vectors: mailbox private key (never use for real mail)",
+    "sk": "8835027d4a21affb2646fa8babaa73f429b42d9bd5d85c22d37d83dacc15e45e",
+    "pk": "f9fddcd81b9baf092b3312e54483cfaa5a3a8f42ebc1b00ee7e9bcd7d30e3a75",
+    "keyId": "e5fe50bf2549a47c48b04b397af5f21c"
+  },
+  "successorKey": {
+    "label": "proprietor-mail/device-v1 test vectors: successor mailbox private key (never use for real mail)",
+    "sk": "707486d4c1eb6cf95989fbd55f3554b53acc3ce3c4705c6831db1cba953e3868",
+    "pk": "4e9a17a6b94f8a5cdbed0dddca612fd7bc549eb8b4a3e8d550db3f98267e2a79",
+    "keyId": "4626b27771722f9c280e0d6835eb4f7a"
+  },
+  "factors": [
+    {
+      "name": "passkey",
+      "kind": "passkey-prf",
+      "factorId": "wrp_572b6c5rvb172zt64bnygg4kam",
+      "secretLabel": "proprietor-mail/device-v1 test vectors: passkey PRF output (never use for real mail)",
+      "secret": "91f61800b7f131c28a5b3e9b3ca48497b88bbe306dba9cac8f5543ff75171f40",
+      "ikm": "e4c7fef4e7002a484f0c57798bbf5005aae3ad75a6864dc3adbb25a3be5d67f5",
+      "skF": "9202c18de0feab2f0d22b61e0ef9af53cb0edb006ba3f730b981668391f59999",
+      "pkF": "e53900ead514af9ac9d012e301db25d6b9ac573059e509a6c358f008b227ce32"
+    },
+    {
+      "name": "recovery",
+      "kind": "recovery",
+      "factorId": "wrp_61jj1nmechh5vs834d421a0n2c",
+      "secretLabel": "proprietor-mail/device-v1 test vectors: recovery secret (never use for real mail)",
+      "secret": "5b4d29db6325f560bec8164f61555ac2d8c2cdb4da5cf28ab3958902b404ad83",
+      "recoveryDisplay": "1DMTA-EVCCJ-ZAR5Y-S0B4Y-RANBB-1DHGP-DPKD5-SWMAP-EARJ0-NM0JP-R6S5J",
+      "ikm": "2030139df93c06d83cf55f60d1d3320fe10d83aba5a70ef84352cc68d612e914",
+      "skF": "0b9546e669efbfeacbacf6ae147a3bd1fefd0080398c0669ce668668f8853133",
+      "pkF": "4a3586420e5154f7c4278eb196c4c5ff814e4b9c3b249dd70d8b851d2a56937f"
+    }
+  ],
+  "device": {
+    "deviceId": "dev_53vx7ragq33j77rn95dxbbrgvk",
+    "label": "Kitchen laptop",
+    "signing": {
+      "label": "proprietor-mail/device-v1 test vectors: device signing key (never use for real mail)",
+      "d": "56120d12786470085d5ac889ea59d1b8ff9128912b6beb3f57988dfda7f62607",
+      "publicKey": "047eba972441a1378e962cfaea211d693c954521e570ee0bff2222bca4d1922d1cb2558cf8f13b94d38fc05d802759271cf28b5c8578fed9964de0e799c8cc83bf"
+    },
+    "unlock": {
+      "label": "proprietor-mail/device-v1 test vectors: device unlock key (never use for real mail)",
+      "d": "1d9527e04a68aea94bab25260ad0b649bb730bfb9aca29ec4199a500438c38ad",
+      "publicKey": "047f4d7aff7dddf4fa4f404bf3cf9189de54496c4e96396bf29bd51473c0077a46fa0142e57764a9471cb5ce8f999e6e487a6c6485768759ad48c9825a352e7c80"
+    }
+  },
+  "seals": [
+    {
+      "name": "to a device",
+      "toKind": "device",
+      "toId": "dev_53vx7ragq33j77rn95dxbbrgvk",
+      "sealedKeyId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "recipient": "device.unlock",
+      "sealed": "AQR2I7R5qXFQSgRMJizt23EZq5mb36-NkTpdpQCV53v9xxtZRaTaWLt9cjZ7jCroOFjL0EnE6Un88nxU-aPV5oOqzQKalfdKPCgN65XCoSPuy8fi98Jq9nSP8Eq6DD_cuQwcyJD5OT8t_swkLoAK0gscr9oOB9ltbQj9521W-DO7h7j1P_hfVGNvBRq1gg"
+    },
+    {
+      "name": "to a factor",
+      "toKind": "factor",
+      "toId": "wrp_61jj1nmechh5vs834d421a0n2c",
+      "sealedKeyId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "recipient": "factors.recovery",
+      "sealed": "ASucVjkBXc7di8O09i9J9wvLWkvMfrLRge3cuKVnxFgwZeUhjkh4OSOsELU3rVsELb0VI1CmHkzG3wAZLyVuVqsndfZS6ygBoqFLJzXBoR24loFWC5oa41D4IQGiywo7s9SaEEOoqvGnaiN50Q"
+    },
+    {
+      "name": "successor seal",
+      "toKind": "successor",
+      "toId": "4626b27771722f9c280e0d6835eb4f7a",
+      "sealedKeyId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "recipient": "successorKey",
+      "sealed": "AS7i_OFupBQuxZv9TJCOYCNObRfsF1REsur3ytF0vi1A0xiw3gDZbPB77UJ2DZ_1jepf-EG6RUUm0RqthkiAaslCXIR7lyirlPviN8oubKgcjN_J_j0e0mm9lNCh3RAdSU0-DTMUX3LygW0G9A"
+    }
+  ],
+  "tags": [
+    {
+      "name": "device",
+      "keyId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "recipient": {
+        "kind": "device",
+        "deviceId": "dev_53vx7ragq33j77rn95dxbbrgvk",
+        "label": "Kitchen laptop",
+        "signingKey": "BH66lyRBoTeOliz66iEdaTyVRSHlcO4L_yIivKTRki0cslWM-PE7lNOPwF2AJ1knHPKLXIV4_tmWTeDnmcjMg78",
+        "unlockKey": "BH9Nev993fT6T0BL88-Rid5USWxOljlr8pvVFHPAB3pG-gFC5XdkqUcctc6PmZ5uSHpsZIV2h1mtSMmCWjUufIA"
+      },
+      "message": "proprietor-mail/v1/recipient|mbx_7bayafm27twja0480w6tcr0vpq|e5fe50bf2549a47c48b04b397af5f21c|device|dev_53vx7ragq33j77rn95dxbbrgvk|S2l0Y2hlbiBsYXB0b3A|BH66lyRBoTeOliz66iEdaTyVRSHlcO4L_yIivKTRki0cslWM-PE7lNOPwF2AJ1knHPKLXIV4_tmWTeDnmcjMg78|BH9Nev993fT6T0BL88-Rid5USWxOljlr8pvVFHPAB3pG-gFC5XdkqUcctc6PmZ5uSHpsZIV2h1mtSMmCWjUufIA",
+      "tag": "OGPVwAqR97MlJLye3vA40txDq_BwK9vcVDzgs8JxdYc"
+    },
+    {
+      "name": "factor",
+      "keyId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "recipient": {
+        "kind": "factor",
+        "factorId": "wrp_572b6c5rvb172zt64bnygg4kam",
+        "factorKind": "passkey-prf",
+        "label": "Security key",
+        "factorKey": "5TkA6tUUr5rJ0BLjAdsl1rmsVzBZ5Qmmw1jwCLInzjI",
+        "credentialId": "bebILN_sVIrmW7_QMy-4mg"
+      },
+      "message": "proprietor-mail/v1/recipient|mbx_7bayafm27twja0480w6tcr0vpq|e5fe50bf2549a47c48b04b397af5f21c|factor|wrp_572b6c5rvb172zt64bnygg4kam|passkey-prf|U2VjdXJpdHkga2V5|5TkA6tUUr5rJ0BLjAdsl1rmsVzBZ5Qmmw1jwCLInzjI|bebILN_sVIrmW7_QMy-4mg",
+      "tag": "5ZWbWKDqxRx4s7N4K3J-CiddrDzARf_gH8f1N6n5JRg"
+    }
+  ],
+  "challenges": [
+    {
+      "name": "session",
+      "purpose": "session",
+      "challengeId": "chl_24tjds9j6jy7qf1zm0dtv6gzsy",
+      "targetId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "sealed": "BpbUms3HWkvUTTJQ-hjXc8QlcKpH6VfKMiA1UMFQnxTH0CDHtQvrgoVXtiBSnKaccWYjYIavJvEGjQJiFT3RJmZhovukzbQieVLKWIibGPc",
+      "answer": "f5901d36b2b40453bda8b1203e1c84d3f26f17ab68eb2696b0f40db4581c30ca"
+    },
+    {
+      "name": "factor",
+      "purpose": "factor",
+      "challengeId": "chl_6e6hyfxpws1x7hyng7trhtq8p7",
+      "targetId": "wrp_572b6c5rvb172zt64bnygg4kam",
+      "sealed": "5DxRLLZpjKE72uhzOHR0dcShq4Jvqv1aR6lRqTBwqlk5a1NGSAJf2qoFPbLY3lGEZLKatCLbya-3SM5hL1ilgc1ESs9-rC0KE1f1U04l9no",
+      "answer": "747fdd054958fba1336639f4f7feb74da459a4f6d9995ee99de6717f4294855a"
+    }
+  ],
+  "deviceProof": {
+    "deviceId": "dev_53vx7ragq33j77rn95dxbbrgvk",
+    "challengeId": "chl_24tjds9j6jy7qf1zm0dtv6gzsy",
+    "nonce": "NQ7X1UZ8xUkh5dURp5N1Dq97ZGY0InAA3qKpNe49W8s",
+    "message": "proprietor-mail/v1/device-proof|mbx_7bayafm27twja0480w6tcr0vpq|dev_53vx7ragq33j77rn95dxbbrgvk|chl_24tjds9j6jy7qf1zm0dtv6gzsy|NQ7X1UZ8xUkh5dURp5N1Dq97ZGY0InAA3qKpNe49W8s",
+    "publicKey": "047eba972441a1378e962cfaea211d693c954521e570ee0bff2222bca4d1922d1cb2558cf8f13b94d38fc05d802759271cf28b5c8578fed9964de0e799c8cc83bf",
+    "signature": "AkA3rJjxVGxjM8J-veGWRwCM9XOcxitSOfuoYWGowX0lpY8Zskz3YHvqWTzqCV_KSTHcqiUS6D6J3dLg6LlRdg"
+  },
+  "negative": [
+    {
+      "name": "a device seal opened with another device id",
+      "open": "seal",
+      "sealed": "AQR2I7R5qXFQSgRMJizt23EZq5mb36-NkTpdpQCV53v9xxtZRaTaWLt9cjZ7jCroOFjL0EnE6Un88nxU-aPV5oOqzQKalfdKPCgN65XCoSPuy8fi98Jq9nSP8Eq6DD_cuQwcyJD5OT8t_swkLoAK0gscr9oOB9ltbQj9521W-DO7h7j1P_hfVGNvBRq1gg",
+      "toKind": "device",
+      "toId": "dev_1ag9r0wm7gge73maz1m4azefpk",
+      "sealedKeyId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "recipient": "device.unlock",
+      "expect": "DecryptionFailed"
+    },
+    {
+      "name": "a factor seal opened with another factor id",
+      "open": "seal",
+      "sealed": "ASucVjkBXc7di8O09i9J9wvLWkvMfrLRge3cuKVnxFgwZeUhjkh4OSOsELU3rVsELb0VI1CmHkzG3wAZLyVuVqsndfZS6ygBoqFLJzXBoR24loFWC5oa41D4IQGiywo7s9SaEEOoqvGnaiN50Q",
+      "toKind": "factor",
+      "toId": "wrp_572b6c5rvb172zt64bnygg4kam",
+      "sealedKeyId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "recipient": "factors.recovery",
+      "expect": "DecryptionFailed"
+    },
+    {
+      "name": "a successor seal opened with toKind factor",
+      "open": "seal",
+      "sealed": "AS7i_OFupBQuxZv9TJCOYCNObRfsF1REsur3ytF0vi1A0xiw3gDZbPB77UJ2DZ_1jepf-EG6RUUm0RqthkiAaslCXIR7lyirlPviN8oubKgcjN_J_j0e0mm9lNCh3RAdSU0-DTMUX3LygW0G9A",
+      "toKind": "factor",
+      "toId": "4626b27771722f9c280e0d6835eb4f7a",
+      "sealedKeyId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "recipient": "successorKey",
+      "expect": "DecryptionFailed"
+    },
+    {
+      "name": "a factor seal opened with toKind successor",
+      "open": "seal",
+      "sealed": "ASucVjkBXc7di8O09i9J9wvLWkvMfrLRge3cuKVnxFgwZeUhjkh4OSOsELU3rVsELb0VI1CmHkzG3wAZLyVuVqsndfZS6ygBoqFLJzXBoR24loFWC5oa41D4IQGiywo7s9SaEEOoqvGnaiN50Q",
+      "toKind": "successor",
+      "toId": "wrp_61jj1nmechh5vs834d421a0n2c",
+      "sealedKeyId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "recipient": "factors.recovery",
+      "expect": "DecryptionFailed"
+    },
+    {
+      "name": "a challenge opened as a key seal",
+      "open": "seal",
+      "sealed": "BpbUms3HWkvUTTJQ-hjXc8QlcKpH6VfKMiA1UMFQnxTH0CDHtQvrgoVXtiBSnKaccWYjYIavJvEGjQJiFT3RJmZhovukzbQieVLKWIibGPc",
+      "toKind": "successor",
+      "toId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "sealedKeyId": "4626b27771722f9c280e0d6835eb4f7a",
+      "recipient": "mailboxKey",
+      "expect": "DecryptionFailed"
+    },
+    {
+      "name": "a key seal opened as a challenge",
+      "open": "challenge",
+      "sealed": "AS7i_OFupBQuxZv9TJCOYCNObRfsF1REsur3ytF0vi1A0xiw3gDZbPB77UJ2DZ_1jepf-EG6RUUm0RqthkiAaslCXIR7lyirlPviN8oubKgcjN_J_j0e0mm9lNCh3RAdSU0-DTMUX3LygW0G9A",
+      "purpose": "session",
+      "challengeId": "chl_24tjds9j6jy7qf1zm0dtv6gzsy",
+      "targetId": "4626b27771722f9c280e0d6835eb4f7a",
+      "recipient": "successorKey",
+      "expect": "DecryptionFailed"
+    },
+    {
+      "name": "a message key envelope (envelope v1) presented as a challenge",
+      "open": "challenge",
+      "sealed": "oqbACjJcdGwAlS4vGjFvY2n4_KUiq_b-tkrvwTNWTUxXQDnYI6MczGw8O8oNigPGIpbvHaZObRFdO_mW-C91h6qVIw9yIk8I51mpqM4LNQc",
+      "purpose": "session",
+      "challengeId": "msg_191x85e16v4wk7e38r3x90hyj5",
+      "targetId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "recipient": "mailboxKey",
+      "expect": "DecryptionFailed"
+    },
+    {
+      "name": "a wrap (envelope v1) presented as a challenge",
+      "open": "challenge",
+      "sealed": "ATveBGsmBDhds-X2EoWZhR8xrhCU27Nlo10r6yAUGnD82nhHGYlITPLRicLtvNPiXr7TOFywxx5W6GSYfO4ECjB-DHxOvRnl7uNXjOE",
+      "purpose": "session",
+      "challengeId": "chl_24tjds9j6jy7qf1zm0dtv6gzsy",
+      "targetId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "recipient": "mailboxKey",
+      "expect": "DecryptionFailed"
+    },
+    {
+      "name": "a factor challenge presented as a session challenge",
+      "open": "challenge",
+      "sealed": "5DxRLLZpjKE72uhzOHR0dcShq4Jvqv1aR6lRqTBwqlk5a1NGSAJf2qoFPbLY3lGEZLKatCLbya-3SM5hL1ilgc1ESs9-rC0KE1f1U04l9no",
+      "purpose": "session",
+      "challengeId": "chl_6e6hyfxpws1x7hyng7trhtq8p7",
+      "targetId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "recipient": "mailboxKey",
+      "expect": "DecryptionFailed"
+    },
+    {
+      "name": "a tag over a changed label",
+      "open": "tag",
+      "of": "device",
+      "label": "Kitchen laptop (2)",
+      "tag": "OGPVwAqR97MlJLye3vA40txDq_BwK9vcVDzgs8JxdYc",
+      "expect": "invalid"
+    },
+    {
+      "name": "a device proof over another nonce",
+      "open": "deviceProof",
+      "nonce": "rI3p2HtsFKYtQPftD7VbfN48-GgOqBzUFVVA_GThqh4",
+      "signature": "AkA3rJjxVGxjM8J-veGWRwCM9XOcxitSOfuoYWGowX0lpY8Zskz3YHvqWTzqCV_KSTHcqiUS6D6J3dLg6LlRdg",
+      "expect": "invalid"
+    }
+  ]
+}
