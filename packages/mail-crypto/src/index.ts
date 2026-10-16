@@ -321,6 +321,8 @@ export type { FactorPrivateKey } from "./factor-keys";
 export { deriveFactorKey, factorPublicKey } from "./factor-keys";
 export type { DeviceKeyPair } from "./device-keys";
 export { generateSigningKey, generateUnlockKey, isDeviceSigningKey, isDeviceUnlockKey, signDeviceProof } from "./device-keys";
+export type { SealOpener, SealRecipient } from "./seals";
+export { KEY_SEAL_BYTES, openKeySeal, sealKey } from "./seals";
 
 // ---- Internals ---------------------------------------------------------------
 
