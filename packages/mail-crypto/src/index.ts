@@ -319,6 +319,8 @@ export function parseRecoveryKey(display: string): Uint8Array {
 
 export type { FactorPrivateKey } from "./factor-keys";
 export { deriveFactorKey, factorPublicKey } from "./factor-keys";
+export type { DeviceKeyPair } from "./device-keys";
+export { generateSigningKey, generateUnlockKey, isDeviceSigningKey, isDeviceUnlockKey, signDeviceProof } from "./device-keys";
 
 // ---- Internals ---------------------------------------------------------------
 
