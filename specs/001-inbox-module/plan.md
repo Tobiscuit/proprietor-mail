@@ -145,7 +145,7 @@ Bindings (sketch; S2 writes the real `wrangler.jsonc`):
   "durable_objects": { "bindings": [{ "name": "Mailbox", "class_name": "Mailbox" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Mailbox"] }],
   "triggers": { "crons": ["*/5 * * * *"] },   // the deliverability feed (§13)
-  "observability": { "enabled": true, "logs": { "invocation_logs": false } }   // G25, D20
+  "observability": { "enabled": false }   // Workers Logs off entirely (G25, D20)
   // secrets: MAIL_CAPABILITY_KEYS, SES_ACCESS_KEY_ID, SES_SECRET_ACCESS_KEY,
   //          MAIL_EVENTS_QUEUE_URL (it names the AWS account, so it is not a var)
   // vars:    SES_REGION = "us-east-1"
@@ -233,13 +233,16 @@ why). The "Returns" column below is the `value` of an `ok` result.
 | `purge(cap, messageId)` | yes | owner | row and R2 object deleted |
 | `drafts(cap)` / `saveDraft(cap, { id, keyId, keyEnvelope, sealed })` / `deleteDraft(cap, id)` | yes | open | sealed in the browser |
 | `send(cap, { idempotencyKey, from?, to, cc?, bcc?, subject, text, html?, inReplyTo?, references?, attachments?, draftId? })` | yes | send | `from` is one of the mailbox's addresses (default: the primary; M6). Refuses suppressed recipients with `RecipientSuppressed` (M11) before anything is reserved or sent. Builds MIME, sends through SES with the mailbox's SES tenant, its configuration set and the tag `mailbox=<id>` (§13), seals and stores the Sent copy, deletes `draftId`; plaintext lives only for the call |
-| `unread(cap)` | yes | open | `{ inbox: number }` |
+| `unread(cap)` | yes | open | `{ inbox: number }`: Inbox messages not yet seen whose `keyId` is one of the mailbox's keys, live or retired. A message sealed to any other key is listed, never counted (`mail-service-v1`, amended 2026-10-16) |
 | `setPolicy(cap, { displayName?, assistant? })` | yes | owner | `assistant: "on"` answers `AssistantUnavailable` in v1 |
 | `audit(cap, { before? })` | yes | owner | `[{ at, actor, action, detail }]` |
 
 Operator actions (provision, suspend, change delivery mode, close) are not on
 this surface. v1 does them with reviewed SQL against the Directory and one
-narrowly scoped admin entrypoint that S2 specifies but binds to nothing.
+narrowly scoped admin entrypoint, `MailAdmin`, that the deployed Worker binds
+to nothing. The operator reaches it from `scripts/mail-admin`: a local
+`wrangler dev` with a remote service binding to the deployed Worker's
+entrypoint (`tasks.md` S8).
 
 ## 5. Arrival, step by step, and what each failure does
 
@@ -249,7 +252,7 @@ narrowly scoped admin entrypoint that S2 specifies but binds to nothing.
 | Mailbox `provisioned`, `suspended` or `closed` | `setReject("This mailbox is not accepting mail")` (M2) |
 | `rawSize` above 25 MiB | `setReject("Message too large")` |
 | Headers do not parse | store it anyway, with `subject: ""`, `snippet: ""` and whatever parsed; never lose mail to a parser |
-| `store` mode: R2 or SQLite fails | throw — Email Routing's behaviour on a throw is unverified (spec §8); S8 settles it before any address is routed here |
+| `store` mode: R2 or SQLite fails | throw. The S8 probe (2026-10-13, `tasks.md`) showed what follows: the sending server sees a temporary failure and retries on its own, about five minutes later, with no bounce. Mail is delayed, not lost |
 | `store-and-forward`: forward fails | throw before storing anything, so the sender's server retries and no half-delivery exists |
 | `store-and-forward`: forward succeeded, storing fails | do not throw; audit row + an operator alert; the forward target has the message |
 
@@ -572,4 +575,13 @@ its shape. Every step is the operator's go; each has its way back.
     operator's word.
 
 **Rollback at any step after 8**: restore the rules' `forward` action.
+
+**Progress**, as recorded in `tasks.md` S8. Step 4 ran on 2026-10-13: a
+throw from `email()` is a temporary failure (the sending server retried on
+its own, about five minutes later, with no bounce), and Workers Logs are off
+entirely, because every entry of an email invocation names the envelope
+sender and recipient even with invocation logs off (G25, D20). The Worker is
+deployed (step 5). Steps 8 and 10 use the operator's `MailAdmin` tool,
+`scripts/mail-admin` (2026-10-14). The first mailbox, the operator's own, is
+active.
 

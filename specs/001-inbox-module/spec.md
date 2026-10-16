@@ -392,13 +392,15 @@ for this spec and are listed as future work, not as a plan.
 | DOMPurify 3.4.16 is the minimum version without a 2026 advisory; postal-mime 3.0.1 has the linear-time parsing fixes (4.0.0 is a rewrite without security fixes) | their advisories and changelogs |
 | The dashboard's framework caps a server action's body at 1 MB by default | its source (vinext 1.0.0-beta.12) |
 
+**Verified by the S8 probe (2026-10-13; `tasks.md` S8):**
+
+| Fact | Source |
+|---|---|
+| An exception thrown from the `email()` handler is a temporary failure: the sending server retried on its own about five minutes later, with no bounce. The design still never relies on it silently: permanent problems use `setReject`, and the move from forwarding (`plan.md` §8) forwards before it stores | a throwaway Worker on a throwaway address |
+| Workers Logs record every entry of an email invocation with the envelope sender and recipient, even with invocation logs off; the Worker's logs are therefore off entirely (D20) | the same probe |
+
 **Not verified**, and where it gets checked:
 
-- Whether an exception thrown from the `email()` handler makes Email Routing
-  answer with a temporary failure (the sender retries) or a bounce. The design
-  never relies on it silently: permanent problems use `setReject`, and the
-  move from forwarding (`plan.md` §8) forwards before it stores. Checked
-  before any address is routed to the Worker (`tasks.md` S8).
 - Which fields Email Routing's activity log shows the account owner.
 - Whether a page's `blob:` URL loads inside the opaque-origin frame (the
   reason `mail-client` uses `data:`), and React under ENFORCED Trusted Types:

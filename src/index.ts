@@ -13,8 +13,9 @@ export default {
   },
 
   // Email Routing's hand-off. A throw from here is a storage failure in
-  // `store` mode; what Email Routing then does (retry or bounce) is unverified
-  // (spec §8) and is settled by tasks.md S8 before any address is routed here.
+  // `store` mode: the sending server sees a temporary failure and retries on
+  // its own (the S8 probe, tasks.md), so the message is delayed, never lost
+  // or bounced.
   async email(message: ForwardableEmailMessage, env: Env, _ctx: ExecutionContext): Promise<void> {
     await handleEmail(message, env);
   },

@@ -9,8 +9,9 @@ import { mailboxRpc } from "./service";
 /**
  * The operator's narrow entrypoint (plan.md §4, tasks.md S2i): suspend,
  * resume, and the delivery mode with its forward target (M10). Exported and
- * bound to NOTHING: no Worker can call it until the operator deliberately
- * binds it to his own tooling. It carries no capability because it acts for
+ * bound to nothing deployed: its only caller is the operator's own tool,
+ * `scripts/mail-admin`, a local `wrangler dev` with a remote binding to this
+ * entrypoint (tasks.md S8). It carries no capability because it acts for
  * the operator, never for a mailbox owner; every change it makes is written
  * to the mailbox's audit log, which the owner reads.
  *

@@ -1059,8 +1059,21 @@ export class Mailbox extends Agent<Env> {
     this.ctx.storage.sql.exec("DELETE FROM messages WHERE id = ?", row.id);
   }
 
+  /**
+   * Inbox messages not yet seen that the owner can open: sealed to one of
+   * the mailbox's keys, live or retired. A message sealed to any other key can
+   * never be opened on the owner's devices, so it would never be marked seen
+   * and would hold the count at 1 for good. It stays listed, with its keyId,
+   * so the owner sees that something arrived; it is not counted
+   * (contracts/mail-service-v1.md, "unread").
+   */
   private inboxUnread(): number {
-    return this.rows<{ n: number }>("SELECT COUNT(*) AS n FROM messages WHERE folder_id = ? AND seen = 0", Folders.INBOX)[0]?.n ?? 0;
+    return (
+      this.rows<{ n: number }>(
+        "SELECT COUNT(*) AS n FROM messages WHERE folder_id = ? AND seen = 0 AND key_id IN (SELECT key_id FROM keys)",
+        Folders.INBOX,
+      )[0]?.n ?? 0
+    );
   }
 
   /** Never message content: ids, kinds, counts and outcomes only. */
