@@ -11,6 +11,7 @@ import type {
   AuditEntry,
   CallContext,
   ChallengeView,
+  DeviceView,
   DraftRecord,
   ListPage,
   MailboxView,
@@ -74,6 +75,9 @@ export type MailboxRpc = Pick<
   | "createChallenge"
   | "openSession"
   | "upgrade"
+  | "registerDevice"
+  | "updateDevice"
+  | "setFactorKey"
   | "enroll"
   | "addWrap"
   | "removeWrap"
@@ -151,6 +155,21 @@ export class MailService extends WorkerEntrypoint<Env> {
   /** B5: an existing mailbox learns its factors' keys, and sessions become required, once. */
   async upgrade(cap: string, request: unknown, auth?: Auth): Promise<MailResult<null>> {
     return this.#withMailbox("upgrade", cap, auth, (stub, ctx) => stub.upgrade(ctx, request));
+  }
+
+  /** B7, F1: keeps the calling browser as a device, with a factor proof; the caller's session becomes the device's. */
+  async registerDevice(cap: string, request: unknown, auth?: Auth): Promise<MailResult<DeviceView>> {
+    return this.#withMailbox("registerDevice", cap, auth, (stub, ctx) => stub.registerDevice(ctx, request));
+  }
+
+  /** B7: from a device's own session, its new unlock key, tag and seal, or none (it locked). */
+  async updateDevice(cap: string, request: unknown, auth?: Auth): Promise<MailResult<DeviceView>> {
+    return this.#withMailbox("updateDevice", cap, auth, (stub, ctx) => stub.updateDevice(ctx, request));
+  }
+
+  /** B7, F9: a factor left out of the upgrade gets its factor key, proved by another factor. */
+  async setFactorKey(cap: string, request: unknown, auth?: Auth): Promise<MailResult<null>> {
+    return this.#withMailbox("setFactorKey", cap, auth, (stub, ctx) => stub.setFactorKey(ctx, request));
   }
 
   async addWrap(cap: string, wrap: unknown, auth?: Auth): Promise<MailResult<null>> {

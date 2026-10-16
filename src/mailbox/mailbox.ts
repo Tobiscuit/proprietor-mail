@@ -30,7 +30,18 @@ import type { MailboxPorts } from "../ports";
 import { productionPorts } from "../wiring";
 import { type FolderId, Folders } from "./folders";
 import { applyMigrations, mailboxMigrations } from "./schema";
-import { upgradeMailbox } from "./devices";
+import {
+  addKeyedWrap,
+  enrolmentDevice,
+  enrolmentFactors,
+  registerDevice,
+  removeKeyedWrap,
+  setFactorKey,
+  splitFactorFields,
+  updateDevice,
+  upgradeMailbox,
+  writeKeyedEnrolment,
+} from "./devices";
 import { keyRingView, sessionsMode } from "./keyring";
 import { type Access, checkAccess, issueChallenge, type MailServiceMethod, openMailSession } from "./sessions";
 import type { MailboxStore } from "./store";
@@ -38,6 +49,7 @@ import type {
   AuditEntry,
   CallContext,
   ChallengeView,
+  DeviceView,
   DraftRecord,
   ListPage,
   MailboxView,
@@ -491,17 +503,23 @@ export class Mailbox extends Agent<Env> {
     return this.answer("enroll", async () => {
       await this.enter(ctx, "enroll", "owner");
       if (ctx.mailbox.status !== "provisioned") throw new InvalidRequest("the mailbox is not awaiting enrolment");
-      const req = v.object(input, "enrolment", ["publicKey", "wraps"]);
+      const req = v.object(input, "enrolment", ["publicKey", "wraps", "device"]);
       const publicKey = v.decodeBase64url(v.base64url(req.publicKey, "public key", { bytes: 32 }));
       // Recomputed here: a keyId the browser claims is never trusted.
       const keyId = await this.ports.sealer.keyIdOf(publicKey);
-      const wraps = v.array(req.wraps, "wraps", 10).map((w, i) => parseWrap(w, `wrap ${i + 1}`));
+      const split = v.array(req.wraps, "wraps", 10).map(splitFactorFields);
+      const wraps = split.map((w, i) => parseWrap(w.plain, `wrap ${i + 1}`));
       if (wraps.length === 0 || !wraps.some((w) => w.kind === "recovery")) throw new InvalidRequest("a recovery wrap is required");
       if (wraps.some((w) => w.keyId !== keyId)) throw new InvalidRequest("a wrap names another key");
       if (new Set(wraps.map((w) => w.id)).size !== wraps.length) throw new InvalidRequest("wrap ids repeat");
+      // device-v1 B5: wraps that all carry factor keys start the mailbox with sessions required, and may bring the enrolling device.
+      const factors = await enrolmentFactors(wraps, split.map((w) => w.fields), keyId);
+      const device = req.device === undefined ? null : await enrolmentDevice(req.device, keyId);
+      if (device !== null && factors === null) throw new InvalidRequest("a device needs factor keys");
 
       const at = this.now();
       const by = ctx.actor.accountId;
+      const store = this.store();
       this.ctx.storage.transactionSync(() => {
         const existing = this.rows<{ key_id: string }>("SELECT key_id FROM keys WHERE retired_at IS NULL");
         if (existing.length > 0) {
@@ -516,8 +534,9 @@ export class Mailbox extends Agent<Env> {
           at,
           by,
         );
-        for (const w of wraps) this.insertWrap(w, at, by);
+        if (factors === null) for (const w of wraps) this.insertWrap(w, at, by);
         this.audit(by, "key-enrolled", { keyId, wraps: wraps.map((w) => `${w.id}:${w.kind}`).join(",") });
+        if (factors !== null) writeKeyedEnrolment(store, ctx, keyId, wraps, factors, device, at);
       });
       return { keyId };
     });
@@ -525,7 +544,12 @@ export class Mailbox extends Agent<Env> {
 
   async addWrap(ctx: CallContext, wrap: unknown): Promise<MailResult<null>> {
     return this.answer("addWrap", async () => {
-      await this.enter(ctx, "addWrap", "owner");
+      const access = await this.enter(ctx, "addWrap", "owner");
+      if (access.sessions === "required") {
+        // device-v1 B7: once sessions are required a wrap also brings its factor key and a tag (devices.ts).
+        const { plain, fields } = splitFactorFields(wrap);
+        return addKeyedWrap(this.store(), ctx, parseWrap(plain, "wrap"), fields);
+      }
       const w = parseWrap(wrap, "wrap");
       const key = this.activeKey();
       if (key === null || w.keyId !== key.keyId) throw new InvalidRequest("a wrap must name the mailbox's key");
@@ -540,8 +564,10 @@ export class Mailbox extends Agent<Env> {
 
   async removeWrap(ctx: CallContext, wrapId: unknown): Promise<MailResult<null>> {
     return this.answer("removeWrap", async () => {
-      await this.enter(ctx, "removeWrap", "owner");
+      const access = await this.enter(ctx, "removeWrap", "owner");
       const id = v.id(wrapId, "wrap id", "wrp");
+      // device-v1 B7: once sessions are required its seals go with it, and M5′ guards the active key.
+      if (access.sessions === "required") return removeKeyedWrap(this.store(), ctx, id);
       const wrap = this.rows<{ id: string; key_id: string; kind: string }>("SELECT id, key_id, kind FROM key_wraps WHERE id = ?", id)[0];
       if (wrap === undefined) throw new NotFound();
       if (wrap.kind === "recovery") {
@@ -582,6 +608,30 @@ export class Mailbox extends Agent<Env> {
     return this.answer("upgrade", async () => {
       const access = await this.enter(ctx, "upgrade", "owner");
       return upgradeMailbox(this.store(), ctx, access, request);
+    });
+  }
+
+  /** B7, F1: keeps the calling browser, with a factor proof. */
+  async registerDevice(ctx: CallContext, request: unknown): Promise<MailResult<DeviceView>> {
+    return this.answer("registerDevice", async () => {
+      const access = await this.enter(ctx, "registerDevice", "owner");
+      return registerDevice(this.store(), ctx, access, request);
+    });
+  }
+
+  /** B7, F3, F4: a device's own session sets or clears its unlock key, tag and seal. */
+  async updateDevice(ctx: CallContext, request: unknown): Promise<MailResult<DeviceView>> {
+    return this.answer("updateDevice", async () => {
+      const access = await this.enter(ctx, "updateDevice", "owner");
+      return updateDevice(this.store(), ctx, access, request);
+    });
+  }
+
+  /** B7, F9: a factor left out of the upgrade gets its factor key, proved by another factor. */
+  async setFactorKey(ctx: CallContext, request: unknown): Promise<MailResult<null>> {
+    return this.answer("setFactorKey", async () => {
+      const access = await this.enter(ctx, "setFactorKey", "owner");
+      return setFactorKey(this.store(), ctx, access, request);
     });
   }
 
