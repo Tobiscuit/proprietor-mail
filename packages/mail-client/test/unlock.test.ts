@@ -107,14 +107,17 @@ describe("the advertised public key is checked at every unlock (G7, K2)", () => 
     await expect(unlockWithPasskey(forged, { rpId: "example.com", credentials })).rejects.toBeInstanceOf(KeySubstitutionDetected);
   });
 
-  test("a substituted key with its own keyId: no wrap opens to it, so NoMatchingWrap / WrongRecoveryKey", async () => {
+  test("a substituted key with its own keyId: the factor opens its wrap, whose key the ring no longer lists, so KeySubstitutionDetected", async () => {
+    // Spec 002 tries a factor's wraps of every key (after a rotation they are of retired keys), so
+    // the factor opens the real key; a ring that does not list it lies. (Under 001 alone, only
+    // wraps of the active key were tried, and this was WrongRecoveryKey / NoMatchingWrap.)
     const other = await startEnrollment(provisioned, null);
     const symbols = other.recoveryKey.replace(/-/g, "");
     other.confirmRecovery(other.recoveryCheck.positions.map((p) => symbols[p - 1]).join(""));
     const otherKey = other.request();
     const forged = { ...view, keys: [{ ...view.keys[0]!, keyId: otherKey.wraps[0]!.keyId, publicKey: otherKey.publicKey }] };
-    await expect(unlockWithRecoveryKey(forged, recoveryKey)).rejects.toBeInstanceOf(WrongRecoveryKey);
-    await expect(unlockWithPasskey(forged, { rpId: "example.com", credentials })).rejects.toBeInstanceOf(NoMatchingWrap);
+    await expect(unlockWithRecoveryKey(forged, recoveryKey)).rejects.toBeInstanceOf(KeySubstitutionDetected);
+    await expect(unlockWithPasskey(forged, { rpId: "example.com", credentials })).rejects.toBeInstanceOf(KeySubstitutionDetected);
   });
 });
 

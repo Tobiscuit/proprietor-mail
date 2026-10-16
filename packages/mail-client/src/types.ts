@@ -465,14 +465,27 @@ export interface DraftInput {
 
 export interface UnlockedMailbox {
   readonly mailboxId: string;
+  /** The active key (it changes when this browser commits a rotation). */
   readonly keyId: string;
   readonly fingerprint: string;
+  /** Every key the session holds, the active one first (G40: old mail opens after a rotation). */
+  readonly keyIds: readonly string[];
   readonly locked: boolean;
+  /** This browser's kept device, or null on a shared computer. */
+  readonly device: DeviceInfo | null;
+  /** The FreshFactor of the factor this unlock used; null after resumeDevice or enrollment. */
+  readonly freshFactor: FreshFactor | null;
   openMessages(items: MessageItem[]): Promise<OpenedMessage[]>;
   openBody(item: MessageItem, sealedBody: Uint8Array): Promise<MailBody>;
   /** A null id makes a new draft id. */
   sealDraft(draftId: string | null, draft: DraftInput): Promise<SaveDraftRequest>;
   openDrafts(records: DraftRecord[]): Promise<OpenedDraft[]>;
+  /** The key proof for openSession, with this device's signature on a kept device. */
+  sessionProof(challenge: ChallengeView): Promise<OpenSessionRequest>;
+  /** A FreshFactor for a sensitive setting: one prompt, or the recovery key. */
+  reauthenticate(reauth: ReAuth): Promise<FreshFactor>;
+  /** Re-checks a newer view of the same key (K3) and adopts its wraps, seals and devices. */
+  refresh(view: MailboxView): Promise<void>;
   addPasskey(passkey: PasskeyOptions, reauth: ReAuth): Promise<WrapInput>;
   /** Then: addWrap(wrap), and removeWrap of the old recovery wrap. */
   replaceRecoveryKey(reauth: ReAuth): Promise<{ recoveryKey: string; wrap: WrapInput }>;

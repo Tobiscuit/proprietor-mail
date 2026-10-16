@@ -1,51 +1,52 @@
 /**
  * Unlocking, and the unlocked mailbox (contracts/mail-client-v1.md
- * "Unlocking", "Reading", "Drafts and sending"; domain-model K1, K2).
+ * "Unlocking", "Reading", "Drafts and sending", as amended by spec 002;
+ * contracts/device-v1.md Part C).
  *
- * A session holds the private key as a decrypt-only, non-extractable
- * CryptoKey inside mail-crypto's handle, the advertised public key it was
- * checked against, and the wraps it may re-authenticate with. Wrapping the
- * key again (a new passkey, a new recovery key) opens a wrappable copy from
- * a wrap for that one operation and drops it after.
+ * A session holds EVERY key the key ring's chain reaches (G40), each a
+ * non-extractable, decrypt-only CryptoKey inside mail-crypto's handle, by
+ * keyId; the active key's public half; its binding key (A5); and the public
+ * facts it needs to use a factor again. It is accepted only after K2′ (the
+ * active key leads back to a key this browser trusts) and K3 (every tag in the
+ * ring verifies). After a factor, it offers that factor's FreshFactor for 2
+ * minutes (K1′); nothing else in it can be wrapped or sealed again.
  */
 import {
   DecryptionFailed,
+  factorPublicKey,
   fingerprint,
   keyIdOf,
   newId,
-  newRecoveryKey,
+  openChallenge,
   openDraft,
   openHeader,
   openBody as openSealedBody,
-  parseRecoveryKey,
-  publicKeyMatches,
-  RecoveryKeyTypo as CryptoRecoveryKeyTypo,
   sealDraft as sealDraftBlock,
-  unwrapPrivateKey,
-  wrapPrivateKey,
+  signDeviceProof,
+  type BindingKey,
   type MailboxPrivateKey,
   type MailboxPublicKey,
 } from "@proprietor/mail-crypto";
-import { fromBase64url } from "./bytes";
-import {
-  KeySubstitutionDetected,
-  MailboxLocked,
-  NoActiveKey,
-  NoMatchingWrap,
-  RecoveryKeyTypo,
-  UndecryptableBody,
-  WrongRecoveryKey,
-} from "./errors";
+import { base64url, fromBase64url } from "./bytes";
+import { InvalidChallenge, KeySubstitutionDetected, MailboxChanged, MailboxLocked, StaleFactor, UndecryptableBody } from "./errors";
+import { activeOfFactor, makePasskeyWrap, makeRecoveryWrap, openFactor, type OpenedFactor } from "./factors";
+import { FreshFactorImpl, freshFactorOf } from "./fresh-factor";
+import { bindingOf, checkAdvertisedKey, checkTags, readRing, trustChain, type Ring, type RingWrap } from "./keyring";
 import { parseMail } from "./mime";
-import { assertPasskeyPrf, createPasskeyWithPrf } from "./passkeys";
 import type {
+  ChallengeView,
+  DeviceInfo,
+  DeviceStore,
   DraftInput,
   DraftRecord,
+  FreshFactor,
+  KeptDevice,
   MailBody,
   MailboxView,
   MessageItem,
   OpenedDraft,
   OpenedMessage,
+  OpenSessionRequest,
   PasskeyOptions,
   PasskeyPrompt,
   ReAuth,
@@ -56,128 +57,14 @@ import type {
 } from "./types";
 
 export const DEFAULT_IDLE_LOCK_MS = 15 * 60_000;
-export const RECOVERY_LABEL = "Recovery key";
+export { RECOVERY_LABEL } from "./factors";
 
-/** A wrap as the session keeps it: what unwrapPrivateKey needs plus the credential. */
-export interface SessionWrap {
-  id: string;
-  keyId: string;
-  kind: "passkey-prf" | "recovery";
-  credentialId: string | null;
-  wrapped: string;
-}
+const CHALLENGE_ID = /^chl_[0-9a-hjkmnp-tv-z]{26}$/;
 
-/** The mailbox's active key, as advertised (domain-model G7: checked against every unwrap). */
-export function activeKeyOf(view: Pick<MailboxView, "keys">): MailboxPublicKey {
-  const active = view.keys.find((k) => k.retiredAt === null);
-  if (!active) throw new NoActiveKey();
-  const publicKey = fromBase64url(active.publicKey);
-  if (publicKey === null || publicKey.length !== 32) throw new NoActiveKey("the advertised public key is malformed");
-  return { keyId: active.keyId, publicKey };
-}
-
-/** K2: the unwrapped key's public half must equal the advertised public key, or nothing proceeds. */
-export async function checkAdvertisedKey(priv: MailboxPrivateKey, pub: MailboxPublicKey): Promise<void> {
-  if (!(await publicKeyMatches(priv, pub))) throw new KeySubstitutionDetected();
-}
-
-function wrapsFor(wraps: SessionWrap[], keyId: string, kind: SessionWrap["kind"]): SessionWrap[] {
-  return wraps.filter((w) => w.kind === kind && w.keyId === keyId);
-}
-
-async function unwrapWithPasskey(
-  mailboxId: string,
-  pub: MailboxPublicKey,
-  wraps: SessionWrap[],
-  prompt: PasskeyPrompt,
-  wrappable: boolean,
-): Promise<MailboxPrivateKey> {
-  const candidates = wrapsFor(wraps, pub.keyId, "passkey-prf").filter((w) => w.credentialId !== null);
-  if (candidates.length === 0) throw new NoMatchingWrap("the mailbox has no passkey for its active key");
-  const { wrap, secret } = await assertPasskeyPrf(prompt, mailboxId, candidates);
-  try {
-    return await unwrapPrivateKey(wrap, { mailboxId, secret }, { wrappable });
-  } catch (e) {
-    if (e instanceof DecryptionFailed) throw new NoMatchingWrap("the passkey's wrap did not open");
-    throw e;
-  } finally {
-    secret.fill(0);
-  }
-}
-
-async function unwrapWithRecoveryKey(
-  mailboxId: string,
-  pub: MailboxPublicKey,
-  wraps: SessionWrap[],
-  display: string,
-  wrappable: boolean,
-): Promise<MailboxPrivateKey> {
-  let secret: Uint8Array; // pragma: allowlist secret (a variable or type name, not a value)
-  try {
-    secret = parseRecoveryKey(display); // pragma: allowlist secret (a variable or type name, not a value)
-  } catch (e) {
-    if (e instanceof CryptoRecoveryKeyTypo) throw new RecoveryKeyTypo();
-    throw e;
-  }
-  try {
-    for (const wrap of wrapsFor(wraps, pub.keyId, "recovery")) {
-      try {
-        return await unwrapPrivateKey(wrap, { mailboxId, secret }, { wrappable });
-      } catch (e) {
-        if (!(e instanceof DecryptionFailed)) throw e;
-      }
-    }
-    throw new WrongRecoveryKey();
-  } finally {
-    secret.fill(0);
-  }
-}
-
-/** A fresh, checked, wrappable key for the one operation that wraps it again (K1). */
-async function reauthenticate(mailboxId: string, pub: MailboxPublicKey, wraps: SessionWrap[], reauth: ReAuth): Promise<MailboxPrivateKey> {
-  const priv =
-    "passkey" in reauth
-      ? await unwrapWithPasskey(mailboxId, pub, wraps, reauth.passkey, true)
-      : await unwrapWithRecoveryKey(mailboxId, pub, wraps, reauth.recoveryKey, true);
-  await checkAdvertisedKey(priv, pub);
-  return priv;
-}
-
-export async function unlockWithPasskey(mailbox: MailboxView, passkey: PasskeyPrompt, options?: UnlockOptions): Promise<UnlockedMailbox> {
-  const pub = activeKeyOf(mailbox);
-  const priv = await unwrapWithPasskey(mailbox.id, pub, mailbox.wraps, passkey, false);
-  await checkAdvertisedKey(priv, pub);
-  return new Session(mailbox.id, priv, pub, mailbox.wraps, options);
-}
-
-export async function unlockWithRecoveryKey(mailbox: MailboxView, recoveryKey: string, options?: UnlockOptions): Promise<UnlockedMailbox> {
-  const pub = activeKeyOf(mailbox);
-  const priv = await unwrapWithRecoveryKey(mailbox.id, pub, mailbox.wraps, recoveryKey, false);
-  await checkAdvertisedKey(priv, pub);
-  return new Session(mailbox.id, priv, pub, mailbox.wraps, options);
-}
-
-/** A passkey wrap for the key, as `MailService.addWrap` / `enroll` take it. */
-export async function makePasskeyWrap(mailboxId: string, priv: MailboxPrivateKey, passkey: PasskeyOptions): Promise<WrapInput> {
-  const wrapId = newId("wrp");
-  const { credentialId, secret } = await createPasskeyWithPrf(passkey, mailboxId, wrapId);
-  try {
-    const wrap = await wrapPrivateKey(priv, { mailboxId, wrapId, kind: "passkey-prf", secret });
-    return { ...wrap, credentialId, label: passkey.label };
-  } finally {
-    secret.fill(0);
-  }
-}
-
-/** A recovery wrap for the key and the display form to show once. */
-export async function makeRecoveryWrap(mailboxId: string, priv: MailboxPrivateKey): Promise<{ recoveryKey: string; wrap: WrapInput }> {
-  const { secret, display } = newRecoveryKey();
-  try {
-    const wrap = await wrapPrivateKey(priv, { mailboxId, wrapId: newId("wrp"), kind: "recovery", secret });
-    return { recoveryKey: display, wrap: { ...wrap, credentialId: null, label: RECOVERY_LABEL } };
-  } finally {
-    secret.fill(0);
-  }
+/** The mailbox's active key, as advertised (domain-model G7: checked against every key opened for it). */
+export function activeKeyOf(view: Pick<MailboxView, "keys" | "wraps" | "id">): MailboxPublicKey {
+  const { active } = readRing(view as MailboxView);
+  return { keyId: active.keyId, publicKey: active.publicKey };
 }
 
 function idleLockMsOf(options?: UnlockOptions): number {
@@ -186,30 +73,74 @@ function idleLockMsOf(options?: UnlockOptions): number {
   return ms;
 }
 
+/** Everything a session is made of; built by the unlock paths after K2′ and K3. */
+export interface SessionParts {
+  ring: Ring;
+  keys: Map<string, MailboxPrivateKey>;
+  binding: BindingKey;
+  device: KeptDevice | null;
+  store: DeviceStore | null;
+  signInId: string | null;
+  now: () => number;
+  freshFactor: FreshFactorImpl | null;
+  idleLockMs: number;
+}
+
 export class Session implements UnlockedMailbox {
   readonly mailboxId: string;
-  readonly keyId: string;
-  readonly fingerprint: string;
-  private priv: MailboxPrivateKey | null;
-  private readonly pub: MailboxPublicKey;
-  private readonly wraps: SessionWrap[];
+  readonly freshFactor: FreshFactor | null;
+  private keys: Map<string, MailboxPrivateKey> | null;
+  private binding: BindingKey;
+  /** The key ring as this session knows it: the view it was unlocked or refreshed with, and what it committed since. */
+  private ring: Ring;
+  private keptDevice: KeptDevice | null;
+  private readonly store: DeviceStore | null;
+  private readonly signInId: string | null;
+  private readonly now: () => number;
   private readonly idleLockMs: number;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private readonly listeners = new Set<() => void>();
+  private readonly factors = new Set<FreshFactorImpl>();
 
-  constructor(mailboxId: string, priv: MailboxPrivateKey, pub: MailboxPublicKey, wraps: SessionWrap[], options?: UnlockOptions) {
-    this.mailboxId = mailboxId;
-    this.keyId = pub.keyId;
-    this.fingerprint = fingerprint(pub.keyId);
-    this.priv = priv;
-    this.pub = pub;
-    this.wraps = wraps.map((w) => ({ id: w.id, keyId: w.keyId, kind: w.kind, credentialId: w.credentialId, wrapped: w.wrapped })); // pragma: allowlist secret (a variable or type name, not a value)
-    this.idleLockMs = idleLockMsOf(options);
+  constructor(parts: SessionParts) {
+    this.mailboxId = parts.ring.mailboxId;
+    this.ring = parts.ring;
+    this.keys = parts.keys;
+    this.binding = parts.binding;
+    this.keptDevice = parts.device;
+    this.store = parts.store;
+    this.signInId = parts.signInId;
+    this.now = parts.now;
+    this.idleLockMs = parts.idleLockMs;
+    this.freshFactor = parts.freshFactor;
+    if (parts.freshFactor !== null) this.factors.add(parts.freshFactor);
     this.arm();
   }
 
+  /** The active key's public half. */
+  private get active(): MailboxPublicKey {
+    return { keyId: this.ring.active.keyId, publicKey: this.ring.active.publicKey };
+  }
+
+  get keyId(): string {
+    return this.ring.active.keyId;
+  }
+
+  get fingerprint(): string {
+    return fingerprint(this.ring.active.keyId);
+  }
+
+  get keyIds(): readonly string[] {
+    return this.keys === null ? [] : Object.freeze([...this.keys.keys()]);
+  }
+
   get locked(): boolean {
-    return this.priv === null;
+    return this.keys === null;
+  }
+
+  get device(): DeviceInfo | null {
+    const d = this.keptDevice;
+    return d === null ? null : Object.freeze({ id: d.deviceId, label: d.label, lockAfter: d.lockAfter, keepsUnlocked: d.unlockKey !== null });
   }
 
   private arm(): void {
@@ -217,20 +148,26 @@ export class Session implements UnlockedMailbox {
     this.timer = Number.isFinite(this.idleLockMs) ? setTimeout(() => this.lock(), this.idleLockMs) : null;
   }
 
-  /** The key, after proving the session is unlocked; every method starts here and counts as activity. */
-  private key(): MailboxPrivateKey {
-    if (this.priv === null) throw new MailboxLocked();
+  /** The keys, after proving the session is unlocked; every method starts here and counts as activity. */
+  private unlockedKeys(): Map<string, MailboxPrivateKey> {
+    if (this.keys === null) throw new MailboxLocked();
     this.arm();
-    return this.priv;
+    return this.keys;
+  }
+
+  private activeKey(): MailboxPrivateKey {
+    return this.unlockedKeys().get(this.ring.active.keyId)!;
   }
 
   touch(): void {
-    this.key();
+    this.unlockedKeys();
   }
 
   lock(): void {
-    if (this.priv === null) return;
-    this.priv = null;
+    if (this.keys === null) return;
+    this.keys = null;
+    for (const ff of this.factors) ff.dispose();
+    this.factors.clear();
     if (this.timer !== null) clearTimeout(this.timer);
     this.timer = null;
     for (const listener of [...this.listeners]) listener();
@@ -243,13 +180,17 @@ export class Session implements UnlockedMailbox {
     };
   }
 
+  // ---- Reading ----
+
   async openMessages(items: MessageItem[]): Promise<OpenedMessage[]> {
-    const priv = this.key();
+    const keys = this.unlockedKeys();
     return Promise.all(
       items.map(async (item): Promise<OpenedMessage> => {
         const { keyId: _keyId, keyEnvelope: _env, header: _h, ...rest } = item;
+        const key = keys.get(item.keyId);
         try {
-          const header = await openHeader(priv, { mailboxId: this.mailboxId, messageId: item.id }, item);
+          if (key === undefined) throw new DecryptionFailed();
+          const header = await openHeader(key, { mailboxId: this.mailboxId, messageId: item.id }, item);
           return { ...rest, header, undecryptable: false };
         } catch {
           return { ...rest, header: null, undecryptable: true };
@@ -259,10 +200,11 @@ export class Session implements UnlockedMailbox {
   }
 
   async openBody(item: MessageItem, sealedBody: Uint8Array): Promise<MailBody> {
-    const priv = this.key();
+    const key = this.unlockedKeys().get(item.keyId);
     let raw: Uint8Array;
     try {
-      raw = await openSealedBody(priv, { mailboxId: this.mailboxId, messageId: item.id }, { keyEnvelope: item.keyEnvelope, body: sealedBody });
+      if (key === undefined) throw new DecryptionFailed();
+      raw = await openSealedBody(key, { mailboxId: this.mailboxId, messageId: item.id }, { keyEnvelope: item.keyEnvelope, body: sealedBody });
     } catch {
       throw new UndecryptableBody();
     }
@@ -270,10 +212,10 @@ export class Session implements UnlockedMailbox {
   }
 
   async sealDraft(draftId: string | null, draft: DraftInput): Promise<SaveDraftRequest> {
-    this.key();
+    this.unlockedKeys();
     const id = draftId ?? newId("drf");
     const sealed = await sealDraftBlock(
-      this.pub,
+      this.active,
       { mailboxId: this.mailboxId, draftId: id },
       {
         v: 1,
@@ -284,18 +226,20 @@ export class Session implements UnlockedMailbox {
         text: draft.text,
         inReplyTo: draft.inReplyTo,
         references: draft.references,
-        updatedAt: new Date().toISOString(),
+        updatedAt: new Date(this.now()).toISOString(),
       },
     );
     return { id, keyId: sealed.keyId, keyEnvelope: sealed.keyEnvelope, sealed: sealed.sealed };
   }
 
   async openDrafts(records: DraftRecord[]): Promise<OpenedDraft[]> {
-    const priv = this.key();
+    const keys = this.unlockedKeys();
     return Promise.all(
       records.map(async (record): Promise<OpenedDraft> => {
+        const key = keys.get(record.keyId);
         try {
-          const draft = await openDraft(priv, { mailboxId: this.mailboxId, draftId: record.id }, record);
+          if (key === undefined) throw new DecryptionFailed();
+          const draft = await openDraft(key, { mailboxId: this.mailboxId, draftId: record.id }, record);
           return { id: record.id, updatedAt: record.updatedAt, draft, undecryptable: false };
         } catch {
           return { id: record.id, updatedAt: record.updatedAt, draft: null, undecryptable: true };
@@ -304,21 +248,125 @@ export class Session implements UnlockedMailbox {
     );
   }
 
+  // ---- Sessions at Mail (device-v1 A6, A7, B6) ----
+
+  async sessionProof(challenge: ChallengeView): Promise<OpenSessionRequest> {
+    const key = this.activeKey();
+    if (typeof challenge !== "object" || challenge === null || challenge.purpose !== "session" || typeof challenge.id !== "string" || !CHALLENGE_ID.test(challenge.id)) {
+      throw new TypeError("not a session challenge");
+    }
+    // Mail seals a session challenge to its active key: another key means another browser rotated it.
+    if (challenge.keyId !== this.active.keyId) throw new MailboxChanged();
+    let answer: Uint8Array;
+    try {
+      answer = await openChallenge(key, { mailboxId: this.mailboxId, challengeId: challenge.id }, challenge.sealed);
+    } catch (e) {
+      // K4: what does not open as a challenge is answered with nothing.
+      if (e instanceof DecryptionFailed) throw new InvalidChallenge();
+      throw e;
+    }
+    const request: OpenSessionRequest = { challengeId: challenge.id, answer: base64url(answer) };
+    answer.fill(0);
+    const device = this.keptDevice;
+    if (device !== null) {
+      const nonce = fromBase64url(challenge.nonce);
+      if (nonce === null || nonce.length !== 32) throw new InvalidChallenge("the challenge's nonce is malformed");
+      request.device = { id: device.deviceId, signature: await signDeviceProof(device.signingKey, { mailboxId: this.mailboxId, deviceId: device.deviceId, challengeId: challenge.id, nonce }) };
+    }
+    return request;
+  }
+
+  // ---- Factors again (K1′) ----
+
+  /** A FreshFactor of a factor used now. The session's key ring is trusted already, so no chain walk is needed. */
+  async reauthenticate(reauth: ReAuth): Promise<FreshFactor> {
+    const keys = this.unlockedKeys();
+    const opened = await openFactor(this.ring, reauth);
+    if (!keys.has(opened.wrap.keyId)) throw new KeySubstitutionDetected("the factor's wrap is of a key the session does not hold");
+    const active = await activeOfFactor(this.ring, opened);
+    if (active !== null) await checkAdvertisedKey(active.wrappable, this.ring.active);
+    const ff = freshFactorFor(this.mailboxId, opened, active?.wrappable ?? null, this.now);
+    this.factors.add(ff);
+    return ff;
+  }
+
+  /** A newer view of the same active key: K3 again, then its wraps, seals and devices are this session's. */
+  async refresh(view: MailboxView): Promise<void> {
+    this.unlockedKeys();
+    const ring = readRing(view);
+    if (ring.mailboxId !== this.mailboxId) throw new TypeError("a view of another mailbox");
+    if (ring.active.keyId !== this.active.keyId) throw new MailboxChanged();
+    if (ring.keys.some((k) => !this.unlockedKeys().has(k.keyId))) throw new MailboxChanged();
+    await checkTags(ring, this.binding);
+    this.ring = ring;
+  }
+
+  // ---- Wraps (contracts/mail-client-v1.md: a fresh unlock for each) ----
+
+  private async wrappableActive(reauth: ReAuth): Promise<MailboxPrivateKey> {
+    const ff = freshFactorOf(await this.reauthenticate(reauth));
+    try {
+      const { active } = ff.use(this.mailboxId);
+      if (active === null) throw new StaleFactor();
+      return active;
+    } finally {
+      ff.dispose();
+    }
+  }
+
   async addPasskey(passkey: PasskeyOptions, reauth: ReAuth): Promise<WrapInput> {
-    this.key();
-    const wrappable = await reauthenticate(this.mailboxId, this.pub, this.wraps, reauth);
-    const wrap = await makePasskeyWrap(this.mailboxId, wrappable, passkey);
-    this.wraps.push(wrap);
+    this.unlockedKeys();
+    const wrappable = await this.wrappableActive(reauth);
+    const wrap = await makePasskeyWrap(this.mailboxId, wrappable, passkey, this.ring.sessions === "required" ? this.binding : null);
+    this.ring.wraps.push(ringWrapOf(wrap));
     return wrap;
   }
 
   async replaceRecoveryKey(reauth: ReAuth): Promise<{ recoveryKey: string; wrap: WrapInput }> {
-    this.key();
-    const wrappable = await reauthenticate(this.mailboxId, this.pub, this.wraps, reauth);
-    const made = await makeRecoveryWrap(this.mailboxId, wrappable);
-    this.wraps.push(made.wrap);
+    this.unlockedKeys();
+    const wrappable = await this.wrappableActive(reauth);
+    const made = await makeRecoveryWrap(this.mailboxId, wrappable, this.ring.sessions === "required" ? this.binding : null);
+    this.ring.wraps.push(ringWrapOf(made.wrap));
     return made;
   }
+}
+
+// ---- Unlocking with a factor ----
+
+async function unlockWithFactor(view: MailboxView, factor: ReAuth, options?: UnlockOptions): Promise<UnlockedMailbox> {
+  const ring = readRing(view);
+  const now = options?.now ?? Date.now;
+  const store = options?.store ?? null;
+  const idleLockMs = idleLockMsOf(options);
+  const opened = await openFactor(ring, factor);
+  // The factor opened a real key (its wrap names it, and unwrap checked it). A key ring that does not list that key lies.
+  if (!ring.keys.some((k) => k.keyId === opened.wrap.keyId)) throw new KeySubstitutionDetected("the factor's key is not in the key ring");
+  const active = await activeOfFactor(ring, opened);
+  if (active === null) throw new StaleFactor();
+  // K2′ (a)/(b): the factor's own wrap is its anchor.
+  const keys = await trustChain(ring, active.key, [opened.wrap.keyId]);
+  const binding = await bindingOf(ring, active.key);
+  await checkTags(ring, binding);
+  const freshFactor = freshFactorFor(ring.mailboxId, opened, active.wrappable, now);
+  return new Session({ ring, keys, binding, device: null, store, signInId: options?.signInId ?? null, now, freshFactor, idleLockMs });
+}
+
+/** The FreshFactor of a factor just used (K1′): its own key, and the active key wrappable when it reaches it. */
+function freshFactorFor(mailboxId: string, opened: OpenedFactor, active: MailboxPrivateKey | null, now: () => number): FreshFactorImpl {
+  return new FreshFactorImpl(mailboxId, opened.wrap, { factorKey: opened.factorKey, factorPublic: factorPublicKey(opened.factorKey), active }, now);
+}
+
+/** A wrap this browser made, as the session's ring lists it. */
+function ringWrapOf(wrap: WrapInput): RingWrap {
+  return { id: wrap.id, keyId: wrap.keyId, kind: wrap.kind, credentialId: wrap.credentialId, label: wrap.label, wrapped: wrap.wrapped, factorKey: wrap.factorKey ?? null, tag: wrap.tag ?? null, tagKeyId: wrap.tagKeyId ?? null }; // pragma: allowlist secret (field names and public values, not secrets)
+}
+
+export async function unlockWithPasskey(mailbox: MailboxView, passkey: PasskeyPrompt, options?: UnlockOptions): Promise<UnlockedMailbox> {
+  return unlockWithFactor(mailbox, { passkey }, options);
+}
+
+export async function unlockWithRecoveryKey(mailbox: MailboxView, recoveryKey: string, options?: UnlockOptions): Promise<UnlockedMailbox> {
+  return unlockWithFactor(mailbox, { recoveryKey }, options);
 }
 
 /** The keyId of a base64url public key, for callers that only have the view. */
