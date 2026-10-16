@@ -30,17 +30,16 @@ import type { MailboxPorts } from "../ports";
 import { productionPorts } from "../wiring";
 import { type FolderId, Folders } from "./folders";
 import { applyMigrations, mailboxMigrations } from "./schema";
+import { keyRingView, sessionsMode } from "./keyring";
 import type {
   AuditEntry,
   CallContext,
   DraftRecord,
-  KeyView,
   ListPage,
   MailboxView,
   MessageItem,
   PolicyView,
   SendResult,
-  WrapView,
 } from "./types";
 import * as v from "./validate";
 
@@ -354,29 +353,9 @@ export class Mailbox extends Agent<Env> {
         addresses: ctx.mailbox.addresses,
         status: ctx.mailbox.status,
         displayName: identity.display_name,
-        keys: this.rows<{ key_id: string; public_key: ArrayBuffer; created_at: string; created_by: string; retired_at: string | null }>(
-          "SELECT key_id, public_key, created_at, created_by, retired_at FROM keys ORDER BY created_at",
-        ).map(
-          (k): KeyView => ({
-            keyId: k.key_id,
-            publicKey: v.encodeBase64url(new Uint8Array(k.public_key)),
-            createdAt: k.created_at,
-            createdBy: k.created_by,
-            retiredAt: k.retired_at,
-          }),
-        ),
-        wraps: this.rows<{ id: string; key_id: string; kind: WrapView["kind"]; credential_id: string | null; label: string; wrapped: string; created_at: string; created_by: string }>(
-          "SELECT id, key_id, kind, credential_id, label, wrapped, created_at, created_by FROM key_wraps ORDER BY created_at, id",
-        ).map((w) => ({
-          id: w.id,
-          keyId: w.key_id,
-          kind: w.kind,
-          credentialId: w.credential_id, // pragma: allowlist secret (a field name, not a value)
-          label: w.label,
-          wrapped: w.wrapped,
-          createdAt: w.created_at,
-          createdBy: w.created_by,
-        })),
+        sessions: sessionsMode(this.ctx.storage.sql),
+        // Keys with their successor seals, wraps with their factor keys, devices and seals (device-v1 B4).
+        ...keyRingView(this.ctx.storage.sql),
         policy: this.policyView(),
       };
     });

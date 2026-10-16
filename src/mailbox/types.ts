@@ -19,6 +19,12 @@ export interface KeyView {
   createdAt: string;
   createdBy: string;
   retiredAt: string | null;
+  /**
+   * A retired key's successor seal (contracts/device-v1.md A4, B4): this key
+   * sealed to the key that replaced it, 109 bytes base64url. Null for the
+   * active key, and for a key retired before spec 002.
+   */
+  successor: { keyId: string; sealed: string } | null;
 }
 
 export interface WrapView {
@@ -31,6 +37,33 @@ export interface WrapView {
   wrapped: string;
   createdAt: string;
   createdBy: string;
+  /** The factor's X25519 public key (device-v1 A2), base64url; null until the upgrade or `setFactorKey`. */
+  factorKey: string | null;
+  /** Its binding tag (A5), base64url, made under `tagKeyId`; null while `factorKey` is. */
+  tag: string | null;
+  tagKeyId: string | null;
+}
+
+/** A kept device (device-v1 B4): public keys, its tag and when it last opened a session. */
+export interface DeviceView {
+  id: string;
+  label: string;
+  /** base64url of the 65-byte P-256 point (A3). */
+  signingKey: string;
+  /** base64url of the 65-byte P-256 point; null while the device is locked, or keeps nothing. */
+  unlockKey: string | null;
+  tag: string;
+  tagKeyId: string;
+  createdAt: string;
+  createdBy: string;
+  lastSeenAt: string | null;
+}
+
+/** A seal of the active key to one recipient (A4). Every seal in the view is of the active key (M19). */
+export interface SealView {
+  keyId: string;
+  to: { kind: "device" | "factor"; id: string };
+  sealed: string;
 }
 
 export interface PolicyView {
@@ -51,8 +84,12 @@ export interface MailboxView {
   addresses: string[];
   status: MailboxStatus;
   displayName: string;
+  /** "optional" until the upgrade or an enrolment with factor keys; "required" from then on, for good (M13). */
+  sessions: "optional" | "required";
   keys: KeyView[];
   wraps: WrapView[];
+  devices: DeviceView[];
+  seals: SealView[];
   /** Includes the delivery mode and forwarding target on every read (M10). */
   policy: PolicyView;
 }
