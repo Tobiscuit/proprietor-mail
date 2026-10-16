@@ -44,6 +44,7 @@ export const ENVELOPE_VERSION = 1 as const;
 
 export { DecryptionFailed, NotImplemented, RecoveryKeyTypo } from "./errors";
 export { x25519Supported } from "./keys";
+export { sealChallenge, verifyDeviceProof } from "./proofs";
 
 // ---- Plaintext shapes (contracts/envelope-v1.md) ----------------------------
 
