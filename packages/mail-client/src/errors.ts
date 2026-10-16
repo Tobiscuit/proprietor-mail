@@ -110,3 +110,59 @@ export class InvalidSendForm extends MailClientError {
     super(message, "InvalidSendForm");
   }
 }
+
+// ---- Added by slice D1 (spec 002: kept devices, contracts/device-v1.md Part C) ----
+
+/** K7: this browser's kept device was removed from the mailbox; its record and keys are gone. */
+export class DeviceRemoved extends MailClientError {
+  constructor(message = "this device was removed from the mailbox") {
+    super(message, "DeviceRemoved");
+  }
+}
+/** D31: this browser cannot keep non-extractable P-256 keys (a private window, or storage refused): it acts as a shared computer. */
+export class StorageUnavailable extends MailClientError {
+  constructor(message = "this browser cannot keep the inbox unlocked") {
+    super(message, "StorageUnavailable");
+  }
+}
+/** A FreshFactor used after its 2 minutes, or after dispose(): use the security key, passkey or recovery key again. */
+export class FactorExpired extends MailClientError {
+  constructor(message = "that unlock is no longer fresh") {
+    super(message, "FactorExpired");
+  }
+}
+/** The mailbox's key ring changed since this unlock (another browser rotated the key): fetch the mailbox again and unlock or resume. */
+export class MailboxChanged extends MailClientError {
+  constructor(message = "the mailbox changed since it was unlocked") {
+    super(message, "MailboxChanged");
+  }
+}
+/**
+ * A security key or passkey that opens only an older key and has no seal of
+ * the current one (it was left out of the upgrade before a device was
+ * removed): unlock with the recovery key, then use it once more to bring it
+ * up to date (setFactorKey).
+ */
+export class StaleFactor extends MailClientError {
+  constructor(message = "this security key only opens an older mailbox key") {
+    super(message, "StaleFactor");
+  }
+}
+/** M5′ / D28: the request would leave no recovery factor able to reach the mailbox key (an upgrade or a rotation needs one). */
+export class NoRecoveryFactor extends MailClientError {
+  constructor(message = "the recovery key must be part of this change") {
+    super(message, "NoRecoveryFactor");
+  }
+}
+/** A device name the Worker would refuse: 1 to 40 characters on one line. */
+export class InvalidDeviceLabel extends MailClientError {
+  constructor(message = "a device name has 1 to 40 characters on one line") {
+    super(message, "InvalidDeviceLabel");
+  }
+}
+/** K4: what Mail sent as a challenge does not open as one; nothing was answered. */
+export class InvalidChallenge extends MailClientError {
+  constructor(message = "that challenge could not be answered") {
+    super(message, "InvalidChallenge");
+  }
+}
