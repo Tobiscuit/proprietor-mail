@@ -21,9 +21,10 @@ export interface Sealer {
   keyIdOf(publicKey: Uint8Array): Promise<string>;
 }
 
-/** Message ids in the contract's shape (`msg_` + 26 Crockford base32 characters). */
+/** Ids in the contracts' shape: `msg_` (envelope v1) and `chl_` (device-v1 A1), each + 26 Crockford base32 characters. */
 export interface IdSource {
   messageId(): string;
+  challengeId(): string;
 }
 
 export interface MimeBuilder {
@@ -74,4 +75,5 @@ export interface MailboxPorts {
   mailer: RawMailer;
   signal: NewMailSignal;
   clock: Clock;
+  proofs: Proofs;
 }

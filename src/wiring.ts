@@ -1,4 +1,4 @@
-import { keyIdOf, newId, sealMessage } from "@proprietor/mail-crypto";
+import { keyIdOf, newId, sealChallenge, sealMessage, verifyDeviceProof } from "@proprietor/mail-crypto";
 import { buildMime, sesRawMailer } from "@proprietor/mail-outbound";
 import type { Env } from "./env";
 import type { MailboxPorts, NewMailSignal, RawMailer } from "./ports";
@@ -13,7 +13,7 @@ export function productionPorts(env: Env): MailboxPorts {
   let ses: RawMailer | undefined;
   return {
     sealer: { seal: sealMessage, keyIdOf },
-    ids: { messageId: () => newId("msg") },
+    ids: { messageId: () => newId("msg"), challengeId: () => newId("chl") },
     mime: { build: buildMime },
     mailer: {
       // Built on the first send, so a mailbox that never sends never reads the credential.
@@ -26,6 +26,8 @@ export function productionPorts(env: Env): MailboxPorts {
     },
     signal: noNewMailSignal,
     clock: { now: () => new Date() },
+    // contracts/device-v1.md A6 and A7, Mail's side (packages/mail-crypto/src/proofs.ts).
+    proofs: { sealChallenge, verifyDeviceProof },
   };
 }
 

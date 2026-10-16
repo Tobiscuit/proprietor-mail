@@ -10,6 +10,21 @@ import type { FolderId } from "./folders";
 export interface CallContext {
   mailbox: DirectoryEntry;
   actor: { accountId: string; role: Role };
+  /**
+   * What the call carried for contracts/device-v1.md B1, as the caller sent
+   * it: filled by MailService from the method's last argument (for `send`,
+   * from `request.session`) and checked by the Mailbox (sessions.ts) against
+   * what it stores. The token is never stored or logged. Absent: nothing.
+   */
+  auth?: CallAuth;
+}
+
+/** device-v1 B1, after MailService checked its shape (sessions.ts, parseAuth). */
+export interface CallAuth {
+  /** The token from openSession(), as sent: 43 base64url characters when it is one. */
+  session: string | null;
+  /** A factor proof: a live "factor" challenge and its answer (base64url, 32 bytes). */
+  factorProof: { challengeId: string; answer: string } | null;
 }
 
 export interface KeyView {
@@ -126,6 +141,30 @@ export interface SendResult {
   /** The stored Sent copy; null only if SES accepted the message and storing the copy then failed. */
   messageId: string | null;
   providerMessageId: string;
+}
+
+/** What `challenge()` answers (device-v1 B6). */
+export interface ChallengeView {
+  id: string;
+  purpose: "session" | "factor";
+  /** The active key, for a session challenge; null for a factor challenge. */
+  keyId: string | null;
+  /** The factor, for a factor challenge; null for a session challenge. */
+  factorId: string | null;
+  /** 32 bytes, base64url: what a device signs with the challenge (A7). */
+  nonce: string;
+  /** enc || ct, 80 bytes, base64url (A6). */
+  sealed: string;
+  expiresAt: string;
+}
+
+/** What `openSession()` answers (B6): the token, once, and never again. */
+export interface SessionView {
+  /** 32 random bytes, base64url (43 characters); Mail keeps only its SHA-256 (A8). */
+  session: string;
+  expiresAt: string;
+  /** The device whose session it is, or null. */
+  device: string | null;
 }
 
 export interface AuditEntry {

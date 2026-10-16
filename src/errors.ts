@@ -26,6 +26,9 @@ export type MailErrorName =
   | "SendFailed"
   | "AssistantUnavailable"
   | "RecipientSuppressed"
+  | "SessionRequired"
+  | "DeviceRevoked"
+  | "ProofRejected"
   | "InternalError";
 
 /** One recipient `send` refused (domain-model M11): its position in the request, never its address. */
@@ -67,13 +70,26 @@ export function internalError(): MailError {
 }
 
 /**
+ * The one message each of device-v1's names carries (B8), whatever the Worker
+ * knew about the cause: a session that is missing, expired or another
+ * account's; a device that never existed or is another account's (G42); an
+ * answer that was wrong, late or already used. The causes are audited
+ * (proof-rejected), never told to the caller, so none can be told apart.
+ */
+const FIXED_MESSAGES: Partial<Record<MailErrorName, string>> = {
+  SessionRequired: "a live mail session is required",
+  DeviceRevoked: "this device is not in the mailbox",
+  ProofRejected: "the proof was not accepted",
+};
+
+/**
  * Exactly the documented fields of an error, rebuilt. Whatever a MailError
  * picked up on its way (a field added by mistake, a runtime property), the
  * caller gets the contract's shape, so a NotFound decided in the Mailbox cannot
  * be told apart from one decided in MailService (domain-model M4).
  */
 export function publicCopy(error: MailError): MailError {
-  const copy: MailError = { name: error.name, message: error.message };
+  const copy: MailError = { name: error.name, message: FIXED_MESSAGES[error.name] ?? error.message };
   if (error.name === "CapabilityRejected") copy.reason = error.reason === "expired" ? "expired" : "invalid";
   if (error.name === "RateLimited") copy.retryAfterSeconds = typeof error.retryAfterSeconds === "number" ? error.retryAfterSeconds : 60;
   if (error.name === "SendFailed") copy.retryable = error.retryable === true;
@@ -128,8 +144,8 @@ export class MailboxNotActive extends Refusal {
 }
 
 export class RateLimited extends Refusal {
-  constructor(retryAfterSeconds: number) {
-    super({ name: "RateLimited", message: "send rate limit reached", retryAfterSeconds });
+  constructor(retryAfterSeconds: number, message = "send rate limit reached") {
+    super({ name: "RateLimited", message, retryAfterSeconds });
   }
 }
 
@@ -149,6 +165,27 @@ export class AssistantUnavailable extends Refusal {
 export class RecipientSuppressed extends Refusal {
   constructor(suppressed: SuppressedRecipient[]) {
     super({ name: "RecipientSuppressed", message: "a recipient is suppressed after a bounce or complaint", suppressed });
+  }
+}
+
+/** No live session of the calling account, or a bad token (device-v1 B2): the browser opens a session and calls again, once. */
+export class SessionRequired extends Refusal {
+  constructor() {
+    super({ name: "SessionRequired", message: FIXED_MESSAGES.SessionRequired! });
+  }
+}
+
+/** The device is not in the mailbox, or is another account's (B6, G42): the browser forgets it (K7). */
+export class DeviceRevoked extends Refusal {
+  constructor() {
+    super({ name: "DeviceRevoked", message: FIXED_MESSAGES.DeviceRevoked! });
+  }
+}
+
+/** A key proof, factor proof or device signature failed, or its challenge expired or was used (B6, B8). Never retried by the browser on its own. */
+export class ProofRejected extends Refusal {
+  constructor() {
+    super({ name: "ProofRejected", message: FIXED_MESSAGES.ProofRejected! });
   }
 }
 
