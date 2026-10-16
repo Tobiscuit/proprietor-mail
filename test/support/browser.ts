@@ -187,13 +187,41 @@ export interface Upgraded {
   passkey: TestFactor;
 }
 
-/** F5: a legacy mailbox, a session opened with a key proof, then the upgrade naming both factors. */
-export async function upgradedMailbox(): Promise<Upgraded> {
+/**
+ * F5: a legacy mailbox, a session opened with a key proof, then the upgrade
+ * naming both factors, or the recovery key alone (`passkeyLeftOut`: the
+ * passkey then has no factor key until setFactorKey, F9; its TestFactor is
+ * the key it would be given).
+ */
+export async function upgradedMailbox(opts: { passkeyLeftOut?: boolean } = {}): Promise<Upgraded> {
   const { mb, mailboxKey, recoveryId, passkeyId } = await legacyMailbox();
   const recovery = await newFactorKey(recoveryId, "recovery");
   const passkey = await newFactorKey(passkeyId, "passkey-prf");
   const { session } = await openSession(mb, mailboxKey);
   const keyId = mb.key!.keyId;
-  valueOf(await mail().upgrade(await capFor(mb), { factors: [factorInput(recovery, keyId), factorInput(passkey, keyId)] }, { session }));
+  const factors = opts.passkeyLeftOut ? [factorInput(recovery, keyId)] : [factorInput(recovery, keyId), factorInput(passkey, keyId)];
+  valueOf(await mail().upgrade(await capFor(mb), { factors }, { session }));
   return { mb, mailboxKey, session, recovery, passkey };
+}
+
+/** The key new mail is sealed to, as mailbox() shows it. */
+export async function activeKeyId(mb: TestMailbox): Promise<string> {
+  return valueOf(await mail().mailbox(await capFor(mb))).keys.find((k) => k.retiredAt === null)!.keyId;
+}
+
+/** F1's last step: registerDevice with a factor proof, in `session` (the upgrade's own by default). */
+export async function keepDevice(
+  u: Upgraded,
+  opts: { device?: TestDevice; factor?: TestFactor; session?: string } = {},
+): Promise<TestDevice> {
+  const device = opts.device ?? (await newDevice());
+  const factorProofOf = await factorProof(u.mb, opts.factor ?? u.recovery);
+  valueOf(
+    await mail().registerDevice(
+      await capFor(u.mb),
+      { device: deviceInput(device, await activeKeyId(u.mb)), seal: device.unlockKey === null ? null : fakeSeal(142) },
+      { session: opts.session ?? u.session, factorProof: factorProofOf },
+    ),
+  );
+  return device;
 }
