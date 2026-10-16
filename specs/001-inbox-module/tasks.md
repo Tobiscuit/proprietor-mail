@@ -242,7 +242,7 @@ integration. Every rule for builders above still holds.
   "tenant" → "business" in Mail's own vocabulary; both vector files
   regenerated; a fitness test that fails on the old names outside `specs/`.
 
-### S2b — Addresses (G12, G13, M6 amended) — [ ] not started
+### S2b — Addresses (G12, G13, M6 amended) — [x] built (PR #11, audited 2026-09-29)
 
 **Contract:** `plan.md` §12; `mail-service-v1` (`addresses`, `from`);
 envelope v1 `envelopeTo`. **Owns:** `migrations/0002_addresses.sql`,
@@ -257,7 +257,7 @@ outside the mailbox's addresses is refused, inside is used; `envelopeTo` is
 sealed (the M1 marker scan still passes) and opens in the browser; the vectors
 regenerate and verify.
 
-### S5 — Deliverability feed (M11, M12) — [ ] not started
+### S5 — Deliverability feed (M11, M12) — [x] built (PR #12, audited 2026-10-03)
 
 **Contract:** `plan.md` §13; `mail-service-v1` (`RecipientSuppressed`).
 **Owns:** `src/deliverability/**`, `scheduled()` in `src/index.ts`, `src/env.ts`,
@@ -321,7 +321,7 @@ migrations or site kit.
 expired` → re-mint once); the key ceremony end to end in Chromium with a
 virtual authenticator; the frame under the shell's policy.
 
-### S8 — Activation kit (`plan.md` §15) — runbook and Terraform: architect; scripts: [ ] not started
+### S8 — Activation kit (`plan.md` §15) — runbook and Terraform: architect; scripts: [x] built
 
 - [x] the operator's private runbook with the real values and commands
   (architect)
@@ -345,6 +345,7 @@ virtual authenticator; the frame under the shell's policy.
   - **Workers Logs**: with invocation logs off, every entry of an email
     invocation still named the envelope sender and recipient, so the
     Worker's logs are off entirely (G25, D20).
+- [x] the first mailbox, the operator's own, is active (2026-10)
 
 ### S7 — The assistant, "ask about one message" only  *[H: after the above; D1]*
 
@@ -370,6 +371,9 @@ Audited 2026-10-04: PR #13, 625 passed, browser suites green in CI; a mutation t
 - [x] CI for a public repository: least-privilege tokens, actions pinned by
   commit SHA, no `pull_request_target`, CodeQL, dependency review,
   Dependabot, OpenSSF Scorecard
-- [ ] the repository settings that only exist once it is public (secret
-  scanning and push protection, private vulnerability reporting, rulesets),
-  applied by the maintainer
+- [x] the repository settings that only exist once it is public, applied by
+  the maintainer: secret scanning with push protection, and private
+  vulnerability reporting (checked 2026-10-16)
+- [ ] still open: a ruleset for `main` (none yet), and the Dependency graph,
+  which `dependency-review.yml` needs; without it that workflow fails on
+  every pull request

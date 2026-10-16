@@ -14,7 +14,9 @@ that receives, stores and sends mail, and the code that handles the keys:
 | `src/`, `migrations/` | The Mail Worker (Cloudflare Workers, Agents SDK): receives mail from Email Routing, seals and stores it, serves ciphertext to the dashboard over RPC, sends through Amazon SES |
 | `packages/mail-crypto/` | `@proprietor/mail-crypto`: the envelope format and key wrapping. The Worker uses it to seal; the owner's browser uses it to generate keys, unlock and decrypt |
 | `packages/mail-outbound/` | `@proprietor/mail-outbound`: an RFC 5322 / MIME builder and an SES v2 raw sender |
-| `contracts/` | The byte formats and RPC contracts, with test vectors: `envelope-v1`, `capability-v1`, `mail-service-v1` |
+| `packages/mail-client/` | `@proprietor/mail-client`: the browser half. Enrolment, unlocking with a passkey or the recovery key, opening headers and bodies, threads, search, the one sandboxed frame for message HTML, compose helpers. The dashboard vendors it, as it vendors `mail-crypto` |
+| `scripts/` | The operator's local tools, never deployed: `provision-mailbox.ts` prints the SQL for a new mailbox; `mail-admin/` is the `MailAdmin` CLI, a local `wrangler dev` with a remote binding to the deployed Worker's `MailAdmin` entrypoint |
+| `contracts/` | The byte formats and RPC contracts, with test vectors: `envelope-v1`, `capability-v1`, `mail-service-v1`, `mail-client-v1` |
 | `specs/001-inbox-module/` | The spec (what and why, and the decisions), the domain model, the plan, the task list |
 
 The dashboard is a separate application and is not published here: sign-in,
@@ -22,8 +24,9 @@ the inbox screens, and the server actions that pass requests (and, for
 sending, the composed message) to the Worker. `contracts/` is the interface
 between the two.
 
-**Status:** built and tested, not deployed. Nothing here has handled real
-mail yet.
+**Status:** deployed and in use. The first mailbox is the operator's own
+(`specs/001-inbox-module/plan.md` §15); what was done and found on the way
+is recorded in `tasks.md`, S8.
 
 ## The promise, and its limits
 
@@ -47,6 +50,13 @@ and so does anyone who asks the operator for a client's mail.
 | Recipients, subject and full message of mail the owner sends, for the moment of sending | Mail Worker memory (and the dashboard's, which passes it on); SES delivery events include the subject | SES needs the message to send it |
 | That new mail arrived (a count, never content) | The dashboard, for push notifications | So the phone can buzz |
 | Which devices and recovery keys exist (labels and times, not secrets) | The mailbox's key ring | So the owner can manage devices |
+
+**Logs.** The Worker's own log lines carry ids, sizes, counts and outcomes,
+never an address or a subject (`src/log.ts`). Workers Logs are off for the
+Worker (`wrangler.jsonc`, `observability.enabled: false`, with a test): the
+platform's own entries for an email invocation name the envelope sender and
+recipient, so keeping them would store who wrote to whom (domain model G25,
+spec D20). Live debugging uses `wrangler tail`, which stores nothing.
 
 **Two limits no web-based encrypted mail service escapes**, stated rather
 than hidden (spec §2):

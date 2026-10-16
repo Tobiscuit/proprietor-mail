@@ -30,6 +30,10 @@ In scope, including anything in `main` that is not yet released:
 
 - `packages/mail-crypto`: the envelope, key wrapping, recovery keys, and the
   byte formats in `contracts/envelope-v1.md`;
+- `packages/mail-client`: the key in the browser (unlocking, the
+  non-extractable key, the advertised-key check), the sandboxed frame for
+  message HTML, and anything that lets message content reach script, the
+  page or the network;
 - the Mail Worker (`src/`): capability verification, isolation between businesses, the
   storage invariants in `specs/001-inbox-module/domain-model.md` §3 (for
   example, anything that stores or logs message content in plaintext, or lets
