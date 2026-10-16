@@ -323,6 +323,8 @@ export type { DeviceKeyPair } from "./device-keys";
 export { generateSigningKey, generateUnlockKey, isDeviceSigningKey, isDeviceUnlockKey, signDeviceProof } from "./device-keys";
 export type { SealOpener, SealRecipient } from "./seals";
 export { KEY_SEAL_BYTES, openKeySeal, sealKey } from "./seals";
+export type { BindingKey, TagRecipient } from "./binding";
+export { bindingKey, bindingTag, verifyBindingTag } from "./binding";
 
 // ---- Internals ---------------------------------------------------------------
 
