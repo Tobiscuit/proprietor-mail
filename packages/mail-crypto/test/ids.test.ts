@@ -4,7 +4,7 @@ import { fingerprint, keyIdOf, newId, type IdPrefix } from "../src/index";
 import { crockfordToBytes, hex, sha256 } from "./reference";
 
 describe("S1a newId", () => {
-  test.each(["mbx", "msg", "drf", "wrp"] as const)(
+  test.each(["mbx", "msg", "drf", "wrp", "dev", "chl"] as const)(
     "newId(%s) is <prefix>_<26 lowercase Crockford base32 characters of 16 bytes>",
     (prefix) => {
       const id = newId(prefix);
