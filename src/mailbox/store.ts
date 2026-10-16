@@ -14,6 +14,8 @@ export interface MailboxStore {
   /** `storage.transactionSync`: the callback is synchronous, and everything it wrote is rolled back when it throws. */
   transaction<T>(fn: () => T): T;
   now(): Date;
+  /** A new `chl_` id (device-v1 A1), from the ids port. */
+  newChallengeId(): string;
   /** The key new mail is sealed to: the one key not retired (the Mailbox's own `activeKey()`). */
   activeKey(): { keyId: string; publicKey: Uint8Array } | null;
   /** Ids, kinds, counts and labels only (device-v1 B9): never a token, an answer, a seal or a key. */
