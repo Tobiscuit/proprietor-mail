@@ -408,3 +408,105 @@ export function writeKeyedEnrolment(
     store.audit(ctx.actor.accountId, "device-registered", { device: device.device.id, label: device.device.label, unlockKey: device.device.unlockKey !== null, factor: null });
   }
 }
+
+// ---- removeDevice and the rotation (B7, F6, M18, M19) ------------------------------------------
+
+/** A seal's or a tag's recipient in a rotation (B7). */
+type Recipient = { kind: "device" | "factor"; id: string };
+
+function recipient(value: unknown, what: string): Recipient {
+  const to = v.object(value, what, ["kind", "id"]);
+  const kind = v.oneOf(to.kind, `${what} kind`, ["device", "factor"] as const);
+  return { kind, id: v.id(to.id, `${what} id`, kind === "device" ? "dev" : "wrp") };
+}
+
+/** The new key sealed to one remaining recipient: 142 bytes to a device (P-256), 109 to a factor (X25519). */
+function rotationSeal(value: unknown, what: string): { to: Recipient; sealed: string } {
+  const s = v.object(value, what, ["to", "sealed"]);
+  const to = recipient(s.to, `${what} recipient`);
+  return { to, sealed: v.base64url(s.sealed, what, { bytes: to.kind === "device" ? DEVICE_SEAL_BYTES : FACTOR_SEAL_BYTES }) };
+}
+
+function rotationTag(value: unknown, what: string): { to: Recipient; tag: string } {
+  const t = v.object(value, what, ["to", "tag"]);
+  return { to: recipient(t.to, `${what} recipient`), tag: tag(t.tag, what) };
+}
+
+/** B7's exact coverage: every expected recipient once, and nothing else. */
+function namesExactly(named: Recipient[], expected: Recipient[], what: string): void {
+  const names = named.map((r) => `${r.kind}:${r.id}`);
+  const unique = new Set(names);
+  if (unique.size !== names.length) throw new InvalidRequest(`${what} name a recipient twice`);
+  if (unique.size !== expected.length || expected.some((r) => !unique.has(`${r.kind}:${r.id}`))) {
+    throw new InvalidRequest(`${what} must name exactly the remaining recipients`);
+  }
+}
+
+/**
+ * B7, F6 and M18: the device, its seals and its sessions are deleted; the new
+ * key becomes active and the old one is retired with its successor seal;
+ * every seal of the old key is deleted (M19) and the new seals and tags are
+ * stored; every other session ends, because each was opened with a proof of
+ * the old key. Every check runs before the first write, and all of it is one
+ * transaction: a check that fails answers InvalidRequest and changes nothing.
+ * The removed device is never sent the new key: no seal may name it.
+ */
+export async function removeDevice(store: MailboxStore, ctx: CallContext, access: Access, request: unknown): Promise<{ keyId: string }> {
+  if (access.sessions === "optional") throw new InvalidRequest(UPGRADE_FIRST);
+  const caller = access.session!;
+  const r = v.object(request, "device removal", ["deviceId", "rotation"]);
+  const deviceId = v.id(r.deviceId, "device id", "dev");
+  const rot = v.object(r.rotation, "rotation", ["from", "publicKey", "successorSeal", "seals", "tags"]);
+  const from = keyIdOf(rot.from, "rotation from");
+  const publicKey = await x25519Key(rot.publicKey, "the new public key");
+  const newKeyId = await store.keyIdOf(publicKey);
+  const successorSeal = v.base64url(rot.successorSeal, "successor seal", { bytes: FACTOR_SEAL_BYTES });
+  const seals = v.array(rot.seals, "seals", DEVICES_PER_MAILBOX + 100).map((x, i) => rotationSeal(x, `seal ${i + 1}`));
+  const tags = v.array(rot.tags, "tags", DEVICES_PER_MAILBOX + 100).map((x, i) => rotationTag(x, `tag ${i + 1}`));
+
+  return store.transaction(() => {
+    // 1. The device exists, `from` is the active key, the new key is new to the mailbox.
+    const device = deviceRow(store.sql, deviceId);
+    if (device === null) throw new InvalidRequest("no such device");
+    const key = activeKeyOf(store);
+    if (from !== key.keyId) throw new InvalidRequest("the rotation is from a key that is not active");
+    if (rows(store.sql, "SELECT 1 FROM keys WHERE key_id = ?", newKeyId).length > 0) throw new InvalidRequest("the new key is not new to the mailbox");
+
+    // 2, 3. Seals name exactly every other device with an unlock key and every factor with a factor key; tags every other device and keyed factor.
+    const others = rows<{ id: string; unlocked: number }>(store.sql, "SELECT id, unlock_key IS NOT NULL AS unlocked FROM devices WHERE id != ?", deviceId);
+    const factors = rows<{ id: string; kind: string }>(store.sql, "SELECT id, kind FROM key_wraps WHERE factor_key IS NOT NULL");
+    const keyedFactors = factors.map((f): Recipient => ({ kind: "factor", id: f.id }));
+    namesExactly(
+      seals.map((s) => s.to),
+      [...others.filter((d) => d.unlocked === 1).map((d): Recipient => ({ kind: "device", id: d.id })), ...keyedFactors],
+      "the seals",
+    );
+    namesExactly(tags.map((t) => t.to), [...others.map((d): Recipient => ({ kind: "device", id: d.id })), ...keyedFactors], "the tags");
+
+    // 4. M5′: the new key reaches a recovery factor.
+    if (!factors.some((f) => f.kind === "recovery")) throw new InvalidRequest("the new key must reach a recovery factor (M5′)");
+
+    // 5. Every write.
+    const at = store.now().toISOString();
+    const by = ctx.actor.accountId;
+    const deviceSessions = rows<{ n: number }>(store.sql, "SELECT COUNT(*) AS n FROM mail_sessions WHERE device_id = ?", deviceId)[0]!.n;
+    store.sql.exec("DELETE FROM mail_sessions WHERE device_id = ?", deviceId);
+    store.sql.exec("DELETE FROM key_seals WHERE key_id = ?", key.keyId);
+    store.sql.exec("DELETE FROM devices WHERE id = ?", deviceId);
+    store.sql.exec("INSERT INTO keys (key_id, public_key, created_at, created_by) VALUES (?, ?, ?, ?)", newKeyId, publicKey, at, by);
+    store.sql.exec("UPDATE keys SET retired_at = ?, successor_key_id = ?, successor_seal = ? WHERE key_id = ?", at, newKeyId, successorSeal, key.keyId);
+    for (const s of seals) insertSeal(store, newKeyId, s.to.kind, s.to.id, s.sealed, at, by);
+    for (const t of tags) {
+      if (t.to.kind === "device") store.sql.exec("UPDATE devices SET tag = ?, tag_key_id = ? WHERE id = ?", t.tag, newKeyId, t.to.id);
+      else store.sql.exec("UPDATE key_wraps SET tag = ?, tag_key_id = ? WHERE id = ?", t.tag, newKeyId, t.to.id);
+    }
+    // Every other session ends; the caller's stays, unless it was the removed device's (deleted above).
+    const othersEnded = rows<{ n: number }>(store.sql, "SELECT COUNT(*) AS n FROM mail_sessions WHERE token_hash != ?", caller.hash)[0]!.n;
+    store.sql.exec("DELETE FROM mail_sessions WHERE token_hash != ?", caller.hash);
+    // A session challenge sealed to the old key proves nothing from now on (openSession refuses it too).
+    store.sql.exec("DELETE FROM challenges WHERE purpose = 'session' AND target_id = ?", key.keyId);
+    store.audit(by, "device-removed", { device: deviceId, label: device.label, sessions: deviceSessions });
+    store.audit(by, "key-rotated", { from: key.keyId, to: newKeyId, seals: seals.length, sessions: othersEnded });
+    return { keyId: newKeyId };
+  });
+}

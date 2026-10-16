@@ -16,6 +16,8 @@ export interface MailboxStore {
   now(): Date;
   /** A new `chl_` id (device-v1 A1), from the ids port. */
   newChallengeId(): string;
+  /** The contract's keyId of a raw public key (envelope v1), recomputed here: a keyId a browser claims is never trusted. */
+  keyIdOf(publicKey: Uint8Array): Promise<string>;
   /** The key new mail is sealed to: the one key not retired (the Mailbox's own `activeKey()`). */
   activeKey(): { keyId: string; publicKey: Uint8Array } | null;
   /** Ids, kinds, counts and labels only (device-v1 B9): never a token, an answer, a seal or a key. */

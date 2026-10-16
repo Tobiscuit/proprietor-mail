@@ -50,6 +50,7 @@ export const SESSION_NEEDS = {
   removeWrap: "factor",
   registerDevice: "factor",
   updateDevice: "device-session",
+  removeDevice: "factor",
   setFactorKey: "factor",
 } as const satisfies Record<string, Need>;
 

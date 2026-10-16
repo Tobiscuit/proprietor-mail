@@ -16,6 +16,7 @@ import {
   openChallenge,
   openSession,
   type Proof,
+  rotationFor,
   signProof,
   type TestFactor,
   type Upgraded,
@@ -80,6 +81,8 @@ describe("factor proofs (B3, B6, M17)", () => {
     const device = await newDevice();
     const added = await keyedWrap("passkey-prf", keyId);
     const left = await newFactorKey(u.passkey.id, "passkey-prf");
+    // A plain session for the removal: the upgrade's own becomes the kept device's, and ends with it.
+    const remover = (await openSession(u.mb, u.mailboxKey)).session;
     return [
       ["registerDevice", async (proof) => mail().registerDevice(await capFor(u.mb), { device: deviceInput(device, keyId), seal: fakeSeal(142) }, { session: u.session, factorProof: proof })],
       ["addWrap", async (proof) => mail().addWrap(await capFor(u.mb), added.wrap, { session: u.session, factorProof: proof })],
@@ -93,6 +96,12 @@ describe("factor proofs (B3, B6, M17)", () => {
           ),
       ],
       ["removeWrap", async (proof) => mail().removeWrap(await capFor(u.mb), added.wrap.id, { session: u.session, factorProof: proof })],
+      // Last: it rotates the key. The device is the one registerDevice kept above; the rotation is made from the view of the moment.
+      [
+        "removeDevice",
+        async (proof) =>
+          mail().removeDevice(await capFor(u.mb), { deviceId: device.id, rotation: (await rotationFor(u.mb, device.id)).rotation }, { session: remover, factorProof: proof }),
+      ],
     ];
   }
 
@@ -115,7 +124,7 @@ describe("factor proofs (B3, B6, M17)", () => {
     }
     // Per method: the wrong answer, its reuse, the session challenge, and the good proof's reuse. A missing proof is not a proof, and is not audited.
     const reasons = (await audits(u.mb, "proof-rejected")).map((a) => a.detail.reason);
-    expect(reasons).toEqual(Array.from({ length: 4 }, () => ["answer", "used", "purpose", "used"]).flat());
+    expect(reasons).toEqual(Array.from({ length: 5 }, () => ["answer", "used", "purpose", "used"]).flat());
   });
 
   it("is spent by the call that carries it, whatever the call then answers", async () => {
