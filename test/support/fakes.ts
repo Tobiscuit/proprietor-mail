@@ -1,4 +1,4 @@
-import type { MailboxPublicKey, MessageHeader, SealedMessage } from "@proprietor/mail-crypto";
+import { type MailboxPublicKey, type MessageHeader, type SealedMessage, newId, sealChallenge, verifyDeviceProof } from "@proprietor/mail-crypto";
 import type { BuildOptions, BuiltMessage, ComposedMessage, RawSendRequest } from "@proprietor/mail-outbound";
 import type { Clock, IdSource, MailboxPorts, MimeBuilder, NewMailSignal, RawMailer, Sealer } from "../../src/ports";
 import { base64urlFromBytes } from "./capability-tokens";
@@ -121,6 +121,9 @@ export class FakeIds implements IdSource {
   messageId(): string {
     return testId("msg");
   }
+  challengeId(): string {
+    return newId("chl");
+  }
 }
 
 export interface FakePorts extends MailboxPorts {
@@ -142,5 +145,7 @@ export function fakePorts(): FakePorts {
     mailer: new FakeMailer(trace),
     signal: new FakeSignal(),
     clock: new FakeClock(),
+    // The real device-v1 A6 and A7: tests open challenges and sign proofs as the browser does (test/support/browser.ts).
+    proofs: { sealChallenge, verifyDeviceProof },
   };
 }
