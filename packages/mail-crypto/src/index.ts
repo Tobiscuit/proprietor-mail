@@ -120,9 +120,10 @@ export interface MailboxPrivateKey {
   readonly keyId: string;
 }
 
-export type IdPrefix = "mbx" | "msg" | "drf" | "wrp";
+/** `dev` (a kept device) and `chl` (a challenge) are contracts/device-v1.md A1's. */
+export type IdPrefix = "mbx" | "msg" | "drf" | "wrp" | "dev" | "chl";
 
-const ID_PREFIXES: readonly string[] = ["mbx", "msg", "drf", "wrp"];
+const ID_PREFIXES: readonly string[] = ["mbx", "msg", "drf", "wrp", "dev", "chl"];
 const KEY_ID = /^[0-9a-f]{32}$/;
 
 export type WrapKind = "passkey-prf" | "recovery";

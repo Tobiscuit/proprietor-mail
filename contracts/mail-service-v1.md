@@ -6,6 +6,13 @@ route handler, over a service binding with `entrypoint: "MailService"`.
 **Status:** agreed shape 2026-09-26. The method table is `specs/001-inbox-module/plan.md`
 §4; this file fixes how answers and refusals cross the RPC boundary.
 
+**Amended 2026-10-16 (spec 002):** device sessions add methods, an `auth`
+argument on every mailbox call but `mailboxes`, `mailbox`, `unread`,
+`enroll`, `challenge` and `openSession` (for `send`, a `session` field in the
+request), and three error names (`SessionRequired`, `DeviceRevoked`,
+`ProofRejected`). They are specified in `device-v1.md` Part B, which is part
+of this contract. Everything below still holds.
+
 ## Every answer is a value; expected refusals are never thrown
 
 ```ts

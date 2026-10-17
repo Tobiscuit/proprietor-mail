@@ -174,3 +174,43 @@ does not have.
   `frame-ancestors 'none'` does not stop the frame from rendering.
 - Mutation checks are part of the audit: the tests must fail when the
   public-key check, the sandbox check or the nonce check is removed.
+
+## Amended 2026-10-16 (spec 002): kept devices
+
+`specs/002-device-sessions/` and `contracts/device-v1.md` change two rules of
+this contract and add an API. **First draft by the architect**; the
+mail-client builder (slice D1) fixes the exact signatures here before the
+dashboard's builder starts, and the architect reviews them.
+
+**Rule 3, as amended: nothing persists except a kept device.** A browser the
+owner said is theirs keeps one record per mailbox in IndexedDB, exactly as
+device-v1 Part C K5 lists: the device id and label, two non-extractable
+P-256 private keys and their public forms, the keyId it last accepted, its
+lock setting, its last activity time, and the sign-in id it was unlocked
+under. Never a mailbox key, a factor secret, a mail session token or
+decrypted content. No `localStorage`, `sessionStorage`, Cache API or cookies,
+as before. A shared computer keeps nothing.
+
+**Rule 4, as amended (K1′).** An unlocked session holds every key
+non-extractable and decrypt-only. A key is opened extractable only for one
+sealing or wrapping step just after a factor was used (a FreshFactor, at most
+2 minutes), and is dropped after. On a kept device the unlock key opens the
+device's seal, and other code on the dashboard's origin could ask Web Crypto
+for an extractable copy. That is a limit of the platform, stated in the
+spec's threat model.
+
+**What the API must offer** (`specs/002-device-sessions/plan.md` §5 lists
+it): a kept-device store (IndexedDB, and a memory one for tests) and the check
+that a browser can keep keys; `resumeDevice` (unlocked with no prompt, locked
+with a reason, or removed and wiped); sessions that hold every key the chain
+reaches, check K2′ and K3 at every unlock, and offer a FreshFactor after a
+factor; `reauthenticate`; `sessionProof`; keep, rekey, lock now, set the lock
+setting, forget, and remove a device with its rotation, each as a request and
+a `commit()`; the upgrade; `setFactorKey`; `addPasskey` and
+`replaceRecoveryKey` with factor keys; enrollment with factor keys and a
+device; the send form's `session`; `PROTECTION.devices`; the errors
+`DeviceRemoved`, `StorageUnavailable`, `FactorExpired`.
+
+**Tests this amendment requires:** the D1 acceptance tests in
+`specs/002-device-sessions/tasks.md`, in Node and in Chromium, Firefox and
+WebKit under the dashboard's exact policy with Trusted Types enforced.
