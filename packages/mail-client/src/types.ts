@@ -583,5 +583,8 @@ export interface SendRequest {
 
 export interface ProtectionTexts {
   optionA(operator: string): string;
+  /** Shown under "How your mail is protected" whenever the mailbox has kept devices (spec 002 §5). */
+  devices(operator: string): string;
+  /** Spec 001 §4's rows, then the rows spec 002 §5 adds. */
   readonly metadata: readonly { what: string; where: string; why: string }[];
 }
