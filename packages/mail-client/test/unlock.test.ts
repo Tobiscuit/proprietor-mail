@@ -139,8 +139,9 @@ describe("the unlocked mailbox", () => {
     await expect(unlocked.openBody(item, new Uint8Array(1))).rejects.toBeInstanceOf(MailboxLocked);
     await expect(unlocked.sealDraft(null, { to: [], cc: [], bcc: [], subject: "", text: "", inReplyTo: null, references: [] })).rejects.toBeInstanceOf(MailboxLocked);
     await expect(unlocked.openDrafts([])).rejects.toBeInstanceOf(MailboxLocked);
-    await expect(unlocked.addPasskey(passkeyOptions(credentials), { recoveryKey })).rejects.toBeInstanceOf(MailboxLocked);
-    await expect(unlocked.replaceRecoveryKey({ recoveryKey })).rejects.toBeInstanceOf(MailboxLocked);
+    await expect(unlocked.addPasskey(passkeyOptions(credentials), unlocked.freshFactor!)).rejects.toBeInstanceOf(MailboxLocked);
+    await expect(unlocked.replaceRecoveryKey(unlocked.freshFactor!)).rejects.toBeInstanceOf(MailboxLocked);
+    await expect(unlocked.reauthenticate({ recoveryKey })).rejects.toBeInstanceOf(MailboxLocked);
     expect(() => unlocked.touch()).toThrow(MailboxLocked);
     unlocked.lock(); // idempotent
     expect(locks).toEqual([1]);
@@ -226,12 +227,12 @@ describe("the unlocked mailbox", () => {
     expect(fromServer!.draft).toStrictEqual(draft);
   });
 
-  test("addPasskey needs a fresh unlock (K1): with the recovery key, or with a passkey prompt", async () => {
+  test("addPasskey needs a fresh unlock (K1′): a FreshFactor from the recovery key, or from a passkey prompt", async () => {
     const unlocked = await unlockWithRecoveryKey(view, recoveryKey);
     const wrongKey = (await startEnrollment(provisioned, null)).recoveryKey;
-    await expect(unlocked.addPasskey(passkeyOptions(credentials, { label: "Phone" }), { recoveryKey: wrongKey })).rejects.toBeInstanceOf(WrongRecoveryKey);
+    await expect(unlocked.reauthenticate({ recoveryKey: wrongKey })).rejects.toBeInstanceOf(WrongRecoveryKey);
 
-    const byRecovery = await unlocked.addPasskey(passkeyOptions(credentials, { label: "Phone" }), { recoveryKey });
+    const byRecovery = await unlocked.addPasskey(passkeyOptions(credentials, { label: "Phone" }), await unlocked.reauthenticate({ recoveryKey }));
     expect(byRecovery).toMatchObject({ kind: "passkey-prf", keyId: pub.keyId, label: "Phone", credentialId: credentials.lastCredentialId() }); // pragma: allowlist secret (a variable or type name, not a value)
     expect(byRecovery.id).toMatch(/^wrp_/);
     expect(fromB64url(byRecovery.wrapped).length).toBe(77);
@@ -242,7 +243,7 @@ describe("the unlocked mailbox", () => {
     expect(viaPhone.keyId).toBe(pub.keyId);
 
     credentials.options = {};
-    const byPasskey = await unlocked.addPasskey(passkeyOptions(credentials, { label: "Tablet" }), { passkey: { rpId: "example.com", credentials } });
+    const byPasskey = await unlocked.addPasskey(passkeyOptions(credentials, { label: "Tablet" }), await unlocked.reauthenticate({ passkey: { rpId: "example.com", credentials } }));
     expect(byPasskey.label).toBe("Tablet");
     expect(byPasskey.credentialId).toBe(credentials.lastCredentialId());
     expect(byPasskey.credentialId).not.toBe(byRecovery.credentialId);
@@ -250,7 +251,7 @@ describe("the unlocked mailbox", () => {
 
   test("replaceRecoveryKey: a new display form and its wrap, which unlocks; the old key still opens its old wrap until it is removed", async () => {
     const unlocked = await unlockWithRecoveryKey(view, recoveryKey);
-    const replaced = await unlocked.replaceRecoveryKey({ passkey: { rpId: "example.com", credentials } });
+    const replaced = await unlocked.replaceRecoveryKey(await unlocked.reauthenticate({ passkey: { rpId: "example.com", credentials } }));
     expect(replaced.recoveryKey).toMatch(/^[0-9A-HJKMNP-TV-Z]{5}(-[0-9A-HJKMNP-TV-Z]{5}){10}$/);
     expect(replaced.recoveryKey).not.toBe(recoveryKey);
     expect(replaced.wrap).toMatchObject({ kind: "recovery", keyId: pub.keyId, credentialId: null, label: "Recovery key" });

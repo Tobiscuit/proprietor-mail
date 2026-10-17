@@ -154,3 +154,18 @@ export async function makeRecoveryWrap(mailboxId: string, priv: MailboxPrivateKe
     secret.fill(0);
   }
 }
+
+/**
+ * A decrypt-only copy of a wrappable key, without a prompt: the key is wrapped
+ * under a throwaway secret and unwrapped non-extractable, so the session holds
+ * no key that can be wrapped again (K1).
+ */
+export async function decryptOnlyCopy(mailboxId: string, priv: MailboxPrivateKey): Promise<MailboxPrivateKey> {
+  const secret = crypto.getRandomValues(new Uint8Array(32)); // pragma: allowlist secret (a variable or type name, not a value)
+  try {
+    const wrap = await wrapPrivateKey(priv, { mailboxId, wrapId: newId("wrp"), kind: "recovery", secret });
+    return await unwrapPrivateKey(wrap, { mailboxId, secret });
+  } finally {
+    secret.fill(0);
+  }
+}

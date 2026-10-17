@@ -20,10 +20,12 @@
  * is left to make it once locked.
  */
 import {
+  bindingKey,
   bindingTag,
   DecryptionFailed,
   factorPublicKey,
   fingerprint,
+  generateMailboxKey,
   generateSigningKey,
   generateUnlockKey,
   keyIdOf,
@@ -48,13 +50,14 @@ import {
   KeySubstitutionDetected,
   MailboxChanged,
   MailboxLocked,
+  NoRecoveryFactor,
   StaleFactor,
   StorageUnavailable,
   UndecryptableBody,
 } from "./errors";
-import { activeOfFactor, makePasskeyWrap, makeRecoveryWrap, openFactor, type OpenedFactor } from "./factors";
+import { activeOfFactor, decryptOnlyCopy, factorTag, makePasskeyWrap, makeRecoveryWrap, openFactor, type OpenedFactor } from "./factors";
 import { FreshFactorImpl, freshFactorOf } from "./fresh-factor";
-import { bindingOf, checkAdvertisedKey, checkTags, readRing, trustChain, type Ring, type RingWrap } from "./keyring";
+import { bindingOf, checkAdvertisedKey, checkTags, deviceRecipient, factorRecipient, readRing, trustChain, type Ring, type RingWrap } from "./keyring";
 import { parseMail } from "./mime";
 import type {
   ChallengeView,
@@ -79,10 +82,14 @@ import type {
   PendingChange,
   ReAuth,
   RegisterDeviceRequest,
+  RemoveDeviceRequest,
+  Rotation,
   SaveDraftRequest,
+  SetFactorKeyRequest,
   UnlockedMailbox,
   UnlockOptions,
   UpdateDeviceRequest,
+  UpgradeRequest,
   WrapInput,
 } from "./types";
 
@@ -296,7 +303,12 @@ export class Session implements UnlockedMailbox {
   /** Binds this session to its kept device: its proofs are signed with the device's key, and it locks by the device's setting. */
   async bindDevice(record: KeptDevice): Promise<void> {
     const signingKey = fromBase64url(record.signingPublic)!; // pragma: allowlist secret (a public key)
-    this.lockedTag = await bindingTag(this.binding, { kind: "device", deviceId: record.deviceId, label: record.label, signingKey, unlockKey: null });
+    this.attachDevice(record, await bindingTag(this.binding, { kind: "device", deviceId: record.deviceId, label: record.label, signingKey, unlockKey: null }));
+  }
+
+  /** bindDevice with the device's tag over "no unlock key" (under the active key) made already. */
+  attachDevice(record: KeptDevice, lockedTag: string): void {
+    this.lockedTag = lockedTag;
     this.keptDevice = record;
     this.lastActivityWrite = this.now();
     if (this.keys !== null) this.arm();
@@ -526,28 +538,169 @@ export class Session implements UnlockedMailbox {
     this.ring = ring;
   }
 
-  // ---- Wraps (contracts/mail-client-v1.md: a fresh unlock for each) ----
+  // ---- Removing a device: the rotation (device-v1 B7, M18; plan.md F6) ----
 
-  private async wrappableFromReauth(reauth: ReAuth): Promise<MailboxPrivateKey> {
-    const ff = freshFactorOf(await this.reauthenticate(reauth));
-    try {
-      return this.wrappableActive(ff);
-    } finally {
-      ff.dispose();
+  async removeDevice(view: MailboxView, deviceId: string, freshFactor: FreshFactor): Promise<PendingChange<RemoveDeviceRequest>> {
+    const keys = this.unlockedKeys();
+    const ring = readRing(view);
+    if (ring.mailboxId !== this.mailboxId) throw new TypeError("a view of another mailbox");
+    if (ring.sessions !== "required") throw new TypeError("upgrade the mailbox before removing a device");
+    // The view must be of this session's key ring; one of a newer key means another browser rotated first.
+    if (ring.active.keyId !== this.ring.active.keyId || ring.keys.some((k) => !keys.has(k.keyId))) throw new MailboxChanged();
+    const devices = ring.devices ?? [];
+    if (!devices.some((d) => d.id === deviceId)) throw new MailboxChanged("the view does not list that device");
+    const active = this.wrappableActive(freshFactor);
+    // K3: every remaining recipient's tag, under the active key, before anything is sealed to it.
+    await checkTags(ring, this.binding);
+    const remaining = devices.filter((d) => d.id !== deviceId);
+    const factors = ring.wraps.filter((w) => w.factorKey !== null);
+    // M5′, D28: the new key must reach a recovery factor.
+    if (!factors.some((w) => w.kind === "recovery")) throw new NoRecoveryFactor();
+
+    const next = await generateMailboxKey();
+    const mailboxId = this.mailboxId;
+    const successorSeal = await sealKey(active, { mailboxId }, { kind: "successor", publicKey: next.publicKey.publicKey });
+    const nextBinding = await bindingKey(next.privateKey, { mailboxId });
+    const seals: Rotation["seals"] = [];
+    const tags: Rotation["tags"] = [];
+    const deviceTags = new Map<string, string>();
+    const factorTags = new Map<string, string>();
+    for (const d of remaining) {
+      const recipient = deviceRecipient(d)!; // checkTags proved it well-formed
+      if (recipient.kind !== "device") throw new Error("internal: a device recipient");
+      if (recipient.unlockKey !== null) {
+        seals.push({ to: { kind: "device", id: d.id }, sealed: await sealKey(next.privateKey, { mailboxId }, { kind: "device", deviceId: d.id, publicKey: recipient.unlockKey }) });
+      }
+      const tag = await bindingTag(nextBinding, recipient);
+      deviceTags.set(d.id, tag);
+      tags.push({ to: { kind: "device", id: d.id }, tag });
     }
+    for (const w of factors) {
+      const recipient = factorRecipient(w)!;
+      if (recipient.kind !== "factor") throw new Error("internal: a factor recipient");
+      seals.push({ to: { kind: "factor", id: w.id }, sealed: await sealKey(next.privateKey, { mailboxId }, { kind: "factor", factorId: w.id, publicKey: recipient.factorKey }) });
+      const tag = await bindingTag(nextBinding, recipient);
+      factorTags.set(w.id, tag);
+      tags.push({ to: { kind: "factor", id: w.id }, tag });
+    }
+    const request: RemoveDeviceRequest = {
+      deviceId,
+      rotation: { from: ring.active.keyId, publicKey: base64url(next.publicKey.publicKey), successorSeal, seals, tags },
+    };
+    const ff = freshFactorOf(freshFactor);
+    return pendingChange(request, async () => {
+      // Mail applied M18. This session moves to the new key: a decrypt-only copy (K1′), the old keys kept.
+      const decryptOnly = await decryptOnlyCopy(mailboxId, next.privateKey);
+      const newKeyId = next.publicKey.keyId;
+      const at = new Date(this.now()).toISOString();
+      const newActive = { keyId: newKeyId, publicKey: new Uint8Array(next.publicKey.publicKey), retiredAt: null, successor: null };
+      const retired = { ...ring.active, retiredAt: at, successor: { keyId: newKeyId, sealed: successorSeal } };
+      this.ring = {
+        ...ring,
+        keys: [...ring.keys.filter((k) => k.keyId !== ring.active.keyId), retired, newActive],
+        active: newActive,
+        devices: remaining.map((d) => ({ ...d, tag: deviceTags.get(d.id)!, tagKeyId: newKeyId })),
+        wraps: ring.wraps.map((w) => (factorTags.has(w.id) ? { ...w, tag: factorTags.get(w.id)!, tagKeyId: newKeyId } : w)),
+        seals: seals.map((x) => ({ keyId: newKeyId, to: x.to, sealed: x.sealed })),
+      };
+      if (this.keys !== null) this.keys = new Map([[newKeyId, decryptOnly], ...this.keys]);
+      this.binding = nextBinding;
+      // The FreshFactor's 2 minutes go on with the new key, so a second removal needs no new prompt.
+      ff.retarget(next.privateKey);
+      const d = this.keptDevice;
+      if (d !== null && d.deviceId === deviceId) {
+        // This device removed itself (K7): it keeps nothing; the session goes on as a shared computer's.
+        this.keptDevice = null;
+        this.lockedTag = null;
+        if (this.store !== null) await this.store.delete(mailboxId, deviceId).catch(storageFailure);
+      } else if (d !== null) {
+        // This device accepts the new key; its tag at Mail is under it now, and so is the one Lock now sends.
+        await this.bindDevice(await this.changeDevice({ lastKeyId: newKeyId }));
+      }
+      if (this.keys !== null) this.arm();
+    });
   }
 
-  async addPasskey(passkey: PasskeyOptions, reauth: ReAuth): Promise<WrapInput> {
+  // ---- Factors' keys (device-v1 B5, B7; plan.md F5, F9) ----
+
+  async upgradeRequest(factors: readonly FreshFactor[]): Promise<PendingChange<UpgradeRequest>> {
     this.unlockedKeys();
-    const wrappable = await this.wrappableFromReauth(reauth);
+    if (this.ring.sessions !== "optional") throw new TypeError("the mailbox's sessions are required already: there is no upgrade");
+    const used = factors.map((f) => {
+      const ff = freshFactorOf(f);
+      return { ff, material: ff.use(this.mailboxId) };
+    });
+    if (new Set(used.map((u) => u.ff.factorId)).size !== used.length) throw new TypeError("a factor is named twice");
+    // M20: the upgrade names a recovery factor, and only wraps of the active key.
+    if (!used.some((u) => u.ff.kind === "recovery")) throw new NoRecoveryFactor();
+    if (used.some((u) => u.ff.facts.keyId !== this.ring.active.keyId)) throw new MailboxChanged();
+    const keyId = this.ring.active.keyId;
+    const request: UpgradeRequest = {
+      factors: await Promise.all(
+        used.map(async ({ ff, material }) => ({
+          id: ff.factorId,
+          factorKey: base64url(material.factorPublic),
+          tag: await factorTag(this.binding, ff.facts, material.factorPublic),
+          tagKeyId: keyId,
+        })),
+      ),
+    };
+    return pendingChange(request, async () => {
+      this.ring.sessions = "required";
+      for (const f of request.factors) this.keyFactorLocally(f.id, f.factorKey, f.tag, keyId);
+    });
+  }
+
+  async setFactorKey(target: FreshFactor, proving: FreshFactor): Promise<PendingChange<SetFactorKeyRequest>> {
+    this.unlockedKeys();
+    const t = freshFactorOf(target);
+    const p = freshFactorOf(proving);
+    if (t.factorId === p.factorId) throw new TypeError("the factor proof must come from another factor");
+    const tm = t.use(this.mailboxId);
+    const pm = p.use(this.mailboxId);
+    if (this.ring.sessions !== "required") throw new TypeError("upgrade the mailbox first");
+    const wrap = this.ring.wraps.find((w) => w.id === t.factorId);
+    if (wrap === undefined) throw new MailboxChanged();
+    if (wrap.factorKey !== null) throw new TypeError("this factor has its factor key already");
+    if (this.ring.wraps.find((w) => w.id === p.factorId)?.factorKey == null) throw new TypeError("the proof must come from a factor that has its factor key");
+    const keyId = this.ring.active.keyId;
+    // A seal of the active key exactly when the factor's wrap is of a retired key (B7).
+    let seal: string | null = null;
+    if (t.facts.keyId !== keyId) {
+      const wrappable = [pm.active, tm.active].find((k) => k !== null && k.keyId === keyId) ?? null;
+      if (wrappable === null) throw new StaleFactor();
+      seal = await sealKey(wrappable, { mailboxId: this.mailboxId }, { kind: "factor", factorId: t.factorId, publicKey: tm.factorPublic });
+    }
+    const request: SetFactorKeyRequest = {
+      factorId: t.factorId,
+      factorKey: base64url(tm.factorPublic),
+      tag: await factorTag(this.binding, t.facts, tm.factorPublic),
+      tagKeyId: keyId,
+      seal,
+    };
+    return pendingChange(request, async () => {
+      this.keyFactorLocally(request.factorId, request.factorKey, request.tag, keyId);
+      if (seal !== null) this.ring.seals = [...this.ring.seals, { keyId, to: { kind: "factor", id: request.factorId }, sealed: seal }];
+    });
+  }
+
+  private keyFactorLocally(factorId: string, factorKey: string, tag: string, tagKeyId: string): void {
+    this.ring.wraps = this.ring.wraps.map((w) => (w.id === factorId ? { ...w, factorKey, tag, tagKeyId } : w)); // pragma: allowlist secret (public values)
+  }
+
+  // ---- Wraps (contracts/mail-client-v1.md: a fresh factor for each, K1′) ----
+
+  async addPasskey(passkey: PasskeyOptions, freshFactor: FreshFactor): Promise<WrapInput> {
+    this.unlockedKeys();
+    const wrappable = this.wrappableActive(freshFactor);
     const wrap = await makePasskeyWrap(this.mailboxId, wrappable, passkey, this.ring.sessions === "required" ? this.binding : null);
     this.ring.wraps.push(ringWrapOf(wrap));
     return wrap;
   }
 
-  async replaceRecoveryKey(reauth: ReAuth): Promise<{ recoveryKey: string; wrap: WrapInput }> {
+  async replaceRecoveryKey(freshFactor: FreshFactor): Promise<{ recoveryKey: string; wrap: WrapInput }> {
     this.unlockedKeys();
-    const wrappable = await this.wrappableFromReauth(reauth);
+    const wrappable = this.wrappableActive(freshFactor);
     const made = await makeRecoveryWrap(this.mailboxId, wrappable, this.ring.sessions === "required" ? this.binding : null);
     this.ring.wraps.push(ringWrapOf(made.wrap));
     return made;

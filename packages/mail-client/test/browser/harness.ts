@@ -234,7 +234,7 @@ const harness = {
   },
   async addPasskeyWithRecovery(rpId: string, useDouble: boolean, recoveryKey: string) {
     try {
-      const wrap = await unlocked!.addPasskey(passkeyOptions(rpId, useDouble, "Second passkey"), { recoveryKey });
+      const wrap = await unlocked!.addPasskey(passkeyOptions(rpId, useDouble, "Second passkey"), await unlocked!.reauthenticate({ recoveryKey }));
       return { ok: true as const, wrap, wrapBytes: fromBase64(wrap.wrapped).length };
     } catch (e) {
       return { ok: false as const, error: errorOf(e) };

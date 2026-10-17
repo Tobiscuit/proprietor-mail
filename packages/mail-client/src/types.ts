@@ -392,11 +392,20 @@ export interface Enrollment {
   /** 1-based positions among the 55 characters the owner must type back. */
   readonly recoveryCheck: { readonly positions: readonly number[] };
   confirmRecovery(characters: string): boolean;
-  /** Only after confirmRecovery() returned true. */
+  /** Only after confirmRecovery() returned true. With `keep`, it carries the device and its seal. */
   request(): EnrollRequest;
-  /** The new key as a decrypt-only session, without another prompt. */
+  /** After Mail accepted request(): keeps this device in the store, when `keep` was asked. Otherwise nothing. */
+  commit(): Promise<void>;
+  /** The new key as a decrypt-only session, without another prompt; with `keep`, only after commit(), and bound to the device. */
   unlocked(options?: UnlockOptions): UnlockedMailbox;
   discard(): void;
+}
+
+/** startEnrollment's options: "this device is mine" makes the browser that enrolls a kept device (plan.md F12). */
+export interface EnrollmentOptions {
+  keep?: { store: DeviceStore; label: string; lockAfter?: LockAfter; signInId?: string | null };
+  /** Injectable clock, milliseconds since the epoch. Default Date.now. */
+  now?: () => number;
 }
 
 // ---- Unlocked mailbox ----
@@ -492,9 +501,16 @@ export interface UnlockedMailbox {
   rekeyThisDevice(freshFactor: FreshFactor): Promise<PendingChange<UpdateDeviceRequest>>;
   /** Changes this device's lock setting at once; "right-away" drops its unlock key. */
   setLockAfter(lockAfter: LockAfter): Promise<{ updateDevice: UpdateDeviceRequest | null; needsRekey: boolean }>;
-  addPasskey(passkey: PasskeyOptions, reauth: ReAuth): Promise<WrapInput>;
-  /** Then: addWrap(wrap), and removeWrap of the old recovery wrap. */
-  replaceRecoveryKey(reauth: ReAuth): Promise<{ recoveryKey: string; wrap: WrapInput }>;
+  /** removeDevice's request with the whole rotation; commit() moves this session to the new key. */
+  removeDevice(view: MailboxView, deviceId: string, freshFactor: FreshFactor): Promise<PendingChange<RemoveDeviceRequest>>;
+  /** The one-time upgrade (D26): factor keys and tags for the factors just used; one must be the recovery key. */
+  upgradeRequest(factors: readonly FreshFactor[]): Promise<PendingChange<UpgradeRequest>>;
+  /** Gives `target` its factor key; the factor proof for the call comes from `proving`, another factor. */
+  setFactorKey(target: FreshFactor, proving: FreshFactor): Promise<PendingChange<SetFactorKeyRequest>>;
+  /** A wrap of the active key for a new passkey (one more prompt), with its factor key once sessions are required. */
+  addPasskey(passkey: PasskeyOptions, freshFactor: FreshFactor): Promise<WrapInput>;
+  /** Then: addWrap(wrap), and removeWrap of the old recovery wrap, each with a factor proof. */
+  replaceRecoveryKey(freshFactor: FreshFactor): Promise<{ recoveryKey: string; wrap: WrapInput }>;
   touch(): void;
   /** Lock now: drops every key at once; on a kept device, also deletes its unlock key (K6). */
   lock(): Promise<LockResult>;

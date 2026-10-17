@@ -3,6 +3,11 @@
  * D22): the browser builds `FormData` with a JSON part and one `File` per
  * attachment; the server side of the route decodes it, checks the limits
  * and returns exactly what `MailService.send` takes. Both are pure.
+ *
+ * Spec 002 (D29, device-v1 B1): `send` carries its mail session inside the
+ * request, as `request.session`, so the dashboard's send route hands it on
+ * unchanged. Its shape is checked here (base64url of 32 bytes); its value is
+ * Mail's to judge, and it is never stored or logged on the way.
  */
 import type { Address } from "@proprietor/mail-crypto";
 import { ADDRESS } from "./compose";
@@ -26,6 +31,8 @@ export const SEND_LIMITS = {
 } as const;
 
 const IDEMPOTENCY_KEY = /^[A-Za-z0-9_.:-]{1,200}$/;
+/** A mail session token: base64url of 32 bytes, 43 characters, the last of which carries 2 zero bits. */
+const SESSION_TOKEN = /^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/; // pragma: allowlist secret (a pattern, public keys or a test double, not a secret)
 const DRAFT_ID = /^drf_[0-9a-hjkmnp-tv-z]{26}$/;
 const BARE_ID = /^[^\s<>\u0000-\u001f\u007f]{1,998}$/;
 const SINGLE_LINE = /^[^\r\n\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]*$/;
@@ -56,6 +63,7 @@ function addressList(value: unknown, what: string): Address[] {
 
 interface Fields {
   idempotencyKey: string;
+  session?: string;
   from?: string;
   to: Address[];
   cc: Address[];
@@ -88,6 +96,9 @@ function checkFields(r: Record<string, unknown>): Fields {
       return r.references.map((x) => (typeof x === "string" && BARE_ID.test(x) ? x : refuse("reference")));
     })(),
   };
+  if (r.session !== undefined && r.session !== null) {
+    fields.session = typeof r.session === "string" && SESSION_TOKEN.test(r.session) ? r.session : refuse("mail session");
+  }
   if (r.from !== undefined && r.from !== null) {
     if (typeof r.from !== "string" || !ADDRESS.test(r.from)) refuse("from");
     fields.from = r.from.toLowerCase();
@@ -115,10 +126,16 @@ function attachmentMeta(value: unknown, i: number): { filename: string; mimeType
   };
 }
 
-/** Browser side of the send route: `request` (JSON) plus one `attachment` File per attachment, in order. */
-export function encodeSendForm(compose: ComposeInput, options: { idempotencyKey: string; draftId?: string }): FormData {
+/**
+ * Browser side of the send route: `request` (JSON) plus one `attachment` File
+ * per attachment, in order. `session` is the mail session token (device-v1
+ * B1), once the mailbox has sessions.
+ */
+export function encodeSendForm(compose: ComposeInput, options: { idempotencyKey: string; draftId?: string; session?: string }): FormData {
+  if (options.session !== undefined && (typeof options.session !== "string" || !SESSION_TOKEN.test(options.session))) refuse("mail session");
   const fields = checkFields({
     idempotencyKey: options.idempotencyKey,
+    session: options.session,
     from: compose.from,
     to: compose.to,
     cc: compose.cc,
@@ -168,6 +185,7 @@ export async function decodeSendForm(form: FormData): Promise<SendRequest> {
   checkSize(fields.text.length, attachments.reduce((n, a) => n + a.content.byteLength, 0));
   const request: SendRequest = {
     idempotencyKey: fields.idempotencyKey,
+    ...(fields.session !== undefined ? { session: fields.session } : {}),
     ...(fields.from !== undefined ? { from: fields.from } : {}),
     to: fields.to,
     cc: fields.cc,
