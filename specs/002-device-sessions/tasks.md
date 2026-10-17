@@ -157,8 +157,10 @@ report the result.
   keyIds;
 - M19: no seal of a retired key remains after a rotation;
 - `removeWrap` refuses the last recovery factor that reaches the active key;
-- M1's marker scan: no session token, challenge answer or nonce appears in
-  SQLite in the clear (only hashes), nor in logs;
+- M1's marker scan: no session token or challenge answer appears in SQLite in
+  the clear (only their SHA-256), nor in logs. A challenge's nonce is not a
+  secret (Mail sends it with the challenge, for the device to sign) and is
+  stored as it is;
 - the escape guard: no uncaught exception, no "hung" cancellation.
 
 **Mutation checks (the audit runs them):** remove `list` from the session
