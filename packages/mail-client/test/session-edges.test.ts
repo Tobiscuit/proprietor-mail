@@ -1,0 +1,157 @@
+// D1d/D1e, the edges: refresh(view), a lock made by another page of the same browser, FreshFactors
+// dropped at lock, the upgrade's preconditions (M20), and F6's K3 on the REMAINING recipients only (so a
+// device the server slipped in after the unlock can still be removed).
+import { describe, expect, test } from "vitest";
+import {
+  KeySubstitutionDetected,
+  MailboxChanged,
+  memoryDeviceStore,
+  unlockWithRecoveryKey,
+  type FreshFactor,
+  type UnlockedMailbox,
+} from "../src/index";
+import type { FakeMail } from "./fake-mail";
+import { enrolledMailbox, rotateByHand, testClock, type Enrolled } from "./keyring-support";
+import { b64url } from "./support";
+
+async function openSession(fake: FakeMail, unlocked: UnlockedMailbox) {
+  return (await fake.openSession(await unlocked.sessionProof(await fake.challenge({ purpose: "session" })))).session;
+}
+async function proofOf(fake: FakeMail, ff: FreshFactor) {
+  return ff.answer(await fake.challenge({ purpose: "factor", factorId: ff.factorId }));
+}
+async function keep(e: Enrolled, store = memoryDeviceStore(), now?: () => number) {
+  const unlocked = await unlockWithRecoveryKey(e.fake.mailbox(), e.recoveryKey, { store, signInId: "s", ...(now ? { now } : {}) });
+  const session = await openSession(e.fake, unlocked);
+  const ff = unlocked.freshFactor!;
+  const pending = await unlocked.keepThisDevice({ label: "Laptop" }, ff);
+  await e.fake.registerDevice(pending.request, { session, factorProof: await proofOf(e.fake, ff) });
+  await pending.commit();
+  return { unlocked, session, store, deviceId: pending.request.device.id };
+}
+
+describe("refresh(view)", () => {
+  test("adopts a newer view of the same key after K3: a passkey added by another browser can then be used here", async () => {
+    const e = await enrolledMailbox();
+    const here = await unlockWithRecoveryKey(e.fake.mailbox(), e.recoveryKey);
+    const elsewhere = await unlockWithRecoveryKey(e.fake.mailbox(), e.recoveryKey);
+    const session = await openSession(e.fake, elsewhere);
+    const ff = elsewhere.freshFactor!;
+    const { passkeyOptions } = await import("./support");
+    const wrap = await elsewhere.addPasskey(passkeyOptions(e.credentials, { label: "New key" }), ff);
+    await e.fake.addWrap(wrap, { session, factorProof: await proofOf(e.fake, ff) });
+    await here.refresh(e.fake.mailbox());
+    e.credentials.options = { pick: 1 }; // the person uses the new key, listed second
+    const viaNew = await here.reauthenticate({ passkey: { rpId: "example.com", credentials: e.credentials } }); // pragma: allowlist secret (a test double or a public test key, not a secret)
+    expect(viaNew.factorId).toBe(wrap.id);
+  });
+
+  test("refuses a view with a forged tag (K3), and a view of another key (MailboxChanged)", async () => {
+    const e = await enrolledMailbox();
+    const here = await unlockWithRecoveryKey(e.fake.mailbox(), e.recoveryKey);
+    const view = e.fake.mailbox();
+    await expect(here.refresh({ ...view, wraps: view.wraps.map((w) => ({ ...w, tag: b64url(new Uint8Array(32)) })) })).rejects.toBeInstanceOf(KeySubstitutionDetected);
+    await rotateByHand(e.fake, e.recoveryKey);
+    await expect(here.refresh(e.fake.mailbox())).rejects.toBeInstanceOf(MailboxChanged);
+  });
+});
+
+describe("the lock engine across pages of one browser", () => {
+  test("Lock now in one page reaches another page of the same browser at its next use (K6)", async () => {
+    const clock = testClock();
+    const e = await enrolledMailbox({ now: clock });
+    const store = memoryDeviceStore();
+    const a = await keep(e, store, clock);
+    const { resumeDevice } = await import("../src/index");
+    const b = await resumeDevice(e.fake.mailbox(), { store, signInId: "s", now: clock });
+    if (b.state !== "unlocked") throw new Error(b.state);
+    await a.unlocked.lock();
+    clock.advance(31_000); // the next activity write is due
+    b.mailbox.touch();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(b.mailbox.locked).toBe(true);
+  });
+
+  test("a device another page forgot is forgotten here too at the next use", async () => {
+    const clock = testClock();
+    const e = await enrolledMailbox({ now: clock });
+    const store = memoryDeviceStore();
+    const a = await keep(e, store, clock);
+    await store.delete(e.mailboxId);
+    clock.advance(31_000);
+    a.unlocked.touch();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(a.unlocked.locked).toBe(true);
+    expect(a.unlocked.device).toBeNull();
+  });
+
+  test("activity is written to the record, so a timed lock at the next load counts from the last use", async () => {
+    const clock = testClock();
+    const e = await enrolledMailbox({ now: clock });
+    const store = memoryDeviceStore();
+    const { resumeDevice } = await import("../src/index");
+    const unlocked = await unlockWithRecoveryKey(e.fake.mailbox(), e.recoveryKey, { store, signInId: "s", now: clock });
+    const session = await openSession(e.fake, unlocked);
+    const ff = unlocked.freshFactor!;
+    const pending = await unlocked.keepThisDevice({ label: "Laptop", lockAfter: "15-minutes" }, ff);
+    await e.fake.registerDevice(pending.request, { session, factorProof: await proofOf(e.fake, ff) });
+    await pending.commit();
+    clock.advance(14 * 60_000);
+    unlocked.touch(); // a use, written
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    clock.advance(14 * 60_000); // 28 minutes after keeping, 14 after the last use
+    expect((await resumeDevice(e.fake.mailbox(), { store, signInId: "s", now: clock })).state).toBe("unlocked");
+  });
+
+  test("locking drops the FreshFactors this session made", async () => {
+    const e = await enrolledMailbox();
+    const here = await unlockWithRecoveryKey(e.fake.mailbox(), e.recoveryKey);
+    const again = await here.reauthenticate({ recoveryKey: e.recoveryKey });
+    await here.lock();
+    expect(here.freshFactor!.expired).toBe(true);
+    expect(again.expired).toBe(true);
+  });
+});
+
+describe("preconditions the Worker would refuse, refused here first", () => {
+  test("keeping a device needs the upgrade first; the upgrade needs that no factor has a key yet (M20)", async () => {
+    const legacy = await enrolledMailbox({ legacy: true });
+    const store = memoryDeviceStore();
+    const unlocked = await unlockWithRecoveryKey(legacy.fake.mailbox(), legacy.recoveryKey, { store });
+    await expect(unlocked.keepThisDevice({ label: "Laptop" }, unlocked.freshFactor!)).rejects.toBeInstanceOf(TypeError);
+    const view = legacy.fake.mailbox();
+    const halfDone = { ...view, wraps: view.wraps.map((w, i) => (i === 0 ? { ...w, factorKey: b64url(new Uint8Array(32)) } : w)) };
+    const other = await unlockWithRecoveryKey(halfDone, legacy.recoveryKey).catch((e: unknown) => e);
+    // A factor key without its tag is K3's anomaly already: the unlock itself stops.
+    expect(other).toBeInstanceOf(KeySubstitutionDetected);
+  });
+});
+
+describe("F6: K3 on the remaining recipients", () => {
+  test("a device the server slipped in after the unlock can still be removed: its own tag is not checked, every other one is", async () => {
+    const e = await enrolledMailbox();
+    const a = await keep(e);
+    const signing = new Uint8Array(65).fill(5);
+    signing[0] = 4;
+    const intruder = {
+      id: "dev_00000000000000000000000000",
+      label: "Not the owner's",
+      signingKey: b64url(signing), // pragma: allowlist secret (a test double or a public test key, not a secret)
+      unlockKey: null,
+      tag: b64url(new Uint8Array(32)),
+      tagKeyId: e.fake.activeKey.keyId,
+      createdAt: "2026-10-16T12:00:00.000Z",
+      createdBy: "server",
+      lastSeenAt: null,
+      accountId: "acc_owner",
+    };
+    e.fake.devices.push(intruder);
+    const ff = await a.unlocked.reauthenticate({ recoveryKey: e.recoveryKey });
+    const pending = await a.unlocked.removeDevice(e.fake.mailbox(), intruder.id, ff);
+    expect(pending.request.rotation.tags.map((t) => t.to.id)).not.toContain(intruder.id);
+    await e.fake.removeDevice(pending.request, { session: a.session, factorProof: await proofOf(e.fake, ff) });
+    await pending.commit();
+    // Now that it is gone, the key ring verifies again at a fresh unlock.
+    await unlockWithRecoveryKey(e.fake.mailbox(), e.recoveryKey);
+  });
+});

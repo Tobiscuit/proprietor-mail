@@ -165,10 +165,16 @@ export function factorRecipient(w: Pick<RingWrap, "id" | "kind" | "label" | "cre
   return { kind: "factor", factorId: w.id, factorKind: w.kind, label: w.label, factorKey, credentialId: w.credentialId }; // pragma: allowlist secret (field names and public values, not secrets)
 }
 
-/** K3: every tag in the ring verifies under the active key's binding key, or nothing proceeds. */
-export async function checkTags(ring: Ring, binding: BindingKey): Promise<void> {
+/**
+ * K3: every tag in the ring verifies under the active key's binding key, or
+ * nothing proceeds. A rotation leaves out the device it removes (plan.md F6:
+ * "every remaining recipient"): it is never sealed to, and a device someone
+ * slipped in must stay removable.
+ */
+export async function checkTags(ring: Ring, binding: BindingKey, options: { exceptDevice?: string } = {}): Promise<void> {
   if (binding.keyId !== ring.active.keyId || binding.mailboxId !== ring.mailboxId) throw new TypeError("the binding key is not the active key's");
   for (const d of ring.devices ?? []) {
+    if (d.id === options.exceptDevice) continue;
     const recipient = deviceRecipient(d);
     if (recipient === null || d.tagKeyId !== ring.active.keyId || !(await verifyBindingTag(binding, recipient, d.tag))) {
       throw new KeySubstitutionDetected("a device in the key ring was not added by a holder of the mailbox key");

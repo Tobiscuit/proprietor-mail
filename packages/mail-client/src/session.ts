@@ -551,7 +551,7 @@ export class Session implements UnlockedMailbox {
     if (!devices.some((d) => d.id === deviceId)) throw new MailboxChanged("the view does not list that device");
     const active = this.wrappableActive(freshFactor);
     // K3: every remaining recipient's tag, under the active key, before anything is sealed to it.
-    await checkTags(ring, this.binding);
+    await checkTags(ring, this.binding, { exceptDevice: deviceId });
     const remaining = devices.filter((d) => d.id !== deviceId);
     const factors = ring.wraps.filter((w) => w.factorKey !== null);
     // M5′, D28: the new key must reach a recovery factor.
@@ -626,6 +626,7 @@ export class Session implements UnlockedMailbox {
   async upgradeRequest(factors: readonly FreshFactor[]): Promise<PendingChange<UpgradeRequest>> {
     this.unlockedKeys();
     if (this.ring.sessions !== "optional") throw new TypeError("the mailbox's sessions are required already: there is no upgrade");
+    if (this.ring.wraps.some((w) => w.factorKey !== null)) throw new TypeError("a factor has its key already (M20: the upgrade happens once)");
     const used = factors.map((f) => {
       const ff = freshFactorOf(f);
       return { ff, material: ff.use(this.mailboxId) };
