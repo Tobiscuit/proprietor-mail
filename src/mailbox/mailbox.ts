@@ -44,7 +44,7 @@ import {
   writeKeyedEnrolment,
 } from "./devices";
 import { keyRingView, sessionsMode } from "./keyring";
-import { type Access, checkAccess, issueChallenge, type MailServiceMethod, openMailSession } from "./sessions";
+import { type Access, checkAccess, deleteExpired, issueChallenge, type MailServiceMethod, openMailSession } from "./sessions";
 import type { MailboxStore } from "./store";
 import type {
   AuditEntry,
@@ -957,9 +957,12 @@ export class Mailbox extends Agent<Env> {
    * The daily alarm (HOUSEKEEPING_CRON): empties Trash of messages 30 days in
    * it (M9), then deletes `sends` rows more than 30 days old, audit rows more
    * than a year old, and suppression entries whose last event is more than a
-   * year old (M11). A row exactly at its limit stays. Not reached over RPC by
-   * MailService; a failure throws into the Agents SDK's scheduler (agents
-   * 0.24.0), which retries the job and runs the cron again next day.
+   * year old (M11). A row exactly at its limit stays. It also deletes the
+   * challenges and mail sessions that have expired (device-v1 B9); their
+   * counts are in the log line, and the answer keeps its shape. Not reached
+   * over RPC by MailService; a failure throws into the Agents SDK's
+   * scheduler (agents 0.24.0), which retries the job and runs the cron again
+   * next day.
    */
   async dailyHousekeeping(): Promise<{ trash: number; sends: number; audit: number; suppression: number }> {
     const trash = await this.purgeExpiredTrash();
@@ -967,7 +970,8 @@ export class Mailbox extends Agent<Env> {
     const sends = this.deleteOlderThan("sends", "created_at", new Date(now - SENDS_KEPT_DAYS * DAY_MS));
     const audit = this.deleteOlderThan("audit", "at", new Date(now - AUDIT_KEPT_DAYS * DAY_MS));
     const suppression = this.deleteOlderThan("suppression", "last_at", new Date(now - SUPPRESSION_KEPT_DAYS * DAY_MS));
-    logEvent("housekeeping", { mailbox: this.safeName(), trash, sends, audit, suppression });
+    const { challenges, sessions } = deleteExpired(this.ctx.storage.sql, this.ports.clock.now());
+    logEvent("housekeeping", { mailbox: this.safeName(), trash, sends, audit, suppression, challenges, sessions });
     return { trash, sends, audit, suppression };
   }
 

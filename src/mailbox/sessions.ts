@@ -320,6 +320,18 @@ export async function openMailSession(store: MailboxStore, ctx: CallContext, req
   return { session: v.encodeBase64url(sessionBytes), expiresAt, device: deviceId };
 }
 
+/**
+ * B9: the daily housekeeping deletes challenges and sessions that have
+ * expired (a challenge is live while now < expiresAt; so is a session).
+ */
+export function deleteExpired(sql: SqlStorage, now: Date): { challenges: number; sessions: number } {
+  const at = now.toISOString();
+  return {
+    challenges: rows(sql, "DELETE FROM challenges WHERE expires_at <= ? RETURNING 1", at).length,
+    sessions: rows(sql, "DELETE FROM mail_sessions WHERE expires_at <= ? RETURNING 1", at).length,
+  };
+}
+
 // ---- bytes ----------------------------------------------------------------------------------------
 
 async function sha256(bytes: Uint8Array): Promise<string> {
