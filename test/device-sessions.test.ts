@@ -370,6 +370,34 @@ describe("SESSION_NEEDS (plan.md §4): one table names what every MailService me
     expect(rpcMethods(MailService).sort()).toEqual(Object.keys(SESSION_NEEDS).sort());
   });
 
+  it("is device-v1 B3's table, written out here rather than read from the code", () => {
+    expect(SESSION_NEEDS).toEqual({
+      mailboxes: "bootstrap",
+      mailbox: "bootstrap",
+      unread: "bootstrap",
+      enroll: "bootstrap",
+      challenge: "bootstrap",
+      openSession: "bootstrap",
+      upgrade: "session",
+      list: "session",
+      body: "session",
+      update: "session",
+      purge: "session",
+      drafts: "session",
+      saveDraft: "session",
+      deleteDraft: "session",
+      send: "session",
+      setPolicy: "session",
+      audit: "session",
+      addWrap: "factor",
+      removeWrap: "factor",
+      registerDevice: "factor",
+      updateDevice: "device-session",
+      removeDevice: "factor",
+      setFactorKey: "factor",
+    });
+  });
+
   it("the check sees a method that is missing from the table", () => {
     class Extended extends MailService {
       async exportEverything(): Promise<null> {
