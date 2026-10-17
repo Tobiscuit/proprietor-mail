@@ -114,7 +114,6 @@ class EnrollmentImpl implements Enrollment {
       ring,
       keys: new Map([[this.pub.keyId, this.priv]]),
       binding: this.binding,
-      device: null,
       store: options?.store ?? null,
       signInId: options?.signInId ?? null,
       now: options?.now ?? Date.now,

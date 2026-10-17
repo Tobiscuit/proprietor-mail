@@ -486,12 +486,21 @@ export interface UnlockedMailbox {
   reauthenticate(reauth: ReAuth): Promise<FreshFactor>;
   /** Re-checks a newer view of the same key (K3) and adopts its wraps, seals and devices. */
   refresh(view: MailboxView): Promise<void>;
+  /** "This device is mine": registerDevice's request; commit() keeps the device in this browser. */
+  keepThisDevice(options: { label: string; lockAfter?: LockAfter }, freshFactor: FreshFactor): Promise<PendingChange<RegisterDeviceRequest>>;
+  /** A new unlock key and its seal, after a lock: updateDevice's request; commit() keeps it. */
+  rekeyThisDevice(freshFactor: FreshFactor): Promise<PendingChange<UpdateDeviceRequest>>;
+  /** Changes this device's lock setting at once; "right-away" drops its unlock key. */
+  setLockAfter(lockAfter: LockAfter): Promise<{ updateDevice: UpdateDeviceRequest | null; needsRekey: boolean }>;
   addPasskey(passkey: PasskeyOptions, reauth: ReAuth): Promise<WrapInput>;
   /** Then: addWrap(wrap), and removeWrap of the old recovery wrap. */
   replaceRecoveryKey(reauth: ReAuth): Promise<{ recoveryKey: string; wrap: WrapInput }>;
   touch(): void;
-  lock(): void;
-  onLock(listener: () => void): () => void;
+  /** Lock now: drops every key at once; on a kept device, also deletes its unlock key (K6). */
+  lock(): Promise<LockResult>;
+  /** K7: this device was removed (DeviceRevoked): deletes its record and drops every key. */
+  forget(): Promise<void>;
+  onLock(listener: (event: LockEvent) => void): () => void;
 }
 
 // ---- Rendering: the one frame (spec D3 as amended) ----

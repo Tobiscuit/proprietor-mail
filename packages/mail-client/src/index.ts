@@ -102,7 +102,9 @@ export {
 export { canKeepDevices, DEVICE_DATABASE, indexedDbDeviceStore, KEPT_DEVICE_FIELDS, memoryDeviceStore } from "./device-store";
 
 export { startEnrollment } from "./enrollment";
-export { DEFAULT_IDLE_LOCK_MS, unlockWithPasskey, unlockWithRecoveryKey } from "./session";
+export { DEFAULT_IDLE_LOCK_MS, LOCK_AFTER_MS, unlockWithPasskey, unlockWithRecoveryKey } from "./session";
+export { FRESH_FACTOR_MS } from "./fresh-factor";
+export { resumeDevice } from "./resume";
 export { pageNonce, POLICY_NAME, renderBody, showInFrame } from "./render";
 export { threadsOf } from "./threads";
 export { searchMessages } from "./search";
