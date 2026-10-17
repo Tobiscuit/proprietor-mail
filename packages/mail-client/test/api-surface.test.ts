@@ -19,6 +19,11 @@ const functions = [
   "parseAddressList",
   "encodeSendForm",
   "decodeSendForm",
+  // spec 002, kept devices (slice D1)
+  "canKeepDevices",
+  "indexedDbDeviceStore",
+  "memoryDeviceStore",
+  "resumeDevice",
 ] as const;
 
 const errors = [
@@ -33,6 +38,15 @@ const errors = [
   "WrongRecoveryKey",
   "MailboxLocked",
   "UndecryptableBody",
+  // spec 002 (slice D1)
+  "DeviceRemoved",
+  "StorageUnavailable",
+  "FactorExpired",
+  "MailboxChanged",
+  "StaleFactor",
+  "NoRecoveryFactor",
+  "InvalidDeviceLabel",
+  "InvalidChallenge",
 ] as const;
 
 describe("@proprietor/mail-client exports the contract's API", () => {
@@ -48,6 +62,14 @@ describe("@proprietor/mail-client exports the contract's API", () => {
 
   test("PROTECTION and IMPLEMENTED exist", () => {
     expect(typeof api.PROTECTION.optionA).toBe("function");
+    expect(typeof api.PROTECTION.devices).toBe("function");
     expect(typeof api.IMPLEMENTED).toBe("boolean");
+  });
+
+  test("the spec 002 constants: K5's fields, the lock settings, the FreshFactor's 2 minutes, the one database", () => {
+    expect(api.KEPT_DEVICE_FIELDS.length).toBe(11);
+    expect(api.LOCK_AFTER_MS).toEqual({ "right-away": 0, "15-minutes": 900_000, "1-hour": 3_600_000, "sign-out": Infinity });
+    expect(api.FRESH_FACTOR_MS).toBe(120_000);
+    expect(api.DEVICE_DATABASE).toEqual({ name: "proprietor-mail", version: 1, store: "kept-devices" });
   });
 });
