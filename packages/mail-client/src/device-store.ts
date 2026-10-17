@@ -47,9 +47,18 @@ const CONTROL = /[\u0000-\u001f\u007f]/;
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 const SIGN_IN_ID_MAX = 512;
 
-/** A device name the Worker accepts (device-v1 B7: 1 to 40 characters, one line), as well-formed Unicode. */
+/** Line breaks beyond the control characters: NEL, LINE SEPARATOR, PARAGRAPH SEPARATOR. */
+const LINE_SEPARATORS = /[\u0085\u2028\u2029]/;
+
+/**
+ * A device name the Worker accepts (device-v1 B7): 1 to 40 characters,
+ * counted as code points as the Worker counts them, on one line, as
+ * well-formed Unicode (its tag covers UTF-8(label), A5).
+ */
 export function deviceLabelOk(label: unknown): label is string {
-  return typeof label === "string" && label.length >= 1 && label.length <= 40 && !CONTROL.test(label) && !LONE_SURROGATE.test(label);
+  if (typeof label !== "string" || CONTROL.test(label) || LINE_SEPARATORS.test(label) || LONE_SURROGATE.test(label)) return false;
+  const characters = [...label].length;
+  return characters >= 1 && characters <= 40;
 }
 
 function point(value: unknown): boolean {

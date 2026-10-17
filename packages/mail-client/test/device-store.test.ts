@@ -98,6 +98,9 @@ describe("K5: exactly the listed fields", () => {
       { label: "" },
       { label: "x".repeat(41) },
       { label: "two\nlines" },
+      { label: "two\u2028lines" },
+      { label: "next\u0085line" },
+      { label: "\u{1F3E0}".repeat(41) }, // 41 characters, though 82 UTF-16 units
       { signingPublic: b64url(new Uint8Array(64)) },
       { unlockPublic: null },
       { unlockKey: null },
@@ -111,6 +114,9 @@ describe("K5: exactly the listed fields", () => {
     }
     await store.put({ ...r, unlockKey: null, unlockPublic: null, lockAfter: "right-away", signInId: null });
     expect((await store.get(r.mailboxId))!.lockAfter).toBe("right-away");
+    // 1 to 40 characters counts code points, as the Worker does (device-v1 B7): 40 houses fit.
+    await store.put({ ...r, label: "\u{1F3E0}".repeat(40) });
+    expect((await store.get(r.mailboxId))!.label).toBe("\u{1F3E0}".repeat(40));
   });
 });
 
