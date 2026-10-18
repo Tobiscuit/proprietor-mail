@@ -9,8 +9,9 @@ import * as v from "./validate";
  * domain-model M13-M17). Mail learns from a challenge's answer that the
  * caller holds the mailbox key now (a key proof) or just used a factor (a
  * factor proof), and from a signature that the call comes from a kept device.
- * It stores the SHA-256 of every answer and token, and a challenge's nonce
- * only sealed under its answer: nothing at rest opens a session (M1).
+ * It stores the SHA-256 of every answer and token, so nothing at rest opens
+ * a session (M1). A challenge's nonce is stored as it is: it is not a
+ * secret (Mail sends it with the challenge, for the device to sign).
  */
 
 /**
@@ -231,7 +232,6 @@ export async function issueChallenge(store: MailboxStore, ctx: CallContext, requ
   );
   const nonce = crypto.getRandomValues(new Uint8Array(32));
   const answerHash = await sha256(answer);
-  const sealedNonce = xor(nonce, await noncePad(answer, store.mailboxId, id));
   answer.fill(0);
 
   // Other challenges may have been made during those awaits: the limit is checked again, then the row written.
@@ -243,7 +243,7 @@ export async function issueChallenge(store: MailboxStore, ctx: CallContext, requ
     purpose,
     target.targetId,
     answerHash,
-    v.encodeBase64url(sealedNonce),
+    v.encodeBase64url(nonce),
     ctx.actor.accountId,
     now.toISOString(),
     expiresAt,
@@ -278,7 +278,6 @@ export async function openMailSession(store: MailboxStore, ctx: CallContext, req
   });
   // Every hash first, as in checkAccess; the session is drawn now and kept only as its hash.
   const answerHash = await sha256(answer);
-  const pad = await noncePad(answer, store.mailboxId, challengeId);
   const sessionBytes = crypto.getRandomValues(new Uint8Array(32));
   const sessionHash = await sha256(sessionBytes);
   const now = store.now();
@@ -293,7 +292,7 @@ export async function openMailSession(store: MailboxStore, ctx: CallContext, req
     // M21: a device works only for the account that kept it; for anyone else it is not in the mailbox (G42).
     signer = deviceRow(store.sql, device.id);
     if (signer === null || signer.account_id !== ctx.actor.accountId) throw new DeviceRevoked();
-    const nonce = xor(v.decodeBase64url(c.nonce), pad);
+    const nonce = v.decodeBase64url(c.nonce);
     const signed = await store.proofs.verifyDeviceProof(
       new Uint8Array(signer.signing_key),
       { mailboxId: store.mailboxId, deviceId: signer.id, challengeId, nonce },
@@ -346,21 +345,3 @@ function sameHash(a: string, b: string): boolean {
   return diff === 0;
 }
 
-function xor(a: Uint8Array, b: Uint8Array): Uint8Array {
-  const out = new Uint8Array(a.length);
-  for (let i = 0; i < a.length; i++) out[i] = a[i]! ^ b[i]!;
-  return out;
-}
-
-/**
- * The key a challenge's nonce is stored under: HMAC-SHA-256 keyed by the
- * challenge's answer, over "proprietor-mail/v1/challenge-nonce|" + mailboxId +
- * "|" + challengeId. Mail keeps the nonce XORed with it, so the nonce is
- * recovered only when the answer is presented (openSession), and nothing at
- * rest holds the nonce or the answer in the clear. Internal to Mail's
- * storage; nothing on the wire changes.
- */
-async function noncePad(answer: Uint8Array, mailboxId: string, challengeId: string): Promise<Uint8Array> {
-  const key = await crypto.subtle.importKey("raw", answer, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  return new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`proprietor-mail/v1/challenge-nonce|${mailboxId}|${challengeId}`)));
-}

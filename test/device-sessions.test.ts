@@ -58,7 +58,10 @@ describe("challenges (device-v1 B6, M16)", () => {
       sealed: expect.stringMatching(/^[A-Za-z0-9_-]{107}$/),
       expiresAt: at(mb, 2 * MINUTE),
     });
-    expect(bytesFromBase64url(await openChallenge(mb.id, c, mailboxKey))).toHaveLength(32);
+    const answer = await openChallenge(mb.id, c, mailboxKey);
+    expect(bytesFromBase64url(answer)).toHaveLength(32);
+    // At rest: the nonce as it was sent (it is not a secret: the device signs it), the answer only as its SHA-256.
+    expect(await sql(mb, "SELECT nonce, answer_hash FROM challenges WHERE id = ?", c.id)).toEqual([{ nonce: c.nonce, answer_hash: await sha256(answer) }]);
     const stranger = await newFactorKey(testId("wrp"), "recovery");
     await expect(openChallenge(mb.id, c, stranger.pair)).rejects.toThrow();
   });

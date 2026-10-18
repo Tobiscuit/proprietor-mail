@@ -78,7 +78,7 @@ export const mailboxMigrations: Migration[] = [
     // starts 'optional' and the mailbox behaves exactly as before (R10).
     // SQLite tests an added column's CHECK against every existing row (since
     // 3.37.0), and the default passes it. Tokens and challenge answers are
-    // stored only as SHA-256; a challenge's nonce only sealed under its answer.
+    // stored only as SHA-256.
     name: "0003_devices",
     sql: `
       ALTER TABLE policy    ADD COLUMN sessions TEXT NOT NULL DEFAULT 'optional' CHECK (sessions IN ('optional','required'));

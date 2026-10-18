@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import worker from "../src/index";
 import {
   activeKeyId,
-  type ChallengeView,
   challenge,
   deviceInput,
   factorProof,
@@ -29,7 +28,7 @@ import { refusalOf, valueOf } from "./support/results";
 import { byteString, captureDiagnostics, directoryHaystacks, type Haystack, mailboxHaystacks, r2Haystacks, search } from "./support/scan";
 
 // Spec 002's share of the invariants that hold across every flow: M1 (no
-// token, answer or nonce at rest or in a log), B9's audit rows (ids, kinds,
+// token or answer at rest or in a log), B9's audit rows (ids, kinds,
 // counts and labels only), the daily housekeeping of challenges and
 // sessions, and answers as values from every new method.
 
@@ -62,33 +61,29 @@ async function everything(mb: TestMailbox): Promise<Haystack[]> {
   ];
 }
 
-/** Records every bearer secret the flow handles: session tokens, challenge answers, and the nonces of the challenges. */
+/** Records every bearer secret the flow handles: session tokens and challenge answers. (A challenge's nonce is not one: it is sent for the device to sign.) */
 class Bearers {
   readonly values: Record<string, Uint8Array> = {};
   private n = 0;
-  add(kind: "session" | "answer" | "nonce", b64u: string): string {
+  add(kind: "session" | "answer", b64u: string): string {
     this.values[`${kind} ${++this.n}`] = bytesFromBase64url(b64u);
     return b64u;
-  }
-  challenge(c: ChallengeView): ChallengeView {
-    this.add("nonce", c.nonce);
-    return c;
   }
 }
 
 /**
  * F5, F1, F2, F3/F4, F8, F6 and a send, end to end through MailService, with
- * every token, answer and nonce recorded on the way.
+ * every session token and challenge answer recorded on the way.
  */
 async function everyFlow(bearers: Bearers): Promise<{ u: Upgraded; submitted: Record<string, Uint8Array> }> {
   const u = await upgradedMailbox();
   const submitted: Record<string, Uint8Array> = {};
   const proveWith = async (factor: Upgraded["recovery"]) => {
-    const c = bearers.challenge(await challenge(u.mb, { purpose: "factor", factorId: factor.id }));
+    const c = (await challenge(u.mb, { purpose: "factor", factorId: factor.id }));
     return { challengeId: c.id, answer: bearers.add("answer", await openChallenge(u.mb.id, c, factor.pair)) };
   };
   const sessionFor = async (key: CryptoKeyPair, device?: Awaited<ReturnType<typeof newDevice>>) => {
-    const c = bearers.challenge(await challenge(u.mb, { purpose: "session" }));
+    const c = (await challenge(u.mb, { purpose: "session" }));
     const answer = bearers.add("answer", await openChallenge(u.mb.id, c, key));
     const signed = device === undefined ? {} : { device: { id: device.id, signature: await signProof(u.mb.id, device, c) } };
     return bearers.add("session", valueOf(await mail().openSession(await capFor(u.mb), { challengeId: c.id, answer, ...signed })).session);
@@ -119,7 +114,7 @@ async function everyFlow(bearers: Bearers): Promise<{ u: Upgraded; submitted: Re
   valueOf(await mail().send(await capFor(u.mb), { idempotencyKey: "m1-devices", to: [{ address: "ana@example.com" }], subject: "s", text: "t", session: deviceSession2 }));
   valueOf(await mail().list(await capFor(u.mb), { folder: "inbox" }, { session: deviceSession2 }));
   // A wrong answer, so a refused proof is in the audit too.
-  const refused = bearers.challenge(await challenge(u.mb, { purpose: "session" }));
+  const refused = (await challenge(u.mb, { purpose: "session" }));
   const wrong = bearers.add("answer", base64urlFromBytes(crypto.getRandomValues(new Uint8Array(32))));
   refusalOf(await mail().openSession(await capFor(u.mb), { challengeId: refused.id, answer: wrong }));
   // F6: a plain session (R5) removes the device; the key rotates.
@@ -134,13 +129,12 @@ async function everyFlow(bearers: Bearers): Promise<{ u: Upgraded; submitted: Re
   return { u, submitted };
 }
 
-describe("M1, extended (domain-model §3): no session token, challenge answer or nonce is at rest or in a log", () => {
+describe("M1, extended (domain-model §3): no session token or challenge answer is at rest or in a log", () => {
   it("after every flow, none is in any table, object, log or diagnostics channel, in any form; only their hashes are", async () => {
     const bearers = new Bearers();
     const { u } = await everyFlow(bearers);
     expect(Object.keys(bearers.values).filter((k) => k.startsWith("session")).length).toBeGreaterThanOrEqual(5);
     expect(Object.keys(bearers.values).filter((k) => k.startsWith("answer")).length).toBeGreaterThanOrEqual(7);
-    expect(Object.keys(bearers.values).filter((k) => k.startsWith("nonce")).length).toBeGreaterThanOrEqual(7);
     const haystacks = await everything(u.mb);
     expect(haystacks.some((h) => h.where === "mailbox sqlite challenges")).toBe(true);
     expect(haystacks.some((h) => h.where === "mailbox sqlite mail_sessions")).toBe(true);
