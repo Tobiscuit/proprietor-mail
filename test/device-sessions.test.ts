@@ -42,6 +42,14 @@ async function latestAudit(mb: TestMailbox) {
   }))[0];
 }
 
+/** The reasons of the proof-rejected rows written for one challenge, oldest first. */
+async function rejections(mb: TestMailbox, challengeId: string): Promise<unknown[]> {
+  return (await sql<{ detail: string }>(mb, "SELECT detail FROM audit WHERE action = 'proof-rejected' ORDER BY id"))
+    .map((r) => JSON.parse(r.detail) as Record<string, unknown>)
+    .filter((d) => d.challenge === challengeId)
+    .map((d) => d.reason);
+}
+
 async function openWith(mb: TestMailbox, request: Record<string, unknown>, sub?: string) {
   return mail().openSession(await capFor(mb, sub === undefined ? {} : { sub }), request);
 }
@@ -92,6 +100,24 @@ describe("challenges (device-v1 B6, M16)", () => {
     expect(await latestAudit(mb)).toEqual({ actor: "acc_owner", action: "proof-rejected", detail: { challenge: c.id, purpose: "session", reason: "answer" } });
     expect(refusalOf(await openWith(mb, { challengeId: c.id, answer: await openChallenge(mb.id, c, mailboxKey) }))).toEqual(PROOF_REJECTED);
     expect(await sql(mb, "SELECT COUNT(*) AS n FROM mail_sessions")).toEqual([{ n: 0 }]);
+  });
+
+  it("audits the replay of a spent challenge once: five tries, one proof-rejected row", async () => {
+    const { mb, mailboxKey } = await legacyMailbox();
+    const c = await challenge(mb, { purpose: "session" });
+    const answer = await openChallenge(mb.id, c, mailboxKey);
+    valueOf(await openWith(mb, { challengeId: c.id, answer }));
+    for (let i = 0; i < 5; i++) expect(refusalOf(await openWith(mb, { challengeId: c.id, answer }))).toEqual(PROOF_REJECTED);
+    expect(await rejections(mb, c.id)).toEqual(["used"]);
+  });
+
+  it("audits an expired challenge once: five tries, one proof-rejected row", async () => {
+    const { mb, mailboxKey } = await legacyMailbox();
+    const c = await challenge(mb, { purpose: "session" });
+    const answer = await openChallenge(mb.id, c, mailboxKey);
+    mb.ports.clock.advance(2 * MINUTE);
+    for (let i = 0; i < 5; i++) expect(refusalOf(await openWith(mb, { challengeId: c.id, answer }))).toEqual(PROOF_REJECTED);
+    expect(await rejections(mb, c.id)).toEqual(["expired"]);
   });
 
   it("allows 20 live per mailbox: the 21st is RateLimited until the oldest expires; a used or expired one makes room", async () => {

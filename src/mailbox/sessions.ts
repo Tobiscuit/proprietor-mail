@@ -108,6 +108,7 @@ interface ChallengeRow {
   created_at: string;
   expires_at: string;
   used_at: string | null;
+  refused_at: string | null;
 }
 
 interface SessionRow {
@@ -193,11 +194,24 @@ function spendFactorProof(store: MailboxStore, ctx: CallContext, proof: Prepared
 function takeChallenge(store: MailboxStore, ctx: CallContext, id: string, now: Date): ChallengeRow {
   const c = rows<ChallengeRow>(store.sql, "SELECT * FROM challenges WHERE id = ?", id)[0];
   if (c === undefined || c.account_id !== ctx.actor.accountId) throw new ProofRejected();
-  if (c.used_at !== null) rejectProof(store, ctx, c, "used");
-  if (c.expires_at <= now.toISOString()) rejectProof(store, ctx, c, "expired");
+  if (c.used_at !== null) refuseSpent(store, ctx, c, "used", now);
+  if (c.expires_at <= now.toISOString()) refuseSpent(store, ctx, c, "expired", now);
   // A plain write, outside any transaction, so the refusals that may follow cannot roll it back.
   store.sql.exec("UPDATE challenges SET used_at = ? WHERE id = ?", now.toISOString(), id);
   return c;
+}
+
+/**
+ * A used or expired challenge presented again: ProofRejected, audited the
+ * first time only. A replay is a signal worth one row; the same replay a
+ * thousand times is not, so `refused_at` records that the row was written,
+ * and later refusals of that challenge write nothing.
+ */
+function refuseSpent(store: MailboxStore, ctx: CallContext, c: ChallengeRow, reason: "used" | "expired", now: Date): never {
+  if (c.refused_at !== null) throw new ProofRejected();
+  // Plain writes, outside any transaction: the refusal below does not undo them.
+  store.sql.exec("UPDATE challenges SET refused_at = ? WHERE id = ?", now.toISOString(), c.id);
+  rejectProof(store, ctx, c, reason);
 }
 
 /** B6: ProofRejected, audited as proof-rejected with the reason (the caller is told none). */

@@ -174,6 +174,7 @@ describe("the schema 0003 adds is plan.md §2's", () => {
       col("created_at", "TEXT", 1),
       col("expires_at", "TEXT", 1),
       col("used_at", "TEXT"),
+      col("refused_at", "TEXT"),
     ]);
     expect(await columns(mb, "mail_sessions")).toEqual([
       col("token_hash", "TEXT", 0, 1),

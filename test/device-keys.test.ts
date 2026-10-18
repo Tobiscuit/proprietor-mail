@@ -128,6 +128,15 @@ describe("factor proofs (B3, B6, M17)", () => {
     expect(reasons).toEqual(Array.from({ length: 5 }, () => ["answer", "used", "purpose", "used"]).flat());
   });
 
+  it("audits the replay of a spent factor proof once: five tries, one proof-rejected row", async () => {
+    const u = await upgradedMailbox();
+    const proof = await factorProof(u.mb, u.recovery);
+    const add = async () => mail().addWrap(await capFor(u.mb), (await keyedWrap("passkey-prf", u.mb.key!.keyId)).wrap, { session: u.session, factorProof: proof });
+    valueOf(await add());
+    for (let i = 0; i < 5; i++) expect(refusalOf(await add())).toEqual(PROOF_REJECTED);
+    expect((await audits(u.mb, "proof-rejected")).filter((a) => a.detail.challenge === proof.challengeId).map((a) => a.detail.reason)).toEqual(["used"]);
+  });
+
   it("is spent by the call that carries it, whatever the call then answers", async () => {
     const u = await upgradedMailbox();
     const proof = await factorProof(u.mb, u.recovery);
