@@ -8,6 +8,12 @@ import { isAddress, parseAddressList } from "../src/compose";
 const OLD = /^[^\s@<>"(),;:[\]\\]+@[^\s@<>"(),;:[\]\\]+\.[^\s@<>"(),;:[\]\\]+$/;
 const OLD_NAMED = /^(?:"((?:[^"\\]|\\.)*)"|([^<]*?))\s*<([^<>]*)>$/;
 
+/** Test data, not keys: Math.random is the right tool (crypto randomness taken modulo is biased). */
+function randomString(alphabet: string[], min: number, max: number): string {
+  const n = min + Math.floor(Math.random() * (max - min + 1));
+  return Array.from({ length: n }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
+}
+
 /** S6a's parseAddressList on one token, with its own two patterns. */
 function oldParseToken(token: string) {
   const named = OLD_NAMED.exec(token);
@@ -26,8 +32,7 @@ describe("isAddress", () => {
       for (const x of level) strings.push(x);
     }
     for (let i = 0; i < 5000; i++) {
-      const n = 7 + (crypto.getRandomValues(new Uint8Array(1))[0]! % 20);
-      strings.push(Array.from(crypto.getRandomValues(new Uint8Array(n)), (b) => alphabet[b % alphabet.length]).join(""));
+      strings.push(randomString(alphabet, 7, 26));
     }
     for (const s of strings) expect(isAddress(s), JSON.stringify(s)).toBe(OLD.test(s));
   });
@@ -53,8 +58,7 @@ describe("isAddress", () => {
       for (const x of level) inputs.push(x);
     }
     for (let i = 0; i < 20_000; i++) {
-      const n = 6 + (crypto.getRandomValues(new Uint8Array(1))[0]! % 24);
-      inputs.push(Array.from(crypto.getRandomValues(new Uint8Array(n)), (b) => alphabet[b % alphabet.length]).join(""));
+      inputs.push(randomString(alphabet, 6, 29));
     }
     for (const input of inputs) {
       const trimmed = input.trim();

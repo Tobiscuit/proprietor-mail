@@ -141,15 +141,17 @@ describe("A4 openKeySeal", () => {
     const sealed = await sealKey(priv, { mailboxId }, { kind: "device", deviceId, publicKey: unlock.publicKey });
     const by = { kind: "device" as const, deviceId, privateKey: unlock.privateKey, publicKey: unlock.publicKey }; // pragma: allowlist secret (a CryptoKey reference)
     const ids = { mailboxId, sealedKeyId: priv.keyId };
+    const otherKeyId = (await generateMailboxKey()).publicKey.keyId;
+    // Each attempt starts only when its rejection is awaited, so none is ever an unhandled rejection.
     const attempts = [
-      openKeySeal(by, { mailboxId: newId("mbx"), sealedKeyId: priv.keyId }, sealed),
-      openKeySeal(by, { mailboxId, sealedKeyId: (await generateMailboxKey()).publicKey.keyId }, sealed),
-      openKeySeal({ ...by, deviceId: newId("dev") }, ids, sealed),
-      openKeySeal({ ...by, privateKey: other.unlock.privateKey, publicKey: other.unlock.publicKey }, ids, sealed), // pragma: allowlist secret (a CryptoKey reference)
+      () => openKeySeal(by, { mailboxId: newId("mbx"), sealedKeyId: priv.keyId }, sealed),
+      () => openKeySeal(by, { mailboxId, sealedKeyId: otherKeyId }, sealed),
+      () => openKeySeal({ ...by, deviceId: newId("dev") }, ids, sealed),
+      () => openKeySeal({ ...by, privateKey: other.unlock.privateKey, publicKey: other.unlock.publicKey }, ids, sealed), // pragma: allowlist secret (a CryptoKey reference)
       // The right private key with another public key: the KEM context binds the recipient's public key.
-      openKeySeal({ ...by, publicKey: other.unlock.publicKey }, ids, sealed),
+      () => openKeySeal({ ...by, publicKey: other.unlock.publicKey }, ids, sealed),
     ];
-    for (const attempt of attempts) await expect(attempt).rejects.toBeInstanceOf(DecryptionFailed);
+    for (const attempt of attempts) await expect(attempt()).rejects.toBeInstanceOf(DecryptionFailed);
     expect((await openKeySeal(by, ids, sealed)).keyId).toBe(priv.keyId);
   });
 
