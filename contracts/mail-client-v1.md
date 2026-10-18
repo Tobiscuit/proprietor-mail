@@ -192,9 +192,10 @@ decrypted content. No `localStorage`, `sessionStorage`, Cache API or cookies,
 as before. A shared computer keeps nothing.
 
 **Rule 4, as amended (K1′).** An unlocked session holds every key
-non-extractable and decrypt-only. A key is opened extractable only for one
-sealing or wrapping step just after a factor was used (a FreshFactor, at most
-2 minutes), and is dropped after. On a kept device the unlock key opens the
+non-extractable and decrypt-only. A key is opened extractable only for the
+steps that seal or wrap it again in the one flow the person just started with
+a factor (a FreshFactor, at most 2 minutes), and is dropped when that flow
+ends or the 2 minutes pass. On a kept device the unlock key opens the
 device's seal, and other code on the dashboard's origin could ask Web Crypto
 for an extractable copy. That is a limit of the platform, stated in the
 spec's threat model.
