@@ -309,8 +309,11 @@ account, and that SHA-256(answer) matches. When `device` is given, it also
 checks that the device exists, belongs to this account, and that `signature`
 verifies over A7's message. The challenge is consumed **whether or not the
 answer is right**. A wrong answer or signature is `ProofRejected` and is
-audited as `proof-rejected`. An unknown device id, or one registered by another
-account, is `DeviceRevoked`. A session lives **60 minutes** and records its
+audited as `proof-rejected`. A challenge that does not exist, or that another
+account asked for, is `ProofRejected` too, and spends nothing and writes
+nothing, not even an audit row: anyone could repeat it without end. A used or
+expired challenge is audited the first time it comes back, and only then. An
+unknown device id, or one registered by another account, is `DeviceRevoked`. A session lives **60 minutes** and records its
 device. Opening one updates that device's `lastSeenAt`.
 
 A factor proof is checked the same way against a `purpose: "factor"`

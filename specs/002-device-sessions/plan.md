@@ -48,7 +48,8 @@ CREATE TABLE key_seals (
 CREATE TABLE challenges (
   id TEXT PRIMARY KEY, purpose TEXT NOT NULL CHECK (purpose IN ('session','factor')),
   target_id TEXT NOT NULL, answer_hash TEXT NOT NULL, nonce TEXT NOT NULL, account_id TEXT NOT NULL,
-  created_at TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT);
+  created_at TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT,
+  refused_at TEXT);                     -- set when a refusal of it as used or expired is first audited
 CREATE INDEX challenges_by_expiry ON challenges(expires_at);
 CREATE TABLE mail_sessions (
   token_hash TEXT PRIMARY KEY, account_id TEXT NOT NULL, device_id TEXT,
@@ -56,6 +57,9 @@ CREATE TABLE mail_sessions (
 CREATE INDEX mail_sessions_by_device ON mail_sessions(device_id);
 CREATE INDEX mail_sessions_by_expiry ON mail_sessions(expires_at);
 ```
+
+The answer is kept only as its SHA-256; the nonce is kept as it is, because
+Mail sends it with the challenge for the device to sign and it opens nothing.
 
 It runs inside `transactionSync` on the Mailbox's first wake after the deploy,
 like 0001 and 0002. Existing rows are untouched, and `sessions` starts
