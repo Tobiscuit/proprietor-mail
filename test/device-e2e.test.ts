@@ -1,14 +1,4 @@
 import * as mailCrypto from "@proprietor/mail-crypto";
-import {
-  resumeDevice,
-  startEnrollment,
-  unlockWithRecoveryKey,
-  type ChallengeView,
-  type DeviceStore,
-  type KeptDevice,
-  type MailboxView,
-  type UnlockedMailbox,
-} from "@proprietor/mail-client";
 import { createExecutionContext } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
@@ -30,6 +20,69 @@ import { refusalOf, valueOf } from "./support/results";
 // and F5 of plan.md §3.
 
 const mail = () => exports.MailService;
+
+// mail-client is a browser package: its sources need the DOM lib, which this
+// workerd program does not have. So it is imported at run time by its name,
+// and the few calls this test makes are typed here. A change to its API still
+// fails the run, which is what this test is for.
+type View = Record<string, unknown>;
+interface ChallengeView {
+  id: string;
+  purpose: "session" | "factor";
+}
+interface FactorProof {
+  challengeId: string;
+  answer: string;
+}
+interface FreshFactor {
+  readonly factorId: string;
+  answer(challenge: ChallengeView): Promise<FactorProof>;
+  dispose(): void;
+}
+interface PendingChange {
+  readonly request: unknown;
+  commit(): Promise<void>;
+}
+interface UnlockedMailbox {
+  readonly keyId: string;
+  readonly keyIds: readonly string[];
+  readonly device: { readonly id: string } | null;
+  readonly freshFactor: FreshFactor | null;
+  sessionProof(challenge: ChallengeView): Promise<unknown>;
+  reauthenticate(reauth: { recoveryKey: string }): Promise<FreshFactor>;
+  keepThisDevice(options: { label: string; lockAfter?: "sign-out" }, freshFactor: FreshFactor): Promise<PendingChange>;
+  removeDevice(view: View, deviceId: string, freshFactor: FreshFactor): Promise<PendingChange>;
+  upgradeRequest(factors: readonly FreshFactor[]): Promise<PendingChange>;
+  openMessages(items: unknown[]): Promise<{ undecryptable: boolean; header: { subject: string } | null }[]>;
+}
+interface KeptDevice {
+  mailboxId: string;
+  deviceId: string;
+}
+interface DeviceStore {
+  get(mailboxId: string): Promise<KeptDevice | null>;
+  put(record: KeptDevice): Promise<void>;
+  update(mailboxId: string, deviceId: string, change: Partial<KeptDevice>): Promise<KeptDevice | null>;
+  delete(mailboxId: string, deviceId?: string): Promise<void>;
+}
+interface MailClient {
+  startEnrollment(
+    mailbox: { id: string; address: string; status: "provisioned" },
+    passkey: null,
+    options: { keep: { store: DeviceStore; label: string; lockAfter: "sign-out"; signInId: string } },
+  ): Promise<{
+    readonly recoveryKey: string;
+    readonly recoveryCheck: { readonly positions: readonly number[] };
+    confirmRecovery(characters: string): boolean;
+    request(): unknown;
+    commit(): Promise<void>;
+    unlocked(): UnlockedMailbox;
+  }>;
+  unlockWithRecoveryKey(view: View, recoveryKey: string, options: { store: DeviceStore; signInId: string }): Promise<UnlockedMailbox>;
+  resumeDevice(view: View, options: { store: DeviceStore; signInId: string }): Promise<{ state: "none" | "locked" | "removed" } | { state: "unlocked"; mailbox: UnlockedMailbox }>;
+}
+const MAIL_CLIENT: string = "@proprietor/mail-client";
+const { startEnrollment, unlockWithRecoveryKey, resumeDevice } = (await import(/* @vite-ignore */ MAIL_CLIENT)) as MailClient;
 
 /**
  * A kept-device store for this test. mail-client's own memoryDeviceStore()
@@ -68,10 +121,11 @@ function realPorts(): MailboxPorts {
   return { ...fakePorts(), sealer: real.sealer, ids: real.ids, proofs: real.proofs };
 }
 
-const view = async (mb: TestMailbox): Promise<MailboxView> => valueOf(await mail().mailbox(await capFor(mb))) as unknown as MailboxView;
+const view = async (mb: TestMailbox) => valueOf(await mail().mailbox(await capFor(mb)));
+const asView = (v: unknown): View => v as View;
 
 async function challenge(mb: TestMailbox, request: { purpose: "session" } | { purpose: "factor"; factorId: string }): Promise<ChallengeView> {
-  return valueOf(await mail().challenge(await capFor(mb), request)) as ChallengeView;
+  return valueOf(await mail().challenge(await capFor(mb), request));
 }
 
 /** F2's tail: a key proof (and the device's signature on a kept device) → a mail session token. */
@@ -88,7 +142,7 @@ async function deliver(mb: TestMailbox, subject: string): Promise<void> {
 
 async function inboxSubjects(mb: TestMailbox, session: UnlockedMailbox, mailSession: string): Promise<(string | null)[]> {
   const items = valueOf(await mail().list(await capFor(mb), { folder: "inbox" }, { session: mailSession })).items;
-  const opened = await session.openMessages(items as never);
+  const opened = await session.openMessages(items);
   return opened.map((o) => (o.undecryptable ? null : o.header!.subject)).sort();
 }
 
@@ -110,7 +164,7 @@ async function enrolledByClient(): Promise<{ mb: TestMailbox; recoveryKey: strin
 /** F1: a second browser, unlocked with the recovery key, then kept with a factor proof. */
 async function keptWithRecoveryKey(mb: TestMailbox, recoveryKey: string, label: string, signInId: string) {
   const store = deviceStore();
-  const session = await unlockWithRecoveryKey(await view(mb), recoveryKey, { store, signInId });
+  const session = await unlockWithRecoveryKey(asView(await view(mb)), recoveryKey, { store, signInId });
   const token = await openSession(mb, session);
   const freshFactor = session.freshFactor!;
   const factorProof = await freshFactor.answer(await challenge(mb, { purpose: "factor", factorId: freshFactor.factorId }));
@@ -130,7 +184,7 @@ describe("spec 002 end to end: mail-client (D1) against the Mail Worker (D2), re
     expect(await inboxSubjects(a.mb, a.session, tokenA)).toEqual(["before the removal"]);
 
     // F2: A comes back on a new page: no prompt, its seal at Mail, its signature on the session.
-    const resumedA = await resumeDevice(await view(a.mb), { store: a.store, signInId: "sign-in-a" });
+    const resumedA = await resumeDevice(asView(await view(a.mb)), { store: a.store, signInId: "sign-in-a" });
     expect(resumedA.state).toBe("unlocked");
     if (resumedA.state !== "unlocked") return;
     expect(resumedA.mailbox.device?.id).toBe(a.session.device?.id);
@@ -144,7 +198,7 @@ describe("spec 002 end to end: mail-client (D1) against the Mail Worker (D2), re
     const oldKeyId = (await view(a.mb)).keys.find((k) => k.retiredAt === null)!.keyId;
     const freshFactor = await b.session.reauthenticate({ recoveryKey: a.recoveryKey });
     const factorProof = await freshFactor.answer(await challenge(a.mb, { purpose: "factor", factorId: freshFactor.factorId }));
-    const removal = await b.session.removeDevice(await view(a.mb), a.session.device!.id, freshFactor);
+    const removal = await b.session.removeDevice(asView(await view(a.mb)), a.session.device!.id, freshFactor);
     const rotated = valueOf(await mail().removeDevice(await capFor(a.mb), removal.request, { session: b.token, factorProof }));
     await removal.commit();
     freshFactor.dispose();
@@ -156,7 +210,7 @@ describe("spec 002 end to end: mail-client (D1) against the Mail Worker (D2), re
     expect(await inboxSubjects(a.mb, b.session, b.token)).toEqual(["after the removal", "before the removal"]);
 
     // C, a bystander, loads: its seal is of the new key, and the successor seal leads back to the key it knew.
-    const resumedC = await resumeDevice(await view(a.mb), { store: c.store, signInId: "sign-in-c" });
+    const resumedC = await resumeDevice(asView(await view(a.mb)), { store: c.store, signInId: "sign-in-c" });
     expect(resumedC.state).toBe("unlocked");
     if (resumedC.state !== "unlocked") return;
     expect(resumedC.mailbox.keyId).toBe(rotated.keyId);
@@ -170,7 +224,7 @@ describe("spec 002 end to end: mail-client (D1) against the Mail Worker (D2), re
     expect(refusalOf(await mail().list(await capFor(a.mb), { folder: "inbox" }, { session: tokenA })).name).toMatch(/^(SessionRequired|DeviceRevoked)$/);
     // Its page still holds the old key in memory, but a session challenge is sealed to the new key: it cannot answer.
     await expect(resumedA.mailbox.sessionProof(await challenge(a.mb, { purpose: "session" }))).rejects.toThrow();
-    expect((await resumeDevice(await view(a.mb), { store: a.store, signInId: "sign-in-a" })).state).toBe("removed");
+    expect((await resumeDevice(asView(await view(a.mb)), { store: a.store, signInId: "sign-in-a" })).state).toBe("removed");
     expect(await a.store.get(a.mb.id)).toBeNull();
     // The removed device was never sent the new key.
     expect((await view(a.mb)).seals.some((s) => s.to.kind === "device" && s.to.id === a.session.device!.id)).toBe(false);
@@ -188,7 +242,7 @@ describe("spec 002 end to end: mail-client (D1) against the Mail Worker (D2), re
     await deliver(mb, "from before the upgrade");
 
     const store = deviceStore();
-    const session = await unlockWithRecoveryKey(await view(mb), recovery.display, { store, signInId: "sign-in" });
+    const session = await unlockWithRecoveryKey(asView(await view(mb)), recovery.display, { store, signInId: "sign-in" });
     const token = await openSession(mb, session);
     const freshFactor = session.freshFactor!;
     const upgrade = await session.upgradeRequest([freshFactor]);
@@ -203,7 +257,7 @@ describe("spec 002 end to end: mail-client (D1) against the Mail Worker (D2), re
     valueOf(await mail().registerDevice(await capFor(mb), keep.request, { session: token, factorProof }));
     await keep.commit();
 
-    const resumed = await resumeDevice(await view(mb), { store, signInId: "sign-in" });
+    const resumed = await resumeDevice(asView(await view(mb)), { store, signInId: "sign-in" });
     expect(resumed.state).toBe("unlocked");
     if (resumed.state !== "unlocked") return;
     expect(await inboxSubjects(mb, resumed.mailbox, await openSession(mb, resumed.mailbox))).toEqual(["from before the upgrade"]);
