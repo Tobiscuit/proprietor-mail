@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { publicCopy } from "../src/errors";
 import { SESSION_NEEDS } from "../src/mailbox/sessions";
 import { MailService } from "../src/service";
+import { newId } from "@proprietor/mail-crypto";
 import {
   challenge,
   factorInput,
@@ -150,9 +151,20 @@ describe("openSession (B6, M15)", () => {
     const { mb, mailboxKey } = await legacyMailbox();
     const c = await challenge(mb, { purpose: "session" });
     const answer = await openChallenge(mb.id, c, mailboxKey);
+    const before = await sql(mb, "SELECT COUNT(*) AS n FROM audit");
     expect(refusalOf(await openWith(mb, { challengeId: c.id, answer }, "acc_other"))).toEqual(PROOF_REJECTED);
-    expect(await latestAudit(mb)).toEqual({ actor: "acc_other", action: "proof-rejected", detail: { challenge: c.id, purpose: "session", reason: "account" } });
+    // It spent nothing, so it writes nothing: one caller could repeat it without end, a row each time.
+    expect(await sql(mb, "SELECT COUNT(*) AS n FROM audit")).toEqual(before);
     valueOf(await openWith(mb, { challengeId: c.id, answer }));
+  });
+
+  it("refuses a challenge that does not exist, and writes no audit row for it", async () => {
+    const { mb } = await legacyMailbox();
+    const before = await sql(mb, "SELECT COUNT(*) AS n FROM audit");
+    for (let i = 0; i < 3; i++) {
+      expect(refusalOf(await openWith(mb, { challengeId: newId("chl"), answer: random(32) }))).toEqual(PROOF_REJECTED);
+    }
+    expect(await sql(mb, "SELECT COUNT(*) AS n FROM audit")).toEqual(before);
   });
 
   it("does not open from a factor challenge: that is not a key proof", async () => {

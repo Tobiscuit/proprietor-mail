@@ -1,3 +1,4 @@
+import { newId } from "@proprietor/mail-crypto";
 import { runInDurableObject } from "cloudflare:test";
 import { exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
@@ -154,9 +155,12 @@ describe("factor proofs (B3, B6, M17)", () => {
       mail().addWrap(await capFor(u.mb), (await keyedWrap("passkey-prf", u.mb.key!.keyId)).wrap, { session: u.session, factorProof: proof });
     expect(refusalOf(await call(theirs))).toEqual(PROOF_REJECTED);
     expect(await sql(u.mb, "SELECT used_at FROM challenges WHERE id = ?", theirs.challengeId)).toEqual([{ used_at: null }]);
+    expect(refusalOf(await call({ challengeId: newId("chl"), answer: random(32) }))).toEqual(PROOF_REJECTED);
     const late = await factorProof(u.mb, u.recovery);
     u.mb.ports.clock.advance(2 * MINUTE);
     expect(refusalOf(await call(late))).toEqual(PROOF_REJECTED);
+    // Another account's challenge and one that does not exist spend nothing, and are not audited; the expired one is.
+    expect((await audits(u.mb, "proof-rejected")).map((a) => a.detail.reason)).toEqual(["expired"]);
   });
 
   it("refuses a factor proof sent to a method that takes none", async () => {

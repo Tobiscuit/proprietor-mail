@@ -186,11 +186,13 @@ function spendFactorProof(store: MailboxStore, ctx: CallContext, proof: Prepared
  * A challenge presented by this account, live, and consumed now (M16): before
  * its answer is looked at, so a wrong answer spends it too. Another account's
  * challenge is refused and left alone: it is not this account's to spend.
+ * That refusal, and the one for a challenge that does not exist, spend
+ * nothing and write nothing, not even an audit row: one caller could repeat
+ * either without end, and each try would be another row.
  */
 function takeChallenge(store: MailboxStore, ctx: CallContext, id: string, now: Date): ChallengeRow {
   const c = rows<ChallengeRow>(store.sql, "SELECT * FROM challenges WHERE id = ?", id)[0];
-  if (c === undefined) rejectProof(store, ctx, { id, purpose: null }, "unknown");
-  if (c.account_id !== ctx.actor.accountId) rejectProof(store, ctx, c, "account");
+  if (c === undefined || c.account_id !== ctx.actor.accountId) throw new ProofRejected();
   if (c.used_at !== null) rejectProof(store, ctx, c, "used");
   if (c.expires_at <= now.toISOString()) rejectProof(store, ctx, c, "expired");
   // A plain write, outside any transaction, so the refusals that may follow cannot roll it back.
@@ -199,7 +201,7 @@ function takeChallenge(store: MailboxStore, ctx: CallContext, id: string, now: D
 }
 
 /** B6: ProofRejected, audited as proof-rejected with the reason (the caller is told none). */
-function rejectProof(store: MailboxStore, ctx: CallContext, c: { id: string; purpose: string | null }, reason: string): never {
+function rejectProof(store: MailboxStore, ctx: CallContext, c: { id: string; purpose: string }, reason: string): never {
   store.audit(ctx.actor.accountId, "proof-rejected", { challenge: c.id, purpose: c.purpose, reason });
   throw new ProofRejected();
 }
