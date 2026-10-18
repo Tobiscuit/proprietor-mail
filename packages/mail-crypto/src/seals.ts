@@ -22,19 +22,20 @@
  * wrong point for about half of all keys. The device's public form is kept
  * next to its private key for that reason (K5 lists it).
  */
-import { CipherSuite, DhkemP256HkdfSha256, DhkemX25519HkdfSha256, ExportOnly, HkdfSha256 } from "@hpke/core";
+import { CipherSuite, DhkemP256HkdfSha256, ExportOnly, HkdfSha256 } from "@hpke/core";
 import { base64url, concat, fromBase64url, randomBytes, utf8 } from "./bytes";
 import { isDeviceUnlockKey } from "./device-keys";
 import { context } from "./envelope";
 import { DecryptionFailed } from "./errors";
 import { factorMaterialOf, type FactorPrivateKey } from "./factor-keys";
 import type { MailboxPrivateKey } from "./index";
-import { fromPrivateCryptoKey, importX25519PublicKey, keyIdOf, materialOf, PKCS8_X25519_BYTES } from "./keys";
+import { fromPrivateCryptoKey, importX25519PublicKey, keyIdOf, materialOf, PKCS8_X25519_BYTES, X25519Kem } from "./keys";
 
 type Kem = "x25519" | "p256";
 
+/** The X25519 KEM draws its ephemeral key through generateX25519KeyPair (keys.ts); WebKit's libgcrypt backend has no such defect on P-256. */
 const SUITES: Record<Kem, CipherSuite> = {
-  x25519: new CipherSuite({ kem: new DhkemX25519HkdfSha256(), kdf: new HkdfSha256(), aead: new ExportOnly() }),
+  x25519: new CipherSuite({ kem: new X25519Kem(), kdf: new HkdfSha256(), aead: new ExportOnly() }),
   p256: new CipherSuite({ kem: new DhkemP256HkdfSha256(), kdf: new HkdfSha256(), aead: new ExportOnly() }),
 };
 const ENC_BYTES: Record<Kem, number> = { x25519: 32, p256: 65 };

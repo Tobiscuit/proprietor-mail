@@ -97,17 +97,59 @@ that export entirely.
 
 RFC 9180 says `SerializePrivateKey` MUST clamp its output and
 `DeserializePrivateKey` MUST clamp its input. `@hpke/core` does neither, and
-the RFC's own test vectors carry unclamped `skRm`. So this package clamps
-twice:
+the RFC's own test vectors carry unclamped `skRm`. Clamping never changes
+the key, because X25519 clamps before every use (RFC 7748 §5), and that is
+what this package relies on:
 
-- **At generation**: Web Crypto's `generateKey` produces a clamped scalar;
-  the PKCS #8 bytes inside a wrap carry it.
+- **At generation** the engine decides the bytes, and `wrapKey` carries
+  them as they are. Measured by the browser probe (1,200 keys each, October
+  2026): WebKit on macOS (the CryptoKit backend Safari uses) and Node
+  (OpenSSL) clamp. Chromium (BoringSSL) does the exact opposite on purpose:
+  it sets the three low bits and the top bit and clears bit 254 of every
+  key, so that an implementation that forgets to clamp fails at once.
+  Firefox leaves the 32 random bytes as drawn. A wrap therefore holds an
+  unclamped scalar whenever the key came from Chromium or Firefox.
 - **On unwrap**: Web Crypto clamps before every use, so an unclamped key
   wrapped by another implementation still unwraps to the same key pair. A
-  test does this with RFC 7748's Alice key. The test vectors import a known
-  scalar through `importPrivateScalar`, which clamps it first.
+  test does this with RFC 7748's Alice key.
+- **On import of a raw scalar** (`importPrivateScalar`, A2's factor keys):
+  an extractable key, the kind the test vectors wrap, is clamped first. A
+  non-extractable one is never serialized, and is handed over with the
+  three low bits set instead, as Chromium's keys are: the same key, never a
+  zero first byte (next section).
 
-Clamping never changes the key, because X25519 clamps before use.
+### One engine's defect: WebKit bug 307095 (libgcrypt)
+
+WebKit has two Web Crypto backends: CryptoKit in Safari (macOS, iOS,
+iPadOS), and libgcrypt in WebKitGTK and WPE on Linux, which Playwright's
+WebKit on Linux uses. The libgcrypt one drops a leading zero byte from an
+X25519 scalar ([WebKit bug 307095](https://bugs.webkit.org/show_bug.cgi?id=307095),
+fixed on WebKit main on 2026-10-09 as 323215@main; no Playwright WebKit
+build has the fix yet). So it refuses a PKCS #8 X25519 key whose first byte
+is zero (`DataError`), and its `generateKey` fails when it drew such a
+scalar (`OperationError`, 1 draw in 256). The probe in
+`packages/mail-client/test/browser` measured it over 300 inputs per check:
+every zero-first-byte scalar refused on import and on unwrap, 9 and 10 of
+300 random clamped scalars, 3 `OperationError`s in 1,203 `generateKey`
+draws, and nothing at all in WebKit on macOS (Safari's backend), Chromium or
+Firefox. What the package does, pinned by `test/engines.test.ts`:
+
+- **A key it never serializes** (a factor key, A2) is imported with the
+  three low bits set, so its first byte is never zero. Before this, 1
+  factor in 32 could not be used in that engine.
+- **A fresh X25519 key pair** (a mailbox key, every HPKE seal's ephemeral
+  key, `x25519Supported`'s probe) is drawn again after an `OperationError`,
+  at most four times. Nothing has kept the failed draw, so another one loses
+  nothing; any other error is thrown at once.
+- **Not reachable here**: a mailbox key with a zero first byte that another
+  engine made and wrapped. That is 1 key in 32 made by WebKit on macOS or by
+  Node, 1 in 256 made by Firefox, none made by Chromium or by this engine (its
+  `generateKey` cannot hold one). Its bytes exist only inside Web Crypto
+  (K1), so that engine refuses it and the unwrap fails closed, as
+  `DecryptionFailed`, until WebKitGTK or WPE carries the fix.
+
+No output changes: every public key, tag, seal and wrap format is what it
+was, and the vectors are unchanged.
 
 ### Crockford base32
 

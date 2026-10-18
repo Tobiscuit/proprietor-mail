@@ -18,7 +18,7 @@ import { Buffer } from "node:buffer";
 import { DhkemX25519HkdfSha256 } from "@hpke/core";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { chromium, firefox, webkit, type Browser, type BrowserContext, type Page } from "playwright";
-import { newId } from "@proprietor/mail-crypto";
+import { newId, parseRecoveryKey } from "@proprietor/mail-crypto";
 import { KEPT_DEVICE_FIELDS } from "../../src/index";
 import { enrolledMailbox, type Enrolled } from "../keyring-support";
 import type { Harness } from "./harness";
@@ -67,6 +67,34 @@ async function nodeFactor(kind: "passkey-prf" | "recovery", zeroFirstByte: boole
     if (((skF[0]! & 248) === 0) !== zeroFirstByte) continue;
     return { input: { mailboxId, factorId, kind, secret: b64url(secret) }, publicKey: b64url(new Uint8Array(await kem.serializePublicKey(pair.publicKey))) }; // pragma: allowlist secret (random test values made for the run)
   }
+}
+
+/**
+ * enrolledMailbox() makes the mailbox key in Node, whose OpenSSL clamps every key it makes, so 1 in 32
+ * starts with a zero byte. WebKit's libgcrypt backend cannot unwrap such a key (bug 307095), and the
+ * package cannot help it there: the key's bytes exist only inside Web Crypto (K1). The probe measures
+ * that ("unwrapKey of a PKCS #8 key whose first scalar byte is zero, as another engine wraps it").
+ * These tests are about kept devices, so their mailbox is enrolled again until its key starts with a
+ * nonzero byte, as every key Chromium makes does, instead of failing 1 run in 32 in that engine.
+ */
+async function enrolledForEveryEngine(): Promise<Enrolled> {
+  for (;;) {
+    const e = await enrolledMailbox();
+    if ((await firstScalarByte(e)) !== 0) return e;
+  }
+}
+
+/** The first byte of the mailbox key's scalar, read from its recovery wrap as envelope v1 defines the wrap. */
+async function firstScalarByte(e: Enrolled): Promise<number> {
+  const utf8 = (s: string) => new TextEncoder().encode(s);
+  const wrap = e.request.wraps.find((w) => w.kind === "recovery")!;
+  const base = await crypto.subtle.importKey("raw", new Uint8Array(parseRecoveryKey(e.recoveryKey)), "HKDF", false, ["deriveBits"]);
+  const kekBits = await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: utf8(wrap.id), info: utf8("proprietor-mail/v1/kek/recovery") }, base, 256); // pragma: allowlist secret (HKDF parameter names)
+  const kek = await crypto.subtle.importKey("raw", kekBits, "AES-GCM", false, ["decrypt"]);
+  const block = new Uint8Array(Buffer.from(wrap.wrapped, "base64url"));
+  const aad = utf8(`proprietor-mail/v1/wrap|${e.mailboxId}|${wrap.id}|recovery|${wrap.keyId}`);
+  const pkcs8 = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: block.subarray(1, 13), additionalData: aad }, kek, block.subarray(13)));
+  return pkcs8[16]!;
 }
 
 /** Every CryptoKey and every string anywhere in a described record. */
@@ -147,7 +175,7 @@ describe.each(chosen)("%s: a kept device under the dashboard's policy", (name) =
   });
 
   test("F1, then a reload (a new page in the same context) opens the inbox with no prompt; IndexedDB holds exactly K5's fields, non-extractable P-256 keys, no X25519 key and no token", async () => {
-    const e = await enrolledMailbox();
+    const e = await enrolledForEveryEngine();
     const first = await openPage();
     if (!canKeep) {
       // D31 on an engine that cannot keep keys: the browser is a shared computer. It unlocks, keeps nothing.
@@ -207,7 +235,7 @@ describe.each(chosen)("%s: a kept device under the dashboard's policy", (name) =
 
   test("Lock now, then a reload asks for a factor: the unlock key is gone from IndexedDB, the device is still kept", async () => {
     if (!canKeep) return; // nothing is kept where keys cannot be (checked above)
-    const e = await enrolledMailbox();
+    const e = await enrolledForEveryEngine();
     const page = await openPage();
     const { session } = await keepIn(page, e, "signin-1");
     const { updateDevice } = await page.evaluate(() => harness.device.lock());
