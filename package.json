@@ -16,7 +16,7 @@
     "provision": "node scripts/provision-mailbox.ts"
   },
   "dependencies": {
-    "agents": "0.24.0",
+    "agents": "0.28.0",
     "aws4fetch": "1.0.20",
     "jose": "6.2.12",
     "postal-mime": "3.0.1"
