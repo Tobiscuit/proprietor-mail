@@ -352,6 +352,16 @@ describe("resumeDevice: a kept device loads the inbox (F2), in every lock state"
     await expect(resumeDevice(e.fake.mailbox(), { store, signInId: "signin-1" })).rejects.toBeInstanceOf(KeySubstitutionDetected);
   });
 
+  test("K2′: a view made only of the server's own key, sealed to this device and tagged under it, is refused (every key in it is on its chain; the key this device last accepted is not)", async () => {
+    const e = await enrolledMailbox();
+    const store = memoryDeviceStore();
+    await keepDevice(e, store);
+    const { substituteKey } = await import("./keyring-support");
+    await substituteKey(e.fake, "none");
+    e.fake.keys = e.fake.keys.filter((k) => k.retiredAt === null); // the real key dropped from the view
+    await expect(resumeDevice(e.fake.mailbox(), { store, signInId: "signin-1" })).rejects.toBeInstanceOf(KeySubstitutionDetected);
+  });
+
   test("K3 at resume: a device the server added stops it", async () => {
     const e = await enrolledMailbox();
     const store = memoryDeviceStore();
