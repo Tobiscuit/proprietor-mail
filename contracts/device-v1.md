@@ -278,8 +278,9 @@ tags are base64url.
 ### B5. `enroll` and `upgrade`
 
 `enroll(cap, { publicKey, wraps, device? })`: as before (M5), and when every
-wrap carries `factorKey` and `tag` (made under the new key), the mailbox starts
-`"required"`. `device`, when present, is `{ device: DeviceInput, seal }`
+wrap carries `factorKey`, `tag` and `tagKeyId` (the new key; Mail also takes a
+wrap without `tagKeyId`, since only the new key can be meant), the mailbox
+starts `"required"`. `device`, when present, is `{ device: DeviceInput, seal }`
 (B7's shapes) for the browser that enrolls. Mixing wraps with and without
 factor keys is refused.
 
@@ -407,9 +408,11 @@ The audit actions are `mailbox-upgraded`, `device-registered`,
 The API is `mail-client-v1.md` (amended); these are the rules it implements.
 
 - **K1′ — Keys in a session stay non-extractable and decrypt-only.** A key is
-  opened extractable only for the one operation that seals or wraps it again,
-  just after a factor was used (a FreshFactor, at most 2 minutes), and is
-  dropped after. On a kept device the unlock key can open the device's seal.
+  opened extractable only for the steps that seal or wrap it again in the one
+  flow the person just started with a factor (a FreshFactor: two removals in a
+  row, or a new recovery key and the old one's removal), for at most 2 minutes,
+  and is dropped when the flow ends or the 2 minutes pass. After a rotation the
+  FreshFactor holds the new key in that form, for the rest of its time. On a kept device the unlock key can open the device's seal.
   Web Crypto lets the caller of `unwrapKey` choose `extractable`, so any code
   running on the dashboard's origin while that device is unlocked could take
   an extractable copy. That is inside D2's trust boundary, and the spec says
