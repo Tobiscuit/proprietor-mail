@@ -10,7 +10,7 @@
  * Mail's to judge, and it is never stored or logged on the way.
  */
 import type { Address } from "@proprietor/mail-crypto";
-import { ADDRESS } from "./compose";
+import { isAddress } from "./compose";
 import { InvalidSendForm } from "./errors";
 import type { ComposeInput, SendRequest } from "./types";
 
@@ -56,7 +56,7 @@ function addressList(value: unknown, what: string): Address[] {
     if (typeof a !== "object" || a === null) refuse(`${what} ${i + 1}`);
     const { name, address } = a as { name?: unknown; address?: unknown };
     const n = text(name ?? "", `${what} ${i + 1} name`, SEND_LIMITS.maxNameChars, true);
-    if (typeof address !== "string" || !ADDRESS.test(address)) refuse(`${what} ${i + 1} address`);
+    if (typeof address !== "string" || !isAddress(address)) refuse(`${what} ${i + 1} address`);
     return { name: n, address };
   });
 }
@@ -100,7 +100,7 @@ function checkFields(r: Record<string, unknown>): Fields {
     fields.session = typeof r.session === "string" && SESSION_TOKEN.test(r.session) ? r.session : refuse("mail session");
   }
   if (r.from !== undefined && r.from !== null) {
-    if (typeof r.from !== "string" || !ADDRESS.test(r.from)) refuse("from");
+    if (typeof r.from !== "string" || !isAddress(r.from)) refuse("from");
     fields.from = r.from.toLowerCase();
   }
   if (r.inReplyTo !== undefined && r.inReplyTo !== null) {
