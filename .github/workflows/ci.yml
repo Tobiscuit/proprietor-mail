@@ -56,3 +56,25 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run test:browsers -w @proprietor/mail-client
+
+  # The same tests in WebKit on macOS. Playwright's WebKit there is the Cocoa port, whose Web Crypto
+  # is the code Safari ships (CryptoKit); on Linux (above) WebKit's Web Crypto is libgcrypt, the
+  # backend of WebKitGTK and WPE. The crypto probe (test/browser/webkit-probe.test.ts) found WebKit
+  # bug 307095 in the libgcrypt backend; this job is what tells the two backends apart.
+  browsers-macos:
+    name: mail-client in WebKit on macOS
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install webkit
+      - run: npm run test:browsers -w @proprietor/mail-client
+        env:
+          MAIL_CLIENT_BROWSERS: webkit

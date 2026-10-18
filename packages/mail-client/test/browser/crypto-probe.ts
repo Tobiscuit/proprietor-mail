@@ -5,6 +5,15 @@
 // 2. A probe: each primitive device-v1 and envelope v1 use, run over many fresh random inputs, with
 //    the results checked for length and against the engine's own other answers (the scalar an
 //    imported key reports back, the public key two ways). It reports counts, and a few failing inputs.
+//    An "engine" check measures Web Crypto itself; a "package" check measures mail-crypto's own
+//    operations, which must never fail, whatever the engine does.
+//
+// What the probe found, and what it now holds the engines to: WebKit's libgcrypt backend (WebKitGTK and
+// WPE on Linux, and so Playwright's WebKit there; Safari's backend is CryptoKit) drops a leading zero
+// byte from an X25519 scalar, WebKit bug 307095 (fixed on WebKit main on 2026-10-09, 323215@main). So
+// its PKCS #8 import refuses a scalar whose first byte is zero (DataError), and its generateKey fails
+// when it drew one (OperationError, 1 draw in 256). A failure with exactly that signature is counted
+// as `knownEngineBug`, allowed in WebKit's engine checks only; anything else fails the probe.
 //
 // Every key here is random and made for the run: test values, never used for mail.
 import { Aes256Gcm, CipherSuite, DhkemX25519HkdfSha256, HkdfSha256 } from "@hpke/core";
@@ -140,9 +149,15 @@ export interface ProbeLine {
   wrongLength: number;
   /** It answered, but the answer disagrees with the engine's other answer for the same key. */
   mismatch: number;
+  /** It failed with WebKit bug 307095's signature (above): the engine's known defect, not a new one. */
+  knownEngineBug: number;
+  /** "engine": Web Crypto itself. "package": mail-crypto's own operations, which must never fail. */
+  layer: Layer;
   /** A few failing cases: what failed, and the input that made it fail. */
   examples: unknown[];
 }
+
+export type Layer = "engine" | "package";
 
 const X25519 = { name: "X25519" };
 const PKCS8_X25519 = Uint8Array.of(0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x04, 0x22, 0x04, 0x20);
@@ -154,6 +169,15 @@ function clamp(k: Uint8Array): Uint8Array<ArrayBuffer> {
   c[31] = (c[31]! & 127) | 64;
   return c;
 }
+
+/** A clamped random scalar whose first byte is zero: 1 random one in 32, the input bug 307095 refuses. */
+function zeroFirstByteScalar(): Uint8Array<ArrayBuffer> {
+  const scalar = clamp(random(32));
+  scalar[0] = 0;
+  return scalar;
+}
+
+const pkcs8Of = (scalar: Uint8Array): Uint8Array<ArrayBuffer> => new Uint8Array([...PKCS8_X25519, ...scalar]);
 
 function fromB64url(s: string): Uint8Array<ArrayBuffer> {
   const bin = atob(s.replace(/-/g, "+").replace(/_/g, "/"));
@@ -172,37 +196,95 @@ function shape(bytes: Uint8Array): Record<string, unknown> {
   };
 }
 
+/**
+ * A fresh X25519 pair for a check's SETUP, drawn again after bug 307095's OperationError: the
+ * generateKey check measures that bug, and a setup only needs a key.
+ */
+async function drawX25519Pair(extractable: boolean): Promise<CryptoKeyPair> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return (await crypto.subtle.generateKey(X25519, extractable, ["deriveBits"])) as CryptoKeyPair;
+    } catch (e) {
+      if (attempt >= 4 || (e as Error).name !== "OperationError") throw e;
+    }
+  }
+}
+
+/** X25519(k, 9) by deriveBits against the base point. */
+async function publicKeyOf(privateKey: CryptoKey): Promise<Uint8Array<ArrayBuffer>> { // pragma: allowlist secret (a parameter type, not a value)
+  const base = await crypto.subtle.importKey("raw", BASE_POINT, X25519, true, []);
+  return new Uint8Array(await crypto.subtle.deriveBits({ name: "X25519", public: base } as never, privateKey, 256));
+}
+
+/**
+ * Whether `x` is X25519(clamped, 9), by the engine's own reckoning: the clamped scalar imported as
+ * PKCS #8 where the engine can; where it refuses (bug 307095), a JWK import of d with x, which WebKit
+ * accepts only after checking the pair with its RFC 7748 code (CryptoKeyOKP::importJwk).
+ */
+async function engineAgrees(clamped: Uint8Array, x: Uint8Array): Promise<{ agrees: boolean; by: string }> {
+  try {
+    const key = await crypto.subtle.importKey("pkcs8", pkcs8Of(clamped), X25519, false, ["deriveBits"]);
+    return { agrees: hex(await publicKeyOf(key)) === hex(x), by: "pkcs8 import of the clamped scalar" };
+  } catch (e) {
+    if ((e as Error).name !== "DataError" || clamped[0] !== 0) throw e;
+  }
+  try {
+    await crypto.subtle.importKey("jwk", { kty: "OKP", crv: "X25519", d: b64url(clamped), x: b64url(x) }, X25519, false, ["deriveBits"]);
+    return { agrees: true, by: "the engine's pair check on JWK import" };
+  } catch (e) {
+    return { agrees: false, by: `the engine's pair check on JWK import (${(e as Error).name})` };
+  }
+}
+
+/** A DataError importing a scalar whose first byte is zero: bug 307095's signature. */
+const isBug307095Import = (e: unknown, scalar: Uint8Array): boolean => (e as Error).name === "DataError" && scalar[0] === 0;
+
 const challengeSuite = new CipherSuite({ kem: new DhkemX25519HkdfSha256(), kdf: new HkdfSha256(), aead: new Aes256Gcm() });
 
-type Check = (record: (kind: "threw" | "wrongLength" | "mismatch", example: unknown) => void) => Promise<void>;
+type Outcome = "threw" | "wrongLength" | "mismatch" | "knownEngineBug";
+type Check = (record: (kind: Outcome, example: unknown) => void) => Promise<void>;
+interface ProbeCheck {
+  layer: Layer;
+  run: Check;
+  /** Fewer rounds, for a check that searches many keys per round. */
+  rounds?: number;
+}
+const engine = (run: Check, rounds?: number): ProbeCheck => ({ layer: "engine", run, ...(rounds ? { rounds } : {}) });
+const pkg = (run: Check): ProbeCheck => ({ layer: "package", run });
 
-const CHECKS: Record<string, Check> = {
+const CHECKS: Record<string, ProbeCheck> = {
+  // ---- the engine: Web Crypto itself ----
+
   // generateKey X25519, then the public key raw and the private key pkcs8 (wrapKey's form).
-  async "X25519 generateKey + raw/pkcs8 export"(record) {
-    const pair = (await crypto.subtle.generateKey(X25519, true, ["deriveBits"])) as CryptoKeyPair;
+  "X25519 generateKey + raw/pkcs8 export": engine(async (record) => {
+    let pair: CryptoKeyPair;
+    try {
+      pair = (await crypto.subtle.generateKey(X25519, true, ["deriveBits"])) as CryptoKeyPair;
+    } catch (e) {
+      return record((e as Error).name === "OperationError" ? "knownEngineBug" : "threw", { error: (e as Error).name, step: "generateKey" });
+    }
     const raw = new Uint8Array((await crypto.subtle.exportKey("raw", pair.publicKey)) as ArrayBuffer);
     if (raw.length !== 32) return record("wrongLength", { raw: hex(raw) });
     const pkcs8 = new Uint8Array((await crypto.subtle.exportKey("pkcs8", pair.privateKey)) as ArrayBuffer);
     if (pkcs8.length !== 48 || hex(pkcs8.subarray(0, 16)) !== hex(PKCS8_X25519)) record("wrongLength", { pkcs8: hex(pkcs8), length: pkcs8.length });
-  },
+  }),
   // X25519(k, 9) by deriveBits must be the public key the engine exports for k.
-  async "X25519 deriveBits with the base point"(record) {
-    const pair = (await crypto.subtle.generateKey(X25519, true, ["deriveBits"])) as CryptoKeyPair;
+  "X25519 deriveBits with the base point": engine(async (record) => {
+    const pair = await drawX25519Pair(true);
     const raw = new Uint8Array((await crypto.subtle.exportKey("raw", pair.publicKey)) as ArrayBuffer);
     const scalar = new Uint8Array((await crypto.subtle.exportKey("pkcs8", pair.privateKey)) as ArrayBuffer).subarray(16);
-    const base = await crypto.subtle.importKey("raw", BASE_POINT, X25519, true, []);
     let bits: Uint8Array;
     try {
-      bits = new Uint8Array(await crypto.subtle.deriveBits({ name: "X25519", public: base } as never, pair.privateKey, 256));
+      bits = await publicKeyOf(pair.privateKey);
     } catch (e) {
       return record("threw", { error: (e as Error).name, scalar: shape(scalar), publicKey: shape(raw) });
     }
     if (bits.length !== 32) return record("wrongLength", { bits: hex(bits) });
     if (hex(bits) !== hex(raw)) record("mismatch", { derived: shape(bits), exported: shape(raw), scalar: shape(scalar) });
-  },
+  }),
   // A5: X25519 of the private key with its own public key.
-  async "X25519 deriveBits with its own public key (A5)"(record) {
-    const pair = (await crypto.subtle.generateKey(X25519, false, ["deriveBits"])) as CryptoKeyPair;
+  "X25519 deriveBits with its own public key (A5)": engine(async (record) => {
+    const pair = await drawX25519Pair(false);
     const raw = new Uint8Array((await crypto.subtle.exportKey("raw", pair.publicKey)) as ArrayBuffer);
     try {
       const z = new Uint8Array(await crypto.subtle.deriveBits({ name: "X25519", public: pair.publicKey } as never, pair.privateKey, 256));
@@ -210,81 +292,108 @@ const CHECKS: Record<string, Check> = {
     } catch (e) {
       record("threw", { error: (e as Error).name, publicKey: shape(raw) });
     }
-  },
+  }),
   // A raw public key the engine produced must import again.
-  async "X25519 raw import of a generated public key"(record) {
-    const pair = (await crypto.subtle.generateKey(X25519, true, ["deriveBits"])) as CryptoKeyPair;
+  "X25519 raw import of a generated public key": engine(async (record) => {
+    const pair = await drawX25519Pair(true);
     const raw = new Uint8Array((await crypto.subtle.exportKey("raw", pair.publicKey)) as ArrayBuffer);
     try {
       await crypto.subtle.importKey("raw", raw, X25519, true, []);
     } catch (e) {
       record("threw", { error: (e as Error).name, publicKey: shape(raw) });
     }
-  },
-  // The scalar this package builds (A2, the test vectors): a clamped random scalar as PKCS #8.
-  async "X25519 pkcs8 import of a clamped scalar"(record) {
+  }),
+  // A clamped random scalar as PKCS #8, and the scalar the engine reports back.
+  "X25519 pkcs8 import of a clamped scalar": engine(async (record) => {
     const scalar = clamp(random(32));
-    const pkcs8 = new Uint8Array([...PKCS8_X25519, ...scalar]);
     let key: CryptoKey;
     try {
-      key = await crypto.subtle.importKey("pkcs8", pkcs8, X25519, true, ["deriveBits"]);
+      key = await crypto.subtle.importKey("pkcs8", pkcs8Of(scalar), X25519, true, ["deriveBits"]);
     } catch (e) {
-      return record("threw", { error: (e as Error).name, scalar: shape(scalar) });
+      return record(isBug307095Import(e, scalar) ? "knownEngineBug" : "threw", { error: (e as Error).name, scalar: shape(scalar) });
     }
-    // The engine's own reading of the key: its JWK d must be the scalar given, x its public key.
+    // The engine's own reading of the key: its JWK d must be the scalar given.
     const jwk = await crypto.subtle.exportKey("jwk", key);
     const d = fromB64url((jwk as JsonWebKey).d!);
     if (hex(d) !== hex(scalar)) record("mismatch", { given: shape(scalar), readBack: shape(d) });
-  },
-  // The same scalar, non-extractable, as deriveFactorKey imports it, then its public key.
-  async "X25519 pkcs8 import, non-extractable, then deriveBits with the base point"(record) {
+  }),
+  // The same, non-extractable, then its public key.
+  "X25519 pkcs8 import, non-extractable, then deriveBits with the base point": engine(async (record) => {
     const scalar = clamp(random(32));
-    const pkcs8 = new Uint8Array([...PKCS8_X25519, ...scalar]);
     let key: CryptoKey;
     try {
-      key = await crypto.subtle.importKey("pkcs8", pkcs8, X25519, false, ["deriveBits"]);
+      key = await crypto.subtle.importKey("pkcs8", pkcs8Of(scalar), X25519, false, ["deriveBits"]);
     } catch (e) {
-      return record("threw", { error: (e as Error).name, step: "import", scalar: shape(scalar) });
+      return record(isBug307095Import(e, scalar) ? "knownEngineBug" : "threw", { error: (e as Error).name, step: "import", scalar: shape(scalar) });
     }
-    const extractable = await crypto.subtle.importKey("pkcs8", pkcs8, X25519, true, ["deriveBits"]);
+    const extractable = await crypto.subtle.importKey("pkcs8", pkcs8Of(scalar), X25519, true, ["deriveBits"]);
     const x = fromB64url(((await crypto.subtle.exportKey("jwk", extractable)) as JsonWebKey).x!);
-    const base = await crypto.subtle.importKey("raw", BASE_POINT, X25519, true, []);
     try {
-      const bits = new Uint8Array(await crypto.subtle.deriveBits({ name: "X25519", public: base } as never, key, 256));
+      const bits = await publicKeyOf(key);
       if (bits.length !== 32) record("wrongLength", { bits: hex(bits), scalar: shape(scalar) });
       else if (hex(bits) !== hex(x)) record("mismatch", { derived: shape(bits), jwkX: shape(x), scalar: shape(scalar) });
     } catch (e) {
       record("threw", { error: (e as Error).name, step: "deriveBits", scalar: shape(scalar), jwkX: shape(x) });
     }
-  },
-  // The edges a value-dependent bug would hide in: a clamped scalar whose first byte is zero (1 in 32
-  // of random ones), as the engine imports it and reads it back.
-  async "X25519 pkcs8 import of a clamped scalar whose first byte is zero"(record) {
-    const scalar = clamp(random(32));
-    scalar[0] = 0;
-    const pkcs8 = new Uint8Array([...PKCS8_X25519, ...scalar]);
+  }),
+  // The edge bug 307095 lives on: a clamped scalar whose first byte is zero, imported and read back.
+  "X25519 pkcs8 import of a clamped scalar whose first byte is zero": engine(async (record) => {
+    const scalar = zeroFirstByteScalar();
     let key: CryptoKey;
     try {
-      key = await crypto.subtle.importKey("pkcs8", pkcs8, X25519, true, ["deriveBits"]);
+      key = await crypto.subtle.importKey("pkcs8", pkcs8Of(scalar), X25519, true, ["deriveBits"]);
     } catch (e) {
-      return record("threw", { error: (e as Error).name, step: "import", scalar: shape(scalar) });
+      return record(isBug307095Import(e, scalar) ? "knownEngineBug" : "threw", { error: (e as Error).name, step: "import", scalar: shape(scalar) });
     }
     const jwk = (await crypto.subtle.exportKey("jwk", key)) as JsonWebKey;
     const d = fromB64url(jwk.d!);
     if (hex(d) !== hex(scalar)) return record("mismatch", { step: "jwk d", given: shape(scalar), readBack: shape(d) });
-    const base = await crypto.subtle.importKey("raw", BASE_POINT, X25519, true, []);
     try {
-      const bits = new Uint8Array(await crypto.subtle.deriveBits({ name: "X25519", public: base } as never, key, 256));
+      const bits = await publicKeyOf(key);
       if (hex(bits) !== hex(fromB64url(jwk.x!))) record("mismatch", { step: "public key", derived: shape(bits), jwkX: shape(fromB64url(jwk.x!)), scalar: shape(scalar) });
     } catch (e) {
       record("threw", { error: (e as Error).name, step: "deriveBits", scalar: shape(scalar) });
     }
-  },
-  // ...and keys whose public key starts or ends with a zero byte (about 1 in 256 each), searched for:
-  // their raw export, their raw import, the base-point derivation, and a wrap round trip.
-  async "X25519 keys whose public key starts or ends with a zero byte"(record) {
+  }),
+  // How mail-crypto imports a key it never serializes (a factor key, A2): the three low bits, which
+  // X25519 ignores, set. The import must work, and the key must be the clamped scalar's.
+  "X25519 pkcs8 import of a first-byte-zero scalar with the three ignored bits set": engine(async (record) => {
+    const clamped = zeroFirstByteScalar();
+    const masked = new Uint8Array(clamped);
+    masked[0] = 0x07;
+    let key: CryptoKey;
+    try {
+      key = await crypto.subtle.importKey("pkcs8", pkcs8Of(masked), X25519, false, ["deriveBits"]);
+    } catch (e) {
+      return record("threw", { error: (e as Error).name, step: "import", scalar: shape(masked) });
+    }
+    const x = await publicKeyOf(key);
+    if (x.length !== 32) return record("wrongLength", { x: hex(x) });
+    const { agrees, by } = await engineAgrees(clamped, x);
+    if (!agrees) record("mismatch", { by, scalar: shape(clamped), derived: shape(x) });
+  }),
+  // A wrap another engine made (OpenSSL clamps the keys it makes, so 1 in 32 start with a zero byte),
+  // opened here: AES-GCM over the PKCS #8 form, then unwrapKey.
+  "unwrapKey of a PKCS #8 key whose first scalar byte is zero, as another engine wraps it": engine(async (record) => {
+    const clamped = zeroFirstByteScalar();
+    const kek = (await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "unwrapKey"])) as CryptoKey;
+    const iv = random(12);
+    const wrapped = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, kek, pkcs8Of(clamped));
+    let key: CryptoKey;
+    try {
+      key = await crypto.subtle.unwrapKey("pkcs8", wrapped, kek, { name: "AES-GCM", iv }, X25519, false, ["deriveBits"]);
+    } catch (e) {
+      return record(isBug307095Import(e, clamped) ? "knownEngineBug" : "threw", { error: (e as Error).name, step: "unwrapKey", scalar: shape(clamped) });
+    }
+    const x = await publicKeyOf(key);
+    const { agrees, by } = await engineAgrees(clamped, x);
+    if (!agrees) record("mismatch", { by, scalar: shape(clamped), derived: shape(x) });
+  }),
+  // Keys whose public key starts or ends with a zero byte (about 1 in 256 each), searched for: their
+  // raw export, their raw import, the base-point derivation, and a wrap round trip.
+  "X25519 keys whose public key starts or ends with a zero byte": engine(async (record) => {
     for (let i = 0; i < 2048; i++) {
-      const pair = (await crypto.subtle.generateKey(X25519, true, ["deriveBits"])) as CryptoKeyPair;
+      const pair = await drawX25519Pair(true);
       const raw = new Uint8Array((await crypto.subtle.exportKey("raw", pair.publicKey)) as ArrayBuffer);
       if (raw.length !== 32) return record("wrongLength", { step: "raw export", raw: hex(raw) });
       if (raw[0] !== 0 && raw[31] !== 0) continue;
@@ -294,9 +403,8 @@ const CHECKS: Record<string, Check> = {
       } catch (e) {
         return record("threw", { error: (e as Error).name, step: "raw import", publicKey: shape(raw), scalar: shape(scalar) });
       }
-      const base = await crypto.subtle.importKey("raw", BASE_POINT, X25519, true, []);
       try {
-        const bits = new Uint8Array(await crypto.subtle.deriveBits({ name: "X25519", public: base } as never, pair.privateKey, 256));
+        const bits = await publicKeyOf(pair.privateKey);
         if (hex(bits) !== hex(raw)) return record("mismatch", { step: "base point", derived: shape(bits), exported: shape(raw) });
       } catch (e) {
         return record("threw", { error: (e as Error).name, step: "deriveBits", publicKey: shape(raw) });
@@ -311,19 +419,9 @@ const CHECKS: Record<string, Check> = {
       }
       return;
     }
-  },
-  // A2 as the package does it, end to end.
-  async "deriveFactorKey (A2)"(record) {
-    const secret = random(32); // pragma: allowlist secret (random test values made for the probe)
-    try {
-      const key = await deriveFactorKey({ mailboxId: newId("mbx"), factorId: newId("wrp"), kind: "recovery", secret });
-      if (factorPublicKey(key).length !== 32) record("wrongLength", {});
-    } catch (e) {
-      record("threw", { error: (e as Error).name, message: (e as Error).message, secret: hex(secret) }); // pragma: allowlist secret (random test values made for the probe)
-    }
-  },
+  }, 12),
   // A5 and DeriveKeyPair: HKDF with an empty salt.
-  async "HKDF deriveBits with an empty salt"(record) {
+  "HKDF deriveBits with an empty salt": engine(async (record) => {
     const ikm = random(32);
     const base = await crypto.subtle.importKey("raw", ikm, "HKDF", false, ["deriveBits"]);
     try {
@@ -332,9 +430,9 @@ const CHECKS: Record<string, Check> = {
     } catch (e) {
       record("threw", { error: (e as Error).name, ikm: hex(ikm) });
     }
-  },
+  }),
   // A5: the binding key is HKDF into an HMAC key, then a tag.
-  async "HKDF deriveKey to HMAC, then sign"(record) {
+  "HKDF deriveKey to HMAC, then sign": engine(async (record) => {
     const base = await crypto.subtle.importKey("raw", random(32), "HKDF", false, ["deriveKey"]);
     try {
       const hmac = await crypto.subtle.deriveKey({ name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: random(16) }, base, { name: "HMAC", hash: "SHA-256", length: 256 }, false, ["sign"]);
@@ -343,10 +441,10 @@ const CHECKS: Record<string, Check> = {
     } catch (e) {
       record("threw", { error: (e as Error).name });
     }
-  },
+  }),
   // envelope v1 (D21) and A4: wrapKey and unwrapKey of an X25519 PKCS #8 key under AES-GCM.
-  async "wrapKey + unwrapKey of an X25519 pkcs8 key"(record) {
-    const pair = (await crypto.subtle.generateKey(X25519, true, ["deriveBits"])) as CryptoKeyPair;
+  "wrapKey + unwrapKey of an X25519 pkcs8 key": engine(async (record) => {
+    const pair = await drawX25519Pair(true);
     const raw = new Uint8Array((await crypto.subtle.exportKey("raw", pair.publicKey)) as ArrayBuffer);
     const scalar = new Uint8Array((await crypto.subtle.exportKey("pkcs8", pair.privateKey)) as ArrayBuffer).subarray(16);
     const kek = (await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["wrapKey", "unwrapKey"])) as CryptoKey;
@@ -359,12 +457,33 @@ const CHECKS: Record<string, Check> = {
     } catch (e) {
       return record("threw", { error: (e as Error).name, step: "unwrapKey", scalar: shape(scalar), publicKey: shape(raw) });
     }
-    const base = await crypto.subtle.importKey("raw", BASE_POINT, X25519, true, []);
-    const bits = new Uint8Array(await crypto.subtle.deriveBits({ name: "X25519", public: base } as never, back, 256));
-    if (hex(bits) !== hex(raw)) record("mismatch", { derived: shape(bits), exported: shape(raw), scalar: shape(scalar) });
-  },
+    if (hex(await publicKeyOf(back)) !== hex(raw)) record("mismatch", { exported: shape(raw), scalar: shape(scalar) });
+  }),
+
+  // ---- the package: mail-crypto's own operations, which must never fail ----
+
+  // A fresh mailbox key (enrollment, rotation).
+  generateMailboxKey: pkg(async (record) => {
+    try {
+      const { privateKey, publicKey } = await generateMailboxKey();
+      if (publicKey.publicKey.length !== 32) record("wrongLength", { publicKey: hex(publicKey.publicKey) });
+      else if (privateKey.keyId !== publicKey.keyId) record("mismatch", { publicKey: shape(publicKey.publicKey) });
+    } catch (e) {
+      record("threw", { error: (e as Error).name, message: (e as Error).message });
+    }
+  }),
+  // A2 as the package does it, end to end (1 random secret in 32 gives a scalar whose first byte is zero).
+  "deriveFactorKey (A2)": pkg(async (record) => {
+    const secret = random(32); // pragma: allowlist secret (random test values made for the probe)
+    try {
+      const key = await deriveFactorKey({ mailboxId: newId("mbx"), factorId: newId("wrp"), kind: "recovery", secret });
+      if (factorPublicKey(key).length !== 32) record("wrongLength", {});
+    } catch (e) {
+      record("threw", { error: (e as Error).name, message: (e as Error).message, secret: hex(secret) }); // pragma: allowlist secret (random test values made for the probe)
+    }
+  }),
   // envelope v1 wraps as the package makes and opens them (S6a's path).
-  async "wrapPrivateKey + unwrapPrivateKey"(record) {
+  "wrapPrivateKey + unwrapPrivateKey": pkg(async (record) => {
     const { privateKey, publicKey } = await generateMailboxKey();
     const mailboxId = newId("mbx");
     const secret = random(32); // pragma: allowlist secret (random test values made for the probe)
@@ -375,9 +494,9 @@ const CHECKS: Record<string, Check> = {
     } catch (e) {
       record("threw", { error: (e as Error).name, message: (e as Error).message, publicKey: shape(publicKey.publicKey) });
     }
-  },
+  }),
   // A5 as the package does it: the binding key of a mailbox key, a tag, its verification.
-  async "bindingKey + bindingTag (A5)"(record) {
+  "bindingKey + bindingTag (A5)": pkg(async (record) => {
     const { privateKey, publicKey } = await generateMailboxKey();
     const signing = new Uint8Array([4, ...random(64)]);
     try {
@@ -388,9 +507,9 @@ const CHECKS: Record<string, Check> = {
     } catch (e) {
       record("threw", { error: (e as Error).name, message: (e as Error).message, publicKey: shape(publicKey.publicKey) });
     }
-  },
+  }),
   // A4, X25519 KEM: a successor seal.
-  async "sealKey + openKeySeal, X25519 (successor)"(record) {
+  "sealKey + openKeySeal, X25519 (successor)": pkg(async (record) => {
     const sealed = await generateMailboxKey();
     const to = await generateMailboxKey();
     const mailboxId = newId("mbx");
@@ -401,9 +520,9 @@ const CHECKS: Record<string, Check> = {
     } catch (e) {
       record("threw", { error: (e as Error).name, message: (e as Error).message, sealedPublic: shape(sealed.publicKey.publicKey), toPublic: shape(to.publicKey.publicKey) });
     }
-  },
+  }),
   // A4, X25519 KEM to a factor key (A2).
-  async "sealKey + openKeySeal, X25519 (factor)"(record) {
+  "sealKey + openKeySeal, X25519 (factor)": pkg(async (record) => {
     const sealed = await generateMailboxKey();
     const mailboxId = newId("mbx");
     const factorId = newId("wrp");
@@ -415,9 +534,9 @@ const CHECKS: Record<string, Check> = {
     } catch (e) {
       record("threw", { error: (e as Error).name, message: (e as Error).message });
     }
-  },
+  }),
   // A4, P-256 KEM to a device's unlock key.
-  async "sealKey + openKeySeal, P-256 (device)"(record) {
+  "sealKey + openKeySeal, P-256 (device)": pkg(async (record) => {
     const sealed = await generateMailboxKey();
     const unlock = await generateUnlockKey();
     const mailboxId = newId("mbx");
@@ -429,39 +548,37 @@ const CHECKS: Record<string, Check> = {
     } catch (e) {
       record("threw", { error: (e as Error).name, message: (e as Error).message, unlockPublic: hex(unlock.publicKey) });
     }
-  },
-  // A6: a challenge sealed as Mail seals it (written from the contract here), opened with the mailbox key.
-  async "openChallenge (A6)"(record) {
+  }),
+  // A6: a challenge sealed as Mail seals it (written from the contract here; Mail seals in workerd, so
+  // the ephemeral key is drawn as a setup), opened with the mailbox key.
+  "openChallenge (A6)": pkg(async (record) => {
     const key = await generateMailboxKey();
     const mailboxId = newId("mbx");
     const challengeId = newId("chl");
     const answer = random(32);
+    const recipientPublicKey = await crypto.subtle.importKey("raw", key.publicKey.publicKey as Uint8Array<ArrayBuffer>, X25519, true, []);
+    const aad = utf8(`proprietor-mail/v1/challenge|${mailboxId}|${challengeId}|session|${key.publicKey.keyId}`);
+    const { enc, ct } = await challengeSuite.seal({ recipientPublicKey, info: utf8("proprietor-mail/v1/challenge"), ekm: await drawX25519Pair(true) }, answer, aad);
+    const sealed = b64url(new Uint8Array([...new Uint8Array(enc), ...new Uint8Array(ct)]));
     try {
-      const recipientPublicKey = await crypto.subtle.importKey("raw", key.publicKey.publicKey as Uint8Array<ArrayBuffer>, X25519, true, []);
-      const aad = utf8(`proprietor-mail/v1/challenge|${mailboxId}|${challengeId}|session|${key.publicKey.keyId}`);
-      const { enc, ct } = await challengeSuite.seal({ recipientPublicKey, info: utf8("proprietor-mail/v1/challenge") }, answer, aad);
-      const sealed = b64url(new Uint8Array([...new Uint8Array(enc), ...new Uint8Array(ct)]));
       const got = await openChallenge(key.privateKey, { mailboxId, challengeId }, sealed);
       if (hex(got) !== hex(answer)) record("mismatch", {});
     } catch (e) {
       record("threw", { error: (e as Error).name, message: (e as Error).message, publicKey: shape(key.publicKey.publicKey) });
     }
-  },
+  }),
 };
 
-/** Checks that search many keys per round run fewer rounds. */
-const ROUND_CAP: Record<string, number> = { "X25519 keys whose public key starts or ends with a zero byte": 12 };
-
-/** Runs every check `rounds` times; answers, per check, how often it threw, gave a wrong length, or disagreed. */
+/** Runs every check `rounds` times; answers, per check, how often it threw, gave a wrong length, disagreed, or hit the known engine bug. */
 export async function runProbe(rounds: number, only?: string[]): Promise<Record<string, ProbeLine>> {
   const report: Record<string, ProbeLine> = {};
   for (const [name, check] of Object.entries(CHECKS)) {
     if (only && !only.includes(name)) continue;
-    const line: ProbeLine = { tries: 0, threw: 0, wrongLength: 0, mismatch: 0, examples: [] };
-    for (let i = 0; i < Math.min(rounds, ROUND_CAP[name] ?? rounds); i++) {
+    const line: ProbeLine = { tries: 0, threw: 0, wrongLength: 0, mismatch: 0, knownEngineBug: 0, layer: check.layer, examples: [] };
+    for (let i = 0; i < Math.min(rounds, check.rounds ?? rounds); i++) {
       line.tries += 1;
       try {
-        await check((kind, example) => {
+        await check.run((kind, example) => {
           line[kind] += 1;
           if (line.examples.length < 4) line.examples.push({ kind, ...(example as object) });
         });
@@ -478,3 +595,31 @@ export async function runProbe(rounds: number, only?: string[]): Promise<Record<
 }
 
 export const PROBE_CHECKS = Object.keys(CHECKS);
+
+/**
+ * The private keys this engine's generateKey makes: how many start with a zero byte (the keys bug
+ * 307095 cannot open when another engine made them), and whether the engine clamps them (low three
+ * bits 000, top two bits 01), sets the opposite as BoringSSL does (111 and 10), or leaves them random.
+ */
+export async function keyShapes(draws: number) {
+  const out = { draws: 0, operationErrors: 0, firstByteZero: 0, lowThreeBits: {} as Record<string, number>, topTwoBits: {} as Record<string, number> };
+  while (out.draws < draws && out.operationErrors < 64) {
+    let pair: CryptoKeyPair;
+    try {
+      pair = (await crypto.subtle.generateKey(X25519, true, ["deriveBits"])) as CryptoKeyPair;
+    } catch (e) {
+      if ((e as Error).name !== "OperationError") throw e;
+      out.operationErrors += 1;
+      continue;
+    }
+    out.draws += 1;
+    const scalar = new Uint8Array((await crypto.subtle.exportKey("pkcs8", pair.privateKey)) as ArrayBuffer).subarray(16);
+    if (scalar[0] === 0) out.firstByteZero += 1;
+    const low = (scalar[0]! & 7).toString(2).padStart(3, "0");
+    const top = (scalar[31]! >> 6).toString(2).padStart(2, "0");
+    out.lowThreeBits[low] = (out.lowThreeBits[low] ?? 0) + 1;
+    out.topTwoBits[top] = (out.topTwoBits[top] ?? 0) + 1;
+  }
+  takeFailures();
+  return out;
+}
