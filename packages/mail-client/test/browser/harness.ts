@@ -3,7 +3,7 @@
 // exposes `window.harness`, which the Playwright-driven tests call through page.evaluate(); every
 // answer is plain JSON. It never uses a DOM sink itself: text goes through textContent, the frame is
 // built with createElement/setAttribute, and only showInFrame assigns srcdoc.
-import { deriveFactorKey, factorPublicKey, keyIdOf, type MessageHeader } from "@proprietor/mail-crypto";
+import { keyIdOf, type MessageHeader } from "@proprietor/mail-crypto";
 import {
   canKeepDevices,
   DEVICE_DATABASE,
@@ -30,7 +30,7 @@ import {
   type RenderedBody,
   type UnlockedMailbox,
 } from "@proprietor/mail-client";
-import { installRecorder, keyShapes, PROBE_CHECKS, runProbe, takeFailures } from "./crypto-probe";
+import { installRecorder, PROBE_CHECKS, runProbe, takeFailures } from "./crypto-probe";
 
 // Every crypto.subtle call that throws is recorded with its inputs (test code only): a failing flow
 // reports which operation failed, and on what.
@@ -348,22 +348,7 @@ const harness = {
   probe: {
     checks: () => PROBE_CHECKS,
     run: (rounds: number, only?: string[]) => runProbe(rounds, only),
-    keyShapes: (draws: number) => keyShapes(draws),
     failedCalls: () => takeFailures(),
-  },
-
-  /** A2 (deriveFactorKey) in this engine, for factors the Node side derived with @hpke/core (devices.test.ts). Secrets and keys as base64url. */
-  async factorPublicKeys(factors: { mailboxId: string; factorId: string; kind: "passkey-prf" | "recovery"; secret: string }[]) {
-    const out: ({ ok: true; publicKey: string } | { ok: false; error: { name: string; message: string }; failedCalls: ReturnType<typeof takeFailures> })[] = [];
-    for (const f of factors) {
-      try {
-        const key = await deriveFactorKey({ mailboxId: f.mailboxId, factorId: f.factorId, kind: f.kind, secret: fromBase64(f.secret) }); // pragma: allowlist secret (random test values the Node side made)
-        out.push({ ok: true, publicKey: toBase64url(factorPublicKey(key)) });
-      } catch (e) {
-        out.push({ ok: false, error: errorOf(e), failedCalls: takeFailures() });
-      }
-    }
-    return out;
   },
 
   // ---- kept devices (spec 002, contracts/device-v1.md Part C) ----

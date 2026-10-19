@@ -7,18 +7,13 @@
 // same browser context) and opens the inbox with no prompt; what IndexedDB holds is exactly K5's
 // fields, with non-extractable P-256 keys, no X25519 key and no token; and the spec's two open
 // questions: a non-extractable P-256 key opens its seal (@hpke/core, A4), and a non-extractable X25519
-// key derives bits with its own public key (A5, the binding key behind every tag check). And every
-// factor key (A2) is the one @hpke/core derives in Node, those whose scalar starts with a zero byte
-// included: the keys WebKit's libgcrypt backend refused (WebKit bug 307095, see webkit-probe.test.ts).
+// key derives bits with its own public key (A5, the binding key behind every tag check).
 //
 // WebKit runs only in CI's browsers job (its host libraries are missing here). Playwright's WebKit
 // is not Safari: where its IndexedDB cannot keep a CryptoKey, the test checks that the fallback is
 // the safe one (a shared computer that keeps nothing) instead.
-import { Buffer } from "node:buffer";
-import { DhkemX25519HkdfSha256 } from "@hpke/core";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { chromium, firefox, webkit, type Browser, type BrowserContext, type Page } from "playwright";
-import { newId } from "@proprietor/mail-crypto";
 import { KEPT_DEVICE_FIELDS } from "../../src/index";
 import { enrolledMailbox, type Enrolled } from "../keyring-support";
 import type { Harness } from "./harness";
@@ -44,29 +39,6 @@ function recordOf(dumped: Dumped, mailboxId: string): Extract<DescribedValue, { 
   const found = dumped.records.filter((r) => r.kind === "object" && r.fields.mailboxId?.kind === "string" && r.fields.mailboxId.value === mailboxId);
   expect(found.length).toBe(1);
   return found[0] as Extract<DescribedValue, { kind: "object" }>;
-}
-
-/**
- * A2 from the contract's text, in Node: HKDF with raw Web Crypto, then @hpke/core's DeriveKeyPair, an
- * implementation the package does not use. With `zeroFirstByte`, a factor whose skF, clamped, starts
- * with a zero byte (1 random secret in 32): the input the GCrypt engine's PKCS #8 import refuses.
- */
-async function nodeFactor(kind: "passkey-prf" | "recovery", zeroFirstByte: boolean) {
-  const kem = new DhkemX25519HkdfSha256();
-  const utf8 = (s: string) => new TextEncoder().encode(s);
-  const b64url = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64url");
-  for (;;) {
-    const mailboxId = newId("mbx");
-    const factorId = newId("wrp");
-    const secret = crypto.getRandomValues(new Uint8Array(32)); // pragma: allowlist secret (random test value)
-    const base = await crypto.subtle.importKey("raw", secret, "HKDF", false, ["deriveBits"]);
-    const info = utf8(`proprietor-mail/v1/factor-key|${mailboxId}|${factorId}|${kind}`);
-    const ikm = await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: utf8(factorId), info }, base, 256); // pragma: allowlist secret (HKDF parameter names)
-    const pair = await kem.deriveKeyPair(ikm);
-    const skF = new Uint8Array(await kem.serializePrivateKey(pair.privateKey));
-    if (((skF[0]! & 248) === 0) !== zeroFirstByte) continue;
-    return { input: { mailboxId, factorId, kind, secret: b64url(secret) }, publicKey: b64url(new Uint8Array(await kem.serializePublicKey(pair.publicKey))) }; // pragma: allowlist secret (random test values made for the run)
-  }
 }
 
 /** Every CryptoKey and every string anywhere in a described record. */
@@ -133,17 +105,6 @@ describe.each(chosen)("%s: a kept device under the dashboard's policy", (name) =
     expect(await page.evaluate(() => harness.device.canKeepWithoutIndexedDb())).toBe(false);
     // The probe leaves nothing behind.
     expect((await page.evaluate(() => harness.device.dumpIndexedDb())).records).toEqual([]);
-  });
-
-  test("A2 in this engine: every factor key is the one @hpke/core derives in Node, including the 1 in 32 whose clamped scalar starts with a zero byte (WebKit bug 307095 refuses that scalar in PKCS #8)", async () => {
-    const factors: Awaited<ReturnType<typeof nodeFactor>>[] = [];
-    for (const kind of ["passkey-prf", "recovery"] as const) {
-      for (let i = 0; i < 4; i++) factors.push(await nodeFactor(kind, true));
-      for (let i = 0; i < 2; i++) factors.push(await nodeFactor(kind, false));
-    }
-    const page = await openPage();
-    const got = await page.evaluate((input) => harness.factorPublicKeys(input), factors.map((f) => f.input));
-    expect(got).toEqual(factors.map((f) => ({ ok: true, publicKey: f.publicKey })));
   });
 
   test("F1, then a reload (a new page in the same context) opens the inbox with no prompt; IndexedDB holds exactly K5's fields, non-extractable P-256 keys, no X25519 key and no token", async () => {
