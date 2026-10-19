@@ -235,15 +235,21 @@ recovery wrap, no factor keys, `sessions: "optional"`.
 | Workers Web Crypto: ECDSA sign/verify, ECDH and X25519 deriveBits, HKDF, HMAC, AES-GCM wrapKey/unwrapKey | Cloudflare Workers docs, through context7 |
 | `@hpke/core` 1.9.0 exports the export-only AEAD (`ExportOnly`) and `export()` on both contexts, and takes a `CryptoKey` (or pair) as the recipient key; DHKEM(P-256) is native Web Crypto | its installed type declarations (read) |
 
+**Checked while building (2026-10-18 and 19):**
+
+| Fact | Source |
+|---|---|
+| WebKit's libgcrypt backend (WebKitGTK and WPE on Linux, and Playwright's WebKit there) drops a leading zero byte from an X25519 scalar: it refuses a PKCS #8 key whose first scalar byte is zero (DataError, 300 of 300), and its X25519 `generateKey` fails about 1 draw in 256 (OperationError). It is WebKit bug 307095, fixed on WebKit main on 2026-10-09 (323215@main) and in no Playwright build yet | mail-client's WebKit probe in CI (runs 39166192512, 39168798436); the WebKit bug tracker |
+| mail-crypto works around it with no byte of any output changed: a factor key (never serialized) is imported with the three low bits of its first byte set, which X25519 ignores (RFC 7748 §5), and a fresh X25519 pair is drawn again after an OperationError | mail-crypto `src/keys.ts`, `test/engines.test.ts`; CI run 39178472679 green in WebKit on Linux and macOS, Chromium and Firefox |
+| WebKit's Cocoa port, the Web Crypto code Safari ships, does not have the bug, and keeps non-extractable P-256 keys across a reload | the probe and the kept-device browser tests on macOS (CI job `browsers-macos`); its source (`importPkcs8` copies the bytes) |
+| A mailbox key another engine made with a zero first scalar byte cannot be opened in an unfixed WebKitGTK or WPE browser. It fails closed, as a factor that did not work. Chromium never makes such a key; Firefox makes about 1 in 256 | the probe's tally of 1,200 keys per engine |
+| `@hpke/core` 1.9.0 opens a seal with a non-extractable P-256 recipient key only when it is given the key pair: from the private key alone it rebuilds the public key with an even y, which is the wrong point for about half of all keys. So a kept device keeps its unlock key's public form (K5), and opens its seal with both | the D1 builder's probe of the installed package (22 of 40 failed without the pair) |
+
 **Not verified**, and where it gets checked:
 
-- That Safari (macOS and iOS, a normal window) stores and reads back
-  non-extractable ECDSA and ECDH P-256 keys in IndexedDB. The mail-client's
-  WebKit test checks it in CI; Playwright's WebKit is not Safari, so the first
-  real check is the operator's own iPhone. Until then, D31 makes a failure
-  safe.
-- That `@hpke/core` opens with a non-extractable **P-256** recipient key (it
-  does with X25519, 001 §8). Checked by the mail-crypto builder.
+- Real Safari on macOS and iOS. Playwright's macOS WebKit runs the same Web
+  Crypto code (see above), and passes; the first check on Safari itself is the
+  operator's own iPhone. Until then, D31 makes a failure safe.
 - That Firefox on macOS and Linux passes PRF to external security keys. Not
   needed for the design (the recovery key covers any browser); worth knowing
   for the owner.
