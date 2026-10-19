@@ -25,6 +25,20 @@ const functions = [
   "unwrapPrivateKey",
   "newRecoveryKey",
   "parseRecoveryKey",
+  // contracts/device-v1.md Part A, the browser's half (slice D1)
+  "deriveFactorKey",
+  "factorPublicKey",
+  "generateSigningKey",
+  "generateUnlockKey",
+  "isDeviceSigningKey",
+  "isDeviceUnlockKey",
+  "signDeviceProof",
+  "sealKey",
+  "openKeySeal",
+  "bindingKey",
+  "bindingTag",
+  "verifyBindingTag",
+  "openChallenge",
 ] as const;
 
 const errors = ["NotImplemented", "DecryptionFailed", "RecoveryKeyTypo"] as const;
@@ -36,6 +50,11 @@ describe("@proprietor/mail-crypto exports the contract's API", () => {
 
   test.each(errors)("%s is an exported Error subclass", (name) => {
     expect(api[name].prototype).toBeInstanceOf(Error);
+  });
+
+  test("the device-v1 lengths: key seals of 142 and 109 bytes, challenges of 80", () => {
+    expect(api.KEY_SEAL_BYTES).toEqual({ device: 142, factor: 109, successor: 109 });
+    expect(api.CHALLENGE_BYTES).toBe(80);
   });
 
   test("IMPLEMENTED is a boolean and ENVELOPE_VERSION is 1", () => {

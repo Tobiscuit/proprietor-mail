@@ -5,19 +5,28 @@
 // built with createElement/setAttribute, and only showInFrame assigns srcdoc.
 import { keyIdOf, type MessageHeader } from "@proprietor/mail-crypto";
 import {
+  canKeepDevices,
+  DEVICE_DATABASE,
+  encodeSendForm,
+  indexedDbDeviceStore,
   pageNonce,
   renderBody,
+  resumeDevice,
   showInFrame,
   startEnrollment,
   unlockWithPasskey,
   unlockWithRecoveryKey,
   type BodyAttachment,
+  type ChallengeView,
   type EnrollRequest,
   type Enrollment,
+  type LockAfter,
   type MailboxView,
   type MessageItem,
   type OpenedMessage,
   type PasskeyOptions,
+  type PendingChange,
+  type RegisterDeviceRequest,
   type RenderedBody,
   type UnlockedMailbox,
 } from "@proprietor/mail-client";
@@ -82,6 +91,91 @@ const violations: Violation[] = [];
 document.addEventListener("securitypolicyviolation", (e) => {
   violations.push({ directive: e.effectiveDirective, blocked: e.blockedURI, sample: e.sample });
 });
+
+// Every WebAuthn prompt this page makes is counted: a kept device must open the inbox with none.
+const prompts = { get: 0, create: 0 };
+const realCredentials = navigator.credentials; // pragma: allowlist secret (the WebAuthn container, not a credential)
+if (realCredentials && typeof realCredentials.get === "function") {
+  const get = realCredentials.get.bind(realCredentials);
+  const create = realCredentials.create.bind(realCredentials);
+  realCredentials.get = (options?: CredentialRequestOptions) => { // pragma: allowlist secret (the WebAuthn container, not a credential)
+    prompts.get += 1;
+    return get(options);
+  };
+  realCredentials.create = (options?: CredentialCreationOptions) => { // pragma: allowlist secret (the WebAuthn container, not a credential)
+    prompts.create += 1;
+    return create(options);
+  };
+}
+
+/** A stored value, described in plain JSON: what kind it is and, for a CryptoKey, everything Web Crypto says about it. */
+type Described =
+  | { kind: "CryptoKey"; type: string; extractable: boolean; algorithm: Record<string, unknown>; usages: string[] }
+  | { kind: "string"; value: string }
+  | { kind: "number" | "boolean" | "null" | "undefined"; value: unknown }
+  | { kind: "object"; fields: Record<string, Described> }
+  | { kind: "other"; tag: string };
+
+function describe(value: unknown): Described {
+  if (value instanceof CryptoKey) {
+    const algorithm = { ...(value.algorithm as unknown as Record<string, unknown>) };
+    return { kind: "CryptoKey", type: value.type, extractable: value.extractable, algorithm, usages: [...value.usages] };
+  }
+  if (typeof value === "string") return { kind: "string", value };
+  if (value === null) return { kind: "null", value: null };
+  if (typeof value === "number" || typeof value === "boolean" || value === undefined) return { kind: typeof value as "number" | "boolean" | "undefined", value };
+  if (typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+    return { kind: "object", fields: Object.fromEntries(Object.entries(value as object).map(([k, v]) => [k, describe(v)])) };
+  }
+  return { kind: "other", tag: Object.prototype.toString.call(value) };
+}
+
+/**
+ * Everything this origin keeps in IndexedDB, read with the raw API (not through the package):
+ * every database's name, and every record of the package's database, described. The database is
+ * never created here: it is opened only when it is listed, or when the caller knows it exists.
+ */
+async function dumpIndexedDb(): Promise<{ databases: string[] | null; records: Described[] }> {
+  const listed = typeof indexedDB.databases === "function" ? (await indexedDB.databases()).map((d) => d.name ?? "") : null;
+  if (listed !== null && !listed.includes(DEVICE_DATABASE.name)) return { databases: listed, records: [] };
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const req = indexedDB.open(DEVICE_DATABASE.name);
+    req.onupgradeneeded = () => {
+      req.transaction?.abort(); // it did not exist: create nothing
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  }).catch(() => null);
+  if (db === null) return { databases: listed, records: [] };
+  try {
+    if (!db.objectStoreNames.contains(DEVICE_DATABASE.store)) return { databases: listed, records: [] };
+    const all = await new Promise<unknown[]>((resolve, reject) => {
+      const req = db.transaction(DEVICE_DATABASE.store, "readonly").objectStore(DEVICE_DATABASE.store).getAll();
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    return { databases: listed, records: all.map(describe) };
+  } finally {
+    db.close();
+  }
+}
+
+let deviceSession: UnlockedMailbox | null = null;
+let pendingKeep: PendingChange<RegisterDeviceRequest> | null = null;
+
+async function canKeepWithPatch(patch: () => () => void): Promise<boolean> {
+  const restore = patch();
+  try {
+    return await canKeepDevices(indexedDbDeviceStore());
+  } finally {
+    restore();
+  }
+}
+
+/** Contains a CryptoKey anywhere: what Safari's private windows refuse to store (spec 002 §9). */
+function holdsKey(value: unknown): boolean {
+  return value instanceof CryptoKey || (typeof value === "object" && value !== null && Object.values(value).some(holdsKey));
+}
 
 let enrollment: Enrollment | null = null;
 let unlocked: UnlockedMailbox | null = null;
@@ -234,15 +328,84 @@ const harness = {
   },
   async addPasskeyWithRecovery(rpId: string, useDouble: boolean, recoveryKey: string) {
     try {
-      const wrap = await unlocked!.addPasskey(passkeyOptions(rpId, useDouble, "Second passkey"), { recoveryKey });
+      const wrap = await unlocked!.addPasskey(passkeyOptions(rpId, useDouble, "Second passkey"), await unlocked!.reauthenticate({ recoveryKey }));
       return { ok: true as const, wrap, wrapBytes: fromBase64(wrap.wrapped).length };
     } catch (e) {
       return { ok: false as const, error: errorOf(e) };
     }
   },
   lock() {
-    unlocked?.lock();
+    void unlocked?.lock();
     return unlocked?.locked ?? null;
+  },
+
+  // ---- kept devices (spec 002, contracts/device-v1.md Part C) ----
+  device: {
+    prompts: () => ({ ...prompts }),
+    canKeep: () => canKeepDevices(indexedDbDeviceStore()),
+    /** As Safari's private windows: IndexedDB refuses any value that holds a CryptoKey. */
+    canKeepWhenStorageRefusesKeys: () =>
+      canKeepWithPatch(() => {
+        const put = IDBObjectStore.prototype.put;
+        IDBObjectStore.prototype.put = function (this: IDBObjectStore, value: unknown, key?: IDBValidKey) {
+          if (holdsKey(value)) throw new DOMException("a CryptoKey cannot be stored here", "DataCloneError");
+          return put.call(this, value, key);
+        };
+        return () => {
+          IDBObjectStore.prototype.put = put;
+        };
+      }),
+    /** A browser with no IndexedDB at all. */
+    canKeepWithoutIndexedDb: () =>
+      canKeepWithPatch(() => {
+        const descriptor = Object.getOwnPropertyDescriptor(globalThis, "indexedDB");
+        Object.defineProperty(globalThis, "indexedDB", { value: undefined, configurable: true });
+        return () => {
+          if (descriptor) Object.defineProperty(globalThis, "indexedDB", descriptor);
+          else delete (globalThis as { indexedDB?: unknown }).indexedDB;
+        };
+      }),
+    async unlockRecovery(view: MailboxView, recoveryKey: string, signInId: string | null, keep: boolean) {
+      try {
+        deviceSession = await unlockWithRecoveryKey(view, recoveryKey, keep ? { store: indexedDbDeviceStore(), signInId } : { signInId });
+        return { ok: true as const, keyIds: deviceSession.keyIds, device: deviceSession.device };
+      } catch (e) {
+        return { ok: false as const, error: errorOf(e) };
+      }
+    },
+    sessionProof: (challenge: ChallengeView) => deviceSession!.sessionProof(challenge),
+    answerFactor: (challenge: ChallengeView) => deviceSession!.freshFactor!.answer(challenge),
+    async keep(label: string, lockAfter: LockAfter) {
+      pendingKeep = await deviceSession!.keepThisDevice({ label, lockAfter }, deviceSession!.freshFactor!);
+      return pendingKeep.request;
+    },
+    async commitKeep() {
+      try {
+        await pendingKeep!.commit();
+        return { ok: true as const, device: deviceSession!.device };
+      } catch (e) {
+        return { ok: false as const, error: errorOf(e) };
+      }
+    },
+    async resume(view: MailboxView, signInId: string | null) {
+      try {
+        const r = await resumeDevice(view, { store: indexedDbDeviceStore(), signInId });
+        if (r.state === "unlocked") deviceSession = r.mailbox;
+        return { ok: true as const, state: r.state, ...(r.state === "locked" ? { reason: r.reason, device: r.device } : {}), ...(r.state === "unlocked" ? { keyIds: r.mailbox.keyIds, device: r.mailbox.device } : {}) };
+      } catch (e) {
+        return { ok: false as const, error: errorOf(e) };
+      }
+    },
+    openMessages: (items: MessageItem[]) => deviceSession!.openMessages(items),
+    async lock() {
+      return deviceSession!.lock();
+    },
+    /** What the dashboard does with the mail session: it rides in the send form (D29). */
+    sendForm(token: string) {
+      const form = encodeSendForm({ to: [{ name: "", address: "ana@example.com" }], cc: [], bcc: [], subject: "x", text: "x", inReplyTo: null, references: [], attachments: [] }, { idempotencyKey: "k-1", session: token });
+      return JSON.parse(form.get("request") as string).session as string;
+    },
+    dumpIndexedDb,
   },
 };
 

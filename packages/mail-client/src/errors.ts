@@ -110,3 +110,100 @@ export class InvalidSendForm extends MailClientError {
     super(message, "InvalidSendForm");
   }
 }
+
+// ---- Added by slice D1 (spec 002: kept devices, contracts/device-v1.md Part C) ----
+
+/** K7: this browser's kept device was removed from the mailbox; its record and keys are gone. */
+export class DeviceRemoved extends MailClientError {
+  constructor(message = "this device was removed from the mailbox") {
+    super(message, "DeviceRemoved");
+  }
+}
+/** D31: this browser cannot keep non-extractable P-256 keys (a private window, or storage refused): it acts as a shared computer. */
+export class StorageUnavailable extends MailClientError {
+  constructor(message = "this browser cannot keep the inbox unlocked") {
+    super(message, "StorageUnavailable");
+  }
+}
+/** A FreshFactor used after its 2 minutes, or after dispose(): use the security key, passkey or recovery key again. */
+export class FactorExpired extends MailClientError {
+  constructor(message = "that unlock is no longer fresh") {
+    super(message, "FactorExpired");
+  }
+}
+/** The mailbox's key ring changed since this unlock (another browser rotated the key): fetch the mailbox again and unlock or resume. */
+export class MailboxChanged extends MailClientError {
+  constructor(message = "the mailbox changed since it was unlocked") {
+    super(message, "MailboxChanged");
+  }
+}
+/**
+ * A refusal: a security key or passkey that opens only an older key and has no
+ * seal of the current one, so it reaches no key Mail seals to now (the key
+ * ring is missing that factor's seal). Unlock with another factor. Since the
+ * upgrade names every factor (B5 as amended on 2026-10-19), a factor is never
+ * left without its key, and there is no repair flow.
+ */
+export class StaleFactor extends MailClientError {
+  constructor(message = "this security key only opens an older mailbox key") {
+    super(message, "StaleFactor");
+  }
+}
+/** M5′ / D28: the request would leave no recovery factor able to reach the mailbox key (an upgrade or a rotation needs one). */
+export class NoRecoveryFactor extends MailClientError {
+  constructor(message = "the recovery key must be part of this change") {
+    super(message, "NoRecoveryFactor");
+  }
+}
+/** A device name the Worker would refuse: 1 to 40 characters on one line. */
+export class InvalidDeviceLabel extends MailClientError {
+  constructor(message = "a device name has 1 to 40 characters on one line") {
+    super(message, "InvalidDeviceLabel");
+  }
+}
+/** K4: what Mail sent as a challenge does not open as one; nothing was answered. */
+export class InvalidChallenge extends MailClientError {
+  constructor(message = "that challenge could not be answered") {
+    super(message, "InvalidChallenge");
+  }
+}
+
+// ---- Added by D1's round 2 (contracts/device-v1.md Part C as amended on 2026-10-19) ----
+
+/**
+ * K3, K9: the change would seal the mailbox key to a flagged recipient, or add a factor while a flagged
+ * one is there. `flagged` names the recipients in the way: remove them first (removeDevice for a
+ * device, removeWrap with a proof from another factor for a factor), then try again.
+ */
+export class FlaggedRecipient extends MailClientError {
+  readonly flagged: { readonly devices: readonly string[]; readonly factors: readonly string[] };
+  constructor(message = "remove the flagged device or factor first", flagged: { devices?: readonly string[]; factors?: readonly string[] } = {}) {
+    super(message, "FlaggedRecipient");
+    this.flagged = Object.freeze({ devices: Object.freeze([...(flagged.devices ?? [])]), factors: Object.freeze([...(flagged.factors ?? [])]) });
+  }
+}
+
+/**
+ * K8: the rotation this browser made did not prove itself: its successor seal did not open with the new
+ * key, or the new key's seal for the factor just used did not open with that factor's key (or there is
+ * none). Nothing was sent and nothing changed here; mail that arrived after such a rotation would have
+ * opened only in this page. Try again; if it fails again, use another browser.
+ */
+export class RotationUnproven extends MailClientError {
+  constructor(message = "the key change could not be checked in this browser, so it was not made") {
+    super(message, "RotationUnproven");
+  }
+}
+
+/**
+ * B5, M20 as amended on 2026-10-19: the upgrade names every factor of the mailbox, each just used, and
+ * these were not among them. Use each (the screen asks for it by its label), or remove one the owner no
+ * longer has (removeWrap, which needs no proof while sessions are optional), then ask again.
+ */
+export class MissingFactors extends MailClientError {
+  readonly missing: readonly { readonly id: string; readonly kind: "passkey-prf" | "recovery"; readonly label: string }[];
+  constructor(message = "every security key and the recovery key must be used for the upgrade", missing: readonly { id: string; kind: "passkey-prf" | "recovery"; label: string }[] = []) {
+    super(message, "MissingFactors");
+    this.missing = Object.freeze(missing.map((m) => Object.freeze({ id: m.id, kind: m.kind, label: m.label })));
+  }
+}

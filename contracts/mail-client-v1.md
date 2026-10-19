@@ -199,17 +199,275 @@ device's seal, and other code on the dashboard's origin could ask Web Crypto
 for an extractable copy. That is a limit of the platform, stated in the
 spec's threat model.
 
-**What the API must offer** (`specs/002-device-sessions/plan.md` §5 lists
-it): a kept-device store (IndexedDB, and a memory one for tests) and the check
-that a browser can keep keys; `resumeDevice` (unlocked with no prompt, locked
-with a reason, or removed and wiped); sessions that hold every key the chain
-reaches, check K2′ and K3 at every unlock, and offer a FreshFactor after a
-factor; `reauthenticate`; `sessionProof`; keep, rekey, lock now, set the lock
-setting, forget, and remove a device with its rotation, each as a request and
-a `commit()`; the upgrade; `setFactorKey`; `addPasskey` and
-`replaceRecoveryKey` with factor keys; enrollment with factor keys and a
-device; the send form's `session`; `PROTECTION.devices`; the errors
-`DeviceRemoved`, `StorageUnavailable`, `FactorExpired`.
+### The API (fixed by slice D1, 2026-10-17; round 2, 2026-10-19)
+
+`packages/mail-client/src/index.ts` and `src/types.ts` are authoritative; this
+is what each part does. Request types mirror device-v1 Part B field for field
+(base64url without padding, exact lengths, no other field), so the dashboard
+passes them to `MailService` unchanged.
+
+Round 2 follows device-v1 Part C as amended on 2026-10-19: K3 flags a
+recipient whose tag fails instead of stopping (`flagged`, `FlaggedRecipient`),
+K8 (`RotationUnproven`) and K9 are new, and the upgrade takes every factor
+(`MissingFactors`); `setFactorKey` is gone.
+
+**The kept-device store (K5, rule 3 as amended).**
+
+```ts
+indexedDbDeviceStore(): DeviceStore
+memoryDeviceStore(): DeviceStore
+canKeepDevices(store: DeviceStore): Promise<boolean>
+const KEPT_DEVICE_FIELDS: readonly ["mailboxId", "deviceId", "label", "signingKey", "unlockKey",
+  "signingPublic", "unlockPublic", "lastKeyId", "lockAfter", "lastActiveAt", "signInId"]
+const DEVICE_DATABASE: { name: "proprietor-mail"; version: 1; store: "kept-devices" }
+interface DeviceStore {
+  get(mailboxId: string): Promise<KeptDevice | null>;
+  put(record: KeptDevice): Promise<void>;
+  update(mailboxId: string, deviceId: string, change: KeptDeviceChange): Promise<KeptDevice | null>;
+  delete(mailboxId: string, deviceId?: string): Promise<void>;
+}
+type LockAfter = "right-away" | "15-minutes" | "1-hour" | "sign-out";
+const LOCK_AFTER_MS: Readonly<Record<LockAfter, number>>   // 0, 15 min, 1 h, Infinity
+```
+
+- `indexedDbDeviceStore()` is the browser's store: one database for the
+  package, one record per mailbox (keyed by `mailboxId`), writes with
+  "strict" durability; IndexedDB's own failures are `StorageUnavailable`.
+  `memoryDeviceStore()` is the same contract in memory, cloning on every read
+  and write as IndexedDB does, for Node tests. Every `put` and `update` is
+  checked against K5: a record with any other field, or whose keys are not
+  non-extractable P-256 keys of their kind (ECDSA `sign`, ECDH `deriveBits`),
+  is a `TypeError` and nothing is written. `update` and `delete` name the
+  device they are for, so a page that is behind never brings back a key
+  another page deleted.
+- `canKeepDevices(store)` writes a probe record under a fresh, random mailbox
+  id, reads it back, signs and derives with the keys it got, compares them
+  with the originals, and deletes it. False, never an exception, where a
+  CryptoKey cannot be kept (D31): then the screen unlocks as a shared
+  computer and says why.
+
+**Coming back (F2, F3, F10).**
+
+```ts
+resumeDevice(view: MailboxView, options: { store: DeviceStore; signInId: string | null;
+  now?: () => number; idleLockMs?: number }): Promise<ResumeResult>
+type ResumeResult =
+  | { state: "none" }
+  | { state: "unlocked"; mailbox: UnlockedMailbox }
+  | { state: "locked"; reason: LockReason; device: DeviceInfo }
+  | { state: "removed" };
+type LockReason = "right-away" | "idle" | "signed-out" | "locked" | "no-seal";
+interface DeviceInfo { id: string; label: string; lockAfter: LockAfter; keepsUnlocked: boolean }
+```
+
+- Call it on every load before asking for anything. It checks the lock
+  setting first (K6: a lock that fell due deletes the unlock key before
+  anything else), then K7 (a device the view no longer lists is wiped:
+  `removed`, show "This device was removed"), then opens the device's seal of
+  the active key, walks K2′ back to the key the device last accepted (a
+  rollback is `KeySubstitutionDetected`), and checks every tag (K3: a
+  recipient whose tag fails is flagged in `mailbox.flagged`; the inbox
+  opens).
+  `unlocked` needs no prompt; `locked` needs a factor; `no-seal` also covers a
+  view from a Mail Worker without spec 002 (the record is kept for later).
+
+**Unlocking with a factor, and the FreshFactor (K1′, K2′, K3).**
+
+```ts
+unlockWithPasskey(view: MailboxView, passkey: PasskeyPrompt, options?: UnlockOptions): Promise<UnlockedMailbox>
+unlockWithRecoveryKey(view: MailboxView, recoveryKey: string, options?: UnlockOptions): Promise<UnlockedMailbox>
+interface UnlockOptions { idleLockMs?: number; store?: DeviceStore; signInId?: string | null; now?: () => number }
+interface FreshFactor {
+  readonly factorId: string; readonly kind: "passkey-prf" | "recovery";
+  readonly expiresAt: number; readonly expired: boolean;
+  answer(challenge: ChallengeView): Promise<FactorProof>;
+  dispose(): void;
+}
+const FRESH_FACTOR_MS = 120000
+```
+
+- A factor opens its envelope v1 wrap and derives its factor key from the
+  same secret, which is zeroed then. The active key comes from that wrap or
+  from the factor's seal, and is accepted only along the successor seals back
+  to the factor's own key (and, on a kept device, to the key it last
+  accepted). Every tag is checked: a device or factor whose tag fails is
+  flagged (K3), and so is the factor just used when the factor key it
+  derives is not the one the view lists for it (K9); the unlock goes on.
+  Only a failure of the key itself (K2, K2′) is `KeySubstitutionDetected`.
+  With `store`, a kept device of this
+  mailbox is bound to the session (one the view no longer lists is
+  forgotten). Without it nothing is kept: a shared computer.
+- `unlocked.freshFactor` is that factor's FreshFactor, for 2 minutes on the
+  injected clock: `answer(challenge)` opens only a `purpose: "factor"`
+  challenge for this factor and gives `auth.factorProof`; it also lends the
+  wrappable copy of the active key to the steps below. Expired or disposed,
+  every use is `FactorExpired`. Locking disposes it.
+
+**The unlocked mailbox: what spec 002 adds or changes.**
+
+```ts
+interface UnlockedMailbox {
+  readonly keyId: string;                    // the active key; changes when this browser commits a rotation
+  readonly keyIds: readonly string[];        // every key held, the active one first (G40)
+  readonly device: DeviceInfo | null;
+  readonly freshFactor: FreshFactor | null;  // null after resumeDevice and enrollment
+  readonly flagged: FlaggedRecipients;       // K3, K9: recipients never sealed to; frozen, empty when all is well
+  sessionProof(challenge: ChallengeView): Promise<OpenSessionRequest>;
+  reauthenticate(reauth: ReAuth): Promise<FreshFactor>;
+  refresh(view: MailboxView): Promise<void>;
+  keepThisDevice(options: { label: string; lockAfter?: LockAfter }, freshFactor: FreshFactor): Promise<PendingChange<RegisterDeviceRequest>>;
+  rekeyThisDevice(freshFactor: FreshFactor): Promise<PendingChange<UpdateDeviceRequest>>;
+  setLockAfter(lockAfter: LockAfter): Promise<{ updateDevice: UpdateDeviceRequest | null; needsRekey: boolean }>;
+  removeDevice(view: MailboxView, deviceId: string, freshFactor: FreshFactor): Promise<PendingChange<RemoveDeviceRequest>>;
+  upgradeRequest(factors: readonly FreshFactor[]): Promise<PendingChange<UpgradeRequest>>;
+  addPasskey(passkey: PasskeyOptions, freshFactor: FreshFactor): Promise<WrapInput>;
+  replaceRecoveryKey(freshFactor: FreshFactor): Promise<{ recoveryKey: string; wrap: WrapInput }>;
+  lock(): Promise<LockResult>;
+  forget(): Promise<void>;
+  onLock(listener: (event: LockEvent) => void): () => void;
+  // openMessages, openBody, sealDraft, openDrafts, touch: as before
+}
+interface FlaggedRecipients { readonly devices: readonly string[]; readonly factors: readonly string[] }
+interface PendingChange<T> { readonly request: T; commit(): Promise<void> }
+interface LockResult { readonly updateDevice: UpdateDeviceRequest | null }
+interface LockEvent { readonly reason: "lock" | "idle" | "removed"; readonly updateDevice: UpdateDeviceRequest | null }
+```
+
+- Every `PendingChange` is the request for Mail and a `commit()` for after
+  Mail answered `ok: true`; nothing in the browser changes before.
+- `sessionProof(challenge)` answers a session challenge with the active key,
+  plus the device's signature on a kept device: `openSession`'s request. A
+  challenge for another key is `MailboxChanged`; bytes that do not open as a
+  challenge are `InvalidChallenge` (K4).
+- `flagged` lists, by id, the devices and factors this browser does not
+  trust: a tag that fails under the active key (K3), or a factor used in this
+  session whose listed factor key is not the one it derives (K9). The screens
+  show them as recipients no holder of the key added, and offer Remove:
+  `removeDevice` for a device, `removeWrap` with a proof from another factor
+  for a factor (for a recovery factor, `replaceRecoveryKey` first, since Mail
+  keeps the only recovery factor, M5′).
+- `reauthenticate(reauth)` is one prompt or the recovery key, for a sensitive
+  setting, and checks K9 for that factor; `refresh(view)` checks K3 on a
+  newer view of the same key, flagging what fails, and adopts its wraps,
+  seals and devices (another key: `MailboxChanged`).
+- `keepThisDevice` (F1) makes the two P-256 key pairs, seals the active key
+  to the unlock key, tags the device; its request goes to `registerDevice`
+  with the session and a factor proof, and `commit()` stores the record and
+  binds the session. `rekeyThisDevice` (F4) does the same for a new unlock key
+  after a lock; its request goes to `updateDevice` with the device's session.
+  `setLockAfter` changes the setting at once; to "right-away" it drops the
+  unlock key and answers the `updateDevice` request; back to a timed setting
+  it answers `needsRekey`.
+- `removeDevice(view, deviceId, freshFactor)` (F6) checks every tag in the
+  view (K3) and K9 for the factor that proves it. While a recipient other
+  than the device being removed is flagged, it refuses with
+  `FlaggedRecipient`, whose `flagged` names the ones in the way: the new key
+  would have to be sealed to them, so removing a flagged device is the only
+  rotation while one is there (two flagged devices: neither removal can be
+  made under B7, see the note below). Otherwise it makes the new key, the
+  successor seal, a seal to every remaining device unlock key and factor key,
+  and a tag for every remaining recipient, naming exactly them (B7). Then K8:
+  it opens the successor seal with the new key and the new key's seal for the
+  factor just used with that factor's key, and refuses with
+  `RotationUnproven` (nothing sent, nothing changed) unless both give back
+  the keys they name. It refuses with `NoRecoveryFactor` when no recovery
+  factor with a key would receive the new key (M5′), and with
+  `MailboxChanged` on a view of another key. `commit()` moves the session to
+  the new key (decrypt-only; the old keys stay), re-binds this device under
+  it, or wipes it when it removed itself (then its mail session ended: open a
+  new one), and clears `flagged`. The FreshFactor's 2 minutes go on with the
+  new key.
+- `upgradeRequest(freshFactors)` (F5, D26, B5 and M20 as amended) gives every
+  factor of the mailbox its factor key and tag in one request: each must be
+  among the FreshFactors, used just now, or it is `MissingFactors`, whose
+  `missing` names each one left out (`id`, `kind`, `label`) so the screen can
+  ask for it. A factor the owner no longer has is removed first (`removeWrap`
+  needs no proof while sessions are optional).
+- `addPasskey(passkey, freshFactor)` (F8) and `replaceRecoveryKey(freshFactor)`
+  (F7) wrap the FreshFactor's active key; once sessions are required the wrap
+  also carries its factor key, `tag` and `tagKeyId`. Each Mail call takes a
+  factor proof from the same FreshFactor, or from another factor when this
+  one is flagged (its proof cannot answer: Mail seals its challenge to the
+  listed key). While a factor is flagged, `addPasskey` refuses with
+  `FlaggedRecipient` (remove it first), and so does `replaceRecoveryKey`
+  unless every flagged factor is a recovery factor, which this replaces.
+- `lock()` is Lock now: every key is dropped at once; on a kept device it also
+  deletes the unlock key and answers the `updateDevice` request that clears it
+  at Mail (send it with the session while one is live, then forget the
+  token). A kept device locks itself by its setting while the page is open
+  (15 minutes or 1 hour without use; never on idle for "sign-out"), and when
+  another page of the browser locked or forgot it; listeners get the same
+  request. `forget()` is K7, after `DeviceRevoked`: the record is deleted and
+  every key dropped. Operations on a device another page forgot are
+  `DeviceRemoved`.
+
+**Enrollment (F12).**
+
+```ts
+startEnrollment(mailbox: Pick<MailboxView, "id" | "address" | "status">, passkey: PasskeyOptions | null,
+  options?: { keep?: { store: DeviceStore; label: string; lockAfter?: LockAfter; signInId?: string | null }; now?: () => number }): Promise<Enrollment>
+interface Enrollment { /* as before */ commit(): Promise<void> }
+```
+
+- Every wrap carries `factorKey`, `tag` and `tagKeyId` (the new key), so the
+  mailbox requires sessions from the start (B5). With `keep`, `request()`
+  carries `device: { device, seal }`, and after Mail accepted it `commit()`
+  keeps the device; `unlocked()` then returns its session (before `commit()`
+  it is a `TypeError`). Without `keep`, `commit()` does nothing.
+
+**The send form (D29).** `encodeSendForm(compose, { idempotencyKey, draftId?,
+session? })` puts the mail session into the request part, and
+`decodeSendForm(form)` returns it as `request.session`; a token that is not
+base64url of 32 bytes is `InvalidSendForm`. The send route passes it on
+unchanged.
+
+**The promise.** `PROTECTION.devices(operator)` is spec 002 §5's "Devices you
+keep unlocked." text; `PROTECTION.metadata` is spec 001 §4's rows followed by
+the three rows spec 002 §5 adds.
+
+**Errors added** (each a `MailClientError` with a stable `name`):
+`DeviceRemoved` (K7: this device was removed and is wiped),
+`StorageUnavailable` (this browser cannot keep keys, or its storage failed),
+`FactorExpired` (a FreshFactor past its 2 minutes, or disposed),
+`MailboxChanged` (the key ring changed since this unlock: fetch the view
+again, then resume or unlock), `StaleFactor` (a refusal: a security key that
+opens only an older key and has no seal of the active one; unlock with
+another factor), `NoRecoveryFactor` (a rotation the recovery key would not
+reach), `InvalidDeviceLabel` (not 1 to 40 characters on one line),
+`InvalidChallenge` (K4: nothing was answered). Round 2 adds
+`FlaggedRecipient` (with `flagged`: remove those first), `RotationUnproven`
+(K8: the rotation's own seals did not open, so it was not made) and
+`MissingFactors` (with `missing`: the upgrade needs every factor).
+`KeySubstitutionDetected` now also covers every K2′ failure; a failing tag
+(K3) flags its recipient instead.
+
+**Note for the architect (two flagged devices).** B7 requires a rotation to
+seal and tag every remaining device, so while two devices are flagged,
+removing either would seal the new key to the other: both removals are
+refused with `FlaggedRecipient`, and nothing in the browser gets past it. A
+removal of several devices in one rotation (or a rotation that may leave a
+flagged device out, which Mail then deletes) would; it needs a change to B7.
+
+**Shapes.** `MailboxView` gains `sessions`, `devices` and `seals`, `KeyView`
+gains `successor`, and `WrapView` gains `factorKey`, `tag` and `tagKeyId`,
+each optional so that a view from a Mail Worker without spec 002 reads as a
+mailbox whose sessions are optional. Part B's shapes are exported as types:
+`Auth`, `FactorProof`, `ChallengeRequest`, `ChallengeView`,
+`OpenSessionRequest`, `OpenSessionResult`, `DeviceInput`,
+`RegisterDeviceRequest`, `UpdateDeviceRequest`, `RecipientRef`, `Rotation`,
+`RemoveDeviceRequest`, `UpgradeRequest`, `DeviceView`, `SealView`, and
+`FlaggedRecipients`; `WrapInput` gains the optional factor fields,
+`EnrollRequest` gains `device`, `SendRequest` gains `session`.
+`SetFactorKeyRequest` is gone with `setFactorKey` (round 2).
+
+**Breaking changes** to S6a's exports: `addPasskey` and `replaceRecoveryKey`
+take a `FreshFactor` (they took a `ReAuth`: call `reauthenticate` first);
+`lock()` answers a `Promise<LockResult>` (keys still drop at once); `onLock`
+listeners receive a `LockEvent`; `keyId` and `fingerprint` follow a committed
+rotation; `unlockWithPasskey` and `unlockWithRecoveryKey` try a factor's
+wraps of every key, so a ring that does not list the key a factor opens is
+`KeySubstitutionDetected` (it was `NoMatchingWrap` or `WrongRecoveryKey`); a
+new enrollment's wraps carry factor keys, so a new mailbox requires sessions.
 
 **Tests this amendment requires:** the D1 acceptance tests in
 `specs/002-device-sessions/tasks.md`, in Node and in Chromium, Firefox and

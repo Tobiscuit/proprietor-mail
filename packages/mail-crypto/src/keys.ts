@@ -71,14 +71,42 @@ export async function keyIdOf(publicKey: Uint8Array): Promise<string> {
   return toHex(digest.subarray(0, 16));
 }
 
+/** X25519(k, 9) with `deriveBits` against the base point: the public key of a private CryptoKey, which is never exported. */
+export async function x25519PublicKeyOf(privateKey: CryptoKey): Promise<Uint8Array<ArrayBuffer>> { // pragma: allowlist secret (a parameter type, not a value)
+  const basePoint = await crypto.subtle.importKey("raw", BASE_POINT, X25519, true, []);
+  return new Uint8Array(await crypto.subtle.deriveBits(x25519Peer(basePoint), privateKey, 256));
+}
+
+/** A raw X25519 public key as a CryptoKey (for HPKE, or as the peer of `deriveBits`). */
+export function importX25519PublicKey(publicKey: Uint8Array): Promise<CryptoKey> {
+  if (!(publicKey instanceof Uint8Array) || publicKey.length !== 32) throw new TypeError("an X25519 public key is exactly 32 bytes");
+  return crypto.subtle.importKey("raw", copy(publicKey), X25519, true, []);
+}
+
+/**
+ * Imports a raw 32-byte X25519 scalar as a private CryptoKey with usage
+ * deriveBits, clamped first (RFC 9180 §7.1.2), and zeroes every copy of the
+ * scalar this module made. The caller's buffer is the caller's to zero.
+ */
+export async function importX25519Scalar(raw: Uint8Array, extractable: boolean): Promise<CryptoKey> {
+  if (!(raw instanceof Uint8Array) || raw.length !== 32) throw new TypeError("an X25519 private key is exactly 32 bytes");
+  const scalar = clamp(raw);
+  const pkcs8 = concat(PKCS8_X25519_PREFIX, scalar);
+  try {
+    return await crypto.subtle.importKey("pkcs8", pkcs8, X25519, extractable, ["deriveBits"]);
+  } finally {
+    pkcs8.fill(0);
+    scalar.fill(0);
+  }
+}
+
 /**
  * Wraps a private CryptoKey (from generateKey, unwrapKey or a test import) in
  * a handle. The public key is computed as X25519(k, 9) with `deriveBits`
  * against the base point, so the private key is never exported.
  */
 export async function fromPrivateCryptoKey(privateKey: CryptoKey): Promise<MailboxPrivateKey> { // pragma: allowlist secret (a parameter type, not a value)
-  const basePoint = await crypto.subtle.importKey("raw", BASE_POINT, X25519, true, []);
-  const publicKey = new Uint8Array(await crypto.subtle.deriveBits(x25519Peer(basePoint), privateKey, 256));
+  const publicKey = await x25519PublicKeyOf(privateKey);
   const publicCryptoKey = await crypto.subtle.importKey("raw", publicKey, X25519, true, []);
   const material: KeyMaterial = {
     keyId: await keyIdOf(publicKey),
@@ -104,16 +132,7 @@ export async function generatePrivateKey(): Promise<MailboxPrivateKey> {
  * not change the key: X25519 clamps the scalar before use anyway.
  */
 export async function importPrivateScalar(raw: Uint8Array, options?: { wrappable?: boolean }): Promise<MailboxPrivateKey> {
-  if (!(raw instanceof Uint8Array) || raw.length !== 32) throw new TypeError("an X25519 private key is exactly 32 bytes");
-  const scalar = clamp(raw);
-  const pkcs8 = concat(PKCS8_X25519_PREFIX, scalar);
-  try {
-    const privateKey = await crypto.subtle.importKey("pkcs8", pkcs8, X25519, options?.wrappable === true, ["deriveBits"]);
-    return await fromPrivateCryptoKey(privateKey);
-  } finally {
-    pkcs8.fill(0);
-    scalar.fill(0);
-  }
+  return fromPrivateCryptoKey(await importX25519Scalar(raw, options?.wrappable === true));
 }
 
 export function materialOf(priv: MailboxPrivateKey): KeyMaterial {

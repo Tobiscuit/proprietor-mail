@@ -7,12 +7,15 @@ import { keyIdOf, parseRecoveryKey, prfInput, unwrapPrivateKey } from "@propriet
 import {
   MailboxLocked,
   MailboxNotProvisioned,
+  memoryDeviceStore,
   PasskeyCancelled,
   PrfUnavailable,
   RecoveryNotConfirmed,
+  resumeDevice,
   startEnrollment,
   unlockWithRecoveryKey,
 } from "../src/index";
+import { FakeMail } from "./fake-mail";
 import { CredentialsDouble, fromB64url, mailboxAfterEnroll, passkeyOptions, publicKeyOf, sampleHeader, sealedItem } from "./support";
 
 const mailbox = { id: "mbx_0000000000000000000000test", address: "hello@example.com", status: "provisioned" as const };
@@ -123,9 +126,10 @@ describe("startEnrollment", () => {
     const [message] = await unlocked.openMessages([item]);
     expect(message!.header?.subject).toBe("Kitchen remodel quote");
 
-    // K1: the session cannot wrap its key; adding a passkey needs a fresh unlock (re-authentication).
-    await expect(unlocked.addPasskey(passkeyOptions(credentials, { label: "Phone" }), { recoveryKey: "not a key" })).rejects.toThrow();
-    const added = await unlocked.addPasskey(passkeyOptions(credentials, { label: "Phone" }), { recoveryKey: enrollment.recoveryKey });
+    // K1′: the session cannot wrap its key; adding a passkey needs a fresh unlock (a FreshFactor).
+    await expect(unlocked.reauthenticate({ recoveryKey: "not a key" })).rejects.toThrow();
+    const fresh = await unlocked.reauthenticate({ recoveryKey: enrollment.recoveryKey });
+    const added = await unlocked.addPasskey(passkeyOptions(credentials, { label: "Phone" }), fresh);
     expect(added.kind).toBe("passkey-prf");
     expect(added.label).toBe("Phone");
     expect(fromB64url(added.wrapped).length).toBe(77);
@@ -148,5 +152,43 @@ describe("startEnrollment", () => {
     expect(unlocked.fingerprint).toBe(enrollment.fingerprint);
     const { item } = await sealedItem(await publicKeyOf(request), mailbox.id, "msg_0000000000000000000000002");
     expect((await unlocked.openMessages([item]))[0]!.header).toStrictEqual(sampleHeader);
+  });
+
+  test("every wrap carries its factor key and its tag under the new key (device-v1 B5), and the mailbox then requires sessions", async () => {
+    const enrollment = await startEnrollment(mailbox, passkeyOptions(new CredentialsDouble()));
+    enrollment.confirmRecovery(charactersAt(enrollment.recoveryKey, enrollment.recoveryCheck.positions));
+    const request = enrollment.request();
+    const keyId = await keyIdOf(fromB64url(request.publicKey));
+    for (const w of request.wraps) {
+      expect(fromB64url(w.factorKey!).length).toBe(32);
+      expect(fromB64url(w.tag!).length).toBe(32);
+      expect(w.tagKeyId).toBe(keyId);
+    }
+    expect("device" in request).toBe(false);
+    const fake = new FakeMail({ mailboxId: mailbox.id });
+    await fake.enroll(request);
+    expect(fake.sessionsMode).toBe("required");
+    await enrollment.commit(); // nothing to keep: a no-op
+  });
+
+  test("\"this device is mine\" at enrollment (F12): the request carries the device and its seal; commit() keeps it; unlocked() is its session; a reload opens with no prompt", async () => {
+    const store = memoryDeviceStore();
+    const enrollment = await startEnrollment(mailbox, passkeyOptions(new CredentialsDouble()), { keep: { store, label: "Office laptop", signInId: "signin-1" } });
+    enrollment.confirmRecovery(charactersAt(enrollment.recoveryKey, enrollment.recoveryCheck.positions));
+    const request = enrollment.request();
+    const keyId = await keyIdOf(fromB64url(request.publicKey));
+    expect(Object.keys(request).sort()).toEqual(["device", "publicKey", "wraps"]);
+    expect(Object.keys(request.device!).sort()).toEqual(["device", "seal"]);
+    expect(request.device!.device).toMatchObject({ label: "Office laptop", tagKeyId: keyId });
+    expect(fromB64url(request.device!.seal!).length).toBe(142);
+    expect(() => enrollment.unlocked()).toThrow(TypeError); // commit() first: the device is kept only once Mail has it
+    expect(await store.get(mailbox.id)).toBeNull();
+    const fake = new FakeMail({ mailboxId: mailbox.id });
+    await fake.enroll(request);
+    await enrollment.commit();
+    const unlocked = enrollment.unlocked();
+    expect(unlocked.device).toEqual({ id: request.device!.device.id, label: "Office laptop", lockAfter: "sign-out", keepsUnlocked: true });
+    expect((await fake.openSession(await unlocked.sessionProof(await fake.challenge({ purpose: "session" })))).device).toBe(request.device!.device.id);
+    expect((await resumeDevice(fake.mailbox(), { store, signInId: "signin-1" })).state).toBe("unlocked");
   });
 });

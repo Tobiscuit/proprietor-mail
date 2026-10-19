@@ -313,6 +313,20 @@ export function parseRecoveryKey(display: string): Uint8Array {
   return parseRecovery(display);
 }
 
+// ---- API: kept devices, factor keys, key seals, binding tags, challenges -------
+// contracts/device-v1.md Part A, the browser's half. The Worker's half
+// (sealChallenge, verifyDeviceProof) is src/proofs.ts.
+
+export type { FactorPrivateKey } from "./factor-keys";
+export { deriveFactorKey, factorPublicKey } from "./factor-keys";
+export type { DeviceKeyPair } from "./device-keys";
+export { generateSigningKey, generateUnlockKey, isDeviceSigningKey, isDeviceUnlockKey, signDeviceProof } from "./device-keys";
+export type { SealOpener, SealRecipient } from "./seals";
+export { KEY_SEAL_BYTES, openKeySeal, sealKey } from "./seals";
+export type { BindingKey, TagRecipient } from "./binding";
+export { bindingKey, bindingTag, verifyBindingTag } from "./binding";
+export { CHALLENGE_BYTES, openChallenge } from "./challenges";
+
 // ---- Internals ---------------------------------------------------------------
 
 function decodeBlock(encoded: string): Uint8Array<ArrayBuffer> {
