@@ -9,7 +9,7 @@
 // questions: a non-extractable P-256 key opens its seal (@hpke/core, A4), and a non-extractable X25519
 // key derives bits with its own public key (A5, the binding key behind every tag check).
 //
-// WebKit runs only in CI's browsers job (its host libraries are missing here). Playwright's WebKit
+// WebKit runs only in CI, on macOS (the browsers-macos job; Linux WebKit is not tested). Playwright's WebKit
 // is not Safari: where its IndexedDB cannot keep a CryptoKey, the test checks that the fallback is
 // the safe one (a shared computer that keeps nothing) instead.
 import { afterAll, beforeAll, describe, expect, test } from "vitest";

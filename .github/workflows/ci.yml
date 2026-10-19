@@ -38,11 +38,12 @@ jobs:
       - run: npm test
 
   # The mail-client's browser tests (contracts/mail-client-v1.md, "Tests this contract requires"):
-  # real Chromium, Firefox and WebKit through Playwright, a page under the dashboard's exact policy
-  # with Trusted Types enforced, and Chromium's virtual authenticator with PRF. They run only here
-  # and on request (`npm run test:browsers -w @proprietor/mail-client`), never silently skipped.
+  # real Chromium and Firefox through Playwright here, WebKit in the next job, a page under the
+  # dashboard's exact policy with Trusted Types enforced, and Chromium's virtual authenticator with
+  # PRF. They run only here and on request (`npm run test:browsers -w @proprietor/mail-client`),
+  # never silently skipped.
   browsers:
-    name: mail-client in Chromium, Firefox and WebKit
+    name: mail-client in Chromium and Firefox
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -54,5 +55,29 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - run: npx playwright install --with-deps chromium firefox webkit
+      - run: npx playwright install --with-deps chromium firefox
       - run: npm run test:browsers -w @proprietor/mail-client
+        env:
+          MAIL_CLIENT_BROWSERS: chromium,firefox
+
+  # The same tests in WebKit, on macOS only. Playwright's WebKit there is the Cocoa port, whose Web
+  # Crypto is the code Safari ships (CryptoKit). On Linux WebKit's Web Crypto is libgcrypt (WebKitGTK
+  # and WPE), which has WebKit bug 307095; its workaround is deferred to the branch
+  # feat/002-webkitgtk-workaround (spec 002 §8), so Linux WebKit is not tested here.
+  browsers-macos:
+    name: mail-client in WebKit on macOS
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install webkit
+      - run: npm run test:browsers -w @proprietor/mail-client
+        env:
+          MAIL_CLIENT_BROWSERS: webkit
