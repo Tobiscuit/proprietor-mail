@@ -264,13 +264,21 @@ checked against the code first; none was wrong.
   one that does not is flagged; tested
 - [x] R2-4 (D1, D2, D3) the upgrade names every factor (B5, M20); `setFactorKey`,
   the partial upgrade and the stale-factor flows are removed
-- [ ] R2-5 (D3) the body route's header is `x-proprietor-mail-session-token`,
+- [x] R2-5 (D3) the body route's header is `x-proprietor-mail-session-token`,
   a name Cloudflare's log redaction covers
 - [x] R2-6 (architect) the rollback text and the upgrade's order (spec §7,
   plan §8)
-- [ ] R2-7 (D3) the dashboard vendors the packages from the merged commit
+- [x] R2-7 (D3) the dashboard vendors the packages from the merged commit
 - [x] R2-8 (D1) the workaround for WebKit bug 307095 leaves #15 for the
   branch `feat/002-webkitgtk-workaround`; CI tests WebKit on macOS only
+
+Round 2 audited (architect, 2026-10-19): D1 #15 at c908477, D2 #10 at
+2eab8b3, D4 #16 at a05d74a (965 passed, 8 skipped; its new end-to-end test
+plants a device in Mail's storage and the real client flags it, keeps
+reading, refuses other removals, and removes it), D3 seo-engine #13 at
+b10c16c (unit 253, render 111, Chromium 13). Mutations that fail tests: a
+failing tag throwing again, a flagged device not reported, an upgrade that
+misses a wrap, the header back to its unredacted name.
 
 ## Held
 
