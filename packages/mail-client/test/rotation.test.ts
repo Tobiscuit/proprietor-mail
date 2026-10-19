@@ -5,7 +5,7 @@
 // their seal of the new key at their next load, and the removed one wipes itself.
 import { describe, expect, test } from "vitest";
 import {
-  KeySubstitutionDetected,
+  FlaggedRecipient,
   MailboxChanged,
   memoryDeviceStore,
   NoRecoveryFactor,
@@ -146,16 +146,16 @@ describe("removeDevice (F6): the rotation", () => {
 });
 
 describe("removeDevice refuses before anything is made", () => {
-  test("K3: while any remaining recipient's tag fails, nothing is sealed to anyone", async () => {
+  test("K3: while a remaining recipient's tag fails, nothing is sealed to anyone (FlaggedRecipient)", async () => {
     const e = await enrolledMailbox();
     const a = await keepBrowser(e, "Office laptop");
     const b = await keepBrowser(e, "Phone");
     const ff = await a.unlocked.reauthenticate({ recoveryKey: e.recoveryKey });
     const view = e.fake.mailbox();
     const forged = { ...view, devices: [...view.devices!, { ...view.devices![0]!, id: "dev_00000000000000000000000000", tag: b64url(new Uint8Array(32)) }] };
-    await expect(a.unlocked.removeDevice(forged, b.deviceId, ff)).rejects.toBeInstanceOf(KeySubstitutionDetected);
+    await expect(a.unlocked.removeDevice(forged, b.deviceId, ff)).rejects.toBeInstanceOf(FlaggedRecipient);
     const renamed = { ...view, wraps: view.wraps.map((w) => (w.kind === "passkey-prf" ? { ...w, label: "Renamed by someone" } : w)) };
-    await expect(a.unlocked.removeDevice(renamed, b.deviceId, ff)).rejects.toBeInstanceOf(KeySubstitutionDetected);
+    await expect(a.unlocked.removeDevice(renamed, b.deviceId, ff)).rejects.toBeInstanceOf(FlaggedRecipient);
   });
 
   test("M5′: with no recovery factor that has its key, the rotation is refused (NoRecoveryFactor)", async () => {

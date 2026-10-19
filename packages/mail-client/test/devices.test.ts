@@ -362,14 +362,16 @@ describe("resumeDevice: a kept device loads the inbox (F2), in every lock state"
     await expect(resumeDevice(e.fake.mailbox(), { store, signInId: "signin-1" })).rejects.toBeInstanceOf(KeySubstitutionDetected);
   });
 
-  test("K3 at resume: a device the server added stops it", async () => {
+  test("K3 at resume: a device the server added is flagged, and the device still opens the inbox", async () => {
     const e = await enrolledMailbox();
     const store = memoryDeviceStore();
     await keepDevice(e, store);
     const signing = new Uint8Array(65).fill(7);
     signing[0] = 4;
     e.fake.devices.push({ ...e.fake.devices[0]!, id: "dev_00000000000000000000000000", signingKey: b64url(signing), tag: b64url(new Uint8Array(32)) }); // pragma: allowlist secret (public keys and test doubles, not secrets)
-    await expect(resumeDevice(e.fake.mailbox(), { store, signInId: "signin-1" })).rejects.toBeInstanceOf(KeySubstitutionDetected);
+    const r = await resumeDevice(e.fake.mailbox(), { store, signInId: "signin-1" });
+    if (r.state !== "unlocked") throw new Error(r.state);
+    expect(r.mailbox.flagged).toEqual({ devices: ["dev_00000000000000000000000000"], factors: [] });
   });
 
   test("no seal it can open (none, or one that does not open): locked (no-seal), and the useless unlock key is deleted", async () => {

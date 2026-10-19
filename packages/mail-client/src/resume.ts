@@ -14,7 +14,8 @@
  *     or one that does not open, means a factor is needed, and the useless
  *     unlock key is deleted.
  *  4. K2′ from the key this device last accepted (a rollback, or a key the
- *     server sealed to the device, has no chain back to it), and K3.
+ *     server sealed to the device, has no chain back to it), and K3, which
+ *     flags a recipient whose tag fails instead of stopping.
  *  5. The device accepts the active key (lastKeyId) and records the use.
  */
 import { openKeySeal, type MailboxPrivateKey } from "@proprietor/mail-crypto";
@@ -83,14 +84,14 @@ export async function resumeDevice(view: MailboxView, options: ResumeOptions): P
     return { state: "locked", reason: "no-seal", device: infoOf(record) };
   }
 
-  // 4. K2′ from the key this device last accepted, then K3.
+  // 4. K2′ from the key this device last accepted, then K3 (a recipient whose tag fails is flagged).
   const keys = await trustChain(ring, active, [record.lastKeyId]);
   const binding = await bindingOf(ring, active);
-  await checkTags(ring, binding);
+  const flagged = await checkTags(ring, binding);
 
   // 5. The device accepts the active key.
   const current = (await store.update(ring.mailboxId, record.deviceId, { lastKeyId: ring.active.keyId, lastActiveAt: now() }).catch(failed)) ?? record;
-  const session = new Session({ ring, keys, binding, store, signInId: options.signInId, now, freshFactor: null, idleLockMs });
+  const session = new Session({ ring, keys, binding, store, signInId: options.signInId, now, freshFactor: null, idleLockMs, flagged });
   await session.bindDevice(current);
   return { state: "unlocked", mailbox: session };
 }

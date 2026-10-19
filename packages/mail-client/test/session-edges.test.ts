@@ -1,9 +1,8 @@
 // D1d/D1e, the edges: refresh(view), a lock made by another page of the same browser, FreshFactors
 // dropped at lock, the upgrade's preconditions (M20), and F6's K3 on the REMAINING recipients only (so a
-// device the server slipped in after the unlock can still be removed).
+// device the server slipped in after the unlock is flagged, and can still be removed).
 import { describe, expect, test } from "vitest";
 import {
-  KeySubstitutionDetected,
   MailboxChanged,
   memoryDeviceStore,
   unlockWithRecoveryKey,
@@ -46,11 +45,14 @@ describe("refresh(view)", () => {
     expect(viaNew.factorId).toBe(wrap.id);
   });
 
-  test("refuses a view with a forged tag (K3), and a view of another key (MailboxChanged)", async () => {
+  test("a view with forged tags is taken with its recipients flagged (K3); a view of another key is MailboxChanged", async () => {
     const e = await enrolledMailbox();
     const here = await unlockWithRecoveryKey(e.fake.mailbox(), e.recoveryKey);
     const view = e.fake.mailbox();
-    await expect(here.refresh({ ...view, wraps: view.wraps.map((w) => ({ ...w, tag: b64url(new Uint8Array(32)) })) })).rejects.toBeInstanceOf(KeySubstitutionDetected);
+    await here.refresh({ ...view, wraps: view.wraps.map((w) => ({ ...w, tag: b64url(new Uint8Array(32)) })) });
+    expect([...here.flagged.factors].sort()).toEqual(view.wraps.map((w) => w.id).sort());
+    await here.refresh(view);
+    expect(here.flagged).toEqual({ devices: [], factors: [] });
     await rotateByHand(e.fake, e.recoveryKey);
     await expect(here.refresh(e.fake.mailbox())).rejects.toBeInstanceOf(MailboxChanged);
   });
@@ -121,14 +123,15 @@ describe("preconditions the Worker would refuse, refused here first", () => {
     await expect(unlocked.keepThisDevice({ label: "Laptop" }, unlocked.freshFactor!)).rejects.toBeInstanceOf(TypeError);
     const view = legacy.fake.mailbox();
     const halfDone = { ...view, wraps: view.wraps.map((w, i) => (i === 0 ? { ...w, factorKey: b64url(new Uint8Array(32)) } : w)) };
-    const other = await unlockWithRecoveryKey(halfDone, legacy.recoveryKey).catch((e: unknown) => e);
-    // A factor key without its tag is K3's anomaly already: the unlock itself stops.
-    expect(other).toBeInstanceOf(KeySubstitutionDetected);
+    // A factor key without its tag is K3's anomaly: that factor is flagged, and the upgrade refuses (a factor has a key).
+    const other = await unlockWithRecoveryKey(halfDone, legacy.recoveryKey);
+    expect(other.flagged).toEqual({ devices: [], factors: [view.wraps[0]!.id] });
+    await expect(other.upgradeRequest([other.freshFactor!])).rejects.toBeInstanceOf(TypeError);
   });
 });
 
 describe("F6: K3 on the remaining recipients", () => {
-  test("a device the server slipped in after the unlock can still be removed: its own tag is not checked, every other one is", async () => {
+  test("a device the server slipped in after the unlock can still be removed: it is flagged, and left out of the rotation", async () => {
     const e = await enrolledMailbox();
     const a = await keep(e);
     const signing = new Uint8Array(65).fill(5);
@@ -151,7 +154,7 @@ describe("F6: K3 on the remaining recipients", () => {
     expect(pending.request.rotation.tags.map((t) => t.to.id)).not.toContain(intruder.id);
     await e.fake.removeDevice(pending.request, { session: a.session, factorProof: await proofOf(e.fake, ff) });
     await pending.commit();
-    // Now that it is gone, the key ring verifies again at a fresh unlock.
-    await unlockWithRecoveryKey(e.fake.mailbox(), e.recoveryKey);
+    // Now that it is gone, nothing is flagged at a fresh unlock.
+    expect((await unlockWithRecoveryKey(e.fake.mailbox(), e.recoveryKey)).flagged).toEqual({ devices: [], factors: [] });
   });
 });

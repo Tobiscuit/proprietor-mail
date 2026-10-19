@@ -156,13 +156,14 @@ describe("K2′: a key is accepted only along a chain to a trusted key", () => {
   });
 });
 
-describe("K3: every tag is checked at every unlock", () => {
-  test("a device the server added (it cannot make a tag under the mailbox key) stops the unlock", async () => {
+describe("K3: every tag is checked at every unlock, and one that fails flags its recipient (amended 2026-10-19)", () => {
+  test("a device the server added (it cannot make a tag under the mailbox key) is flagged; the unlock goes on", async () => {
     const e = await enrolledMailbox();
     const signing = crypto.getRandomValues(new Uint8Array(65));
     signing[0] = 0x04;
+    const id = newId("dev");
     e.fake.devices.push({
-      id: newId("dev"),
+      id,
       label: "Not yours",
       signingKey: b64url(signing), // pragma: allowlist secret (field names and public values, not secrets)
       unlockKey: null,
@@ -173,11 +174,11 @@ describe("K3: every tag is checked at every unlock", () => {
       lastSeenAt: null,
       accountId: "acc_owner",
     });
-    await expect(unlockWithRecoveryKey(e.fake.mailbox(), e.recoveryKey)).rejects.toBeInstanceOf(KeySubstitutionDetected);
-    await expect(unlockWithPasskey(e.fake.mailbox(), prompt(e))).rejects.toBeInstanceOf(KeySubstitutionDetected);
+    expect((await unlockWithRecoveryKey(e.fake.mailbox(), e.recoveryKey)).flagged).toEqual({ devices: [id], factors: [] });
+    expect((await unlockWithPasskey(e.fake.mailbox(), prompt(e))).flagged).toEqual({ devices: [id], factors: [] });
   });
 
-  test("a factor key the server replaced, a renamed factor, a factor key without its tag, and a tag under a retired key each stop the unlock", async () => {
+  test("a factor key the server replaced, a renamed factor, a factor key without its tag, and a tag under a retired key each flag that factor", async () => {
     const e = await enrolledMailbox();
     await rotateByHand(e.fake, e.recoveryKey);
     const view = e.fake.mailbox();
@@ -190,9 +191,11 @@ describe("K3: every tag is checked at every unlock", () => {
       changed({ tag: null }),
       changed({ tagKeyId: retiredKeyId }),
     ]) {
-      await expect(unlockWithRecoveryKey(v, e.recoveryKey)).rejects.toBeInstanceOf(KeySubstitutionDetected);
+      const unlocked = await unlockWithRecoveryKey(v, e.recoveryKey);
+      expect(unlocked.flagged).toEqual({ devices: [], factors: [view.wraps[passkey]!.id] });
+      expect(unlocked.keyIds.length).toBe(2);
     }
-    expect((await unlockWithRecoveryKey(view, e.recoveryKey)).keyIds.length).toBe(2);
+    expect((await unlockWithRecoveryKey(view, e.recoveryKey)).flagged).toEqual({ devices: [], factors: [] });
   });
 });
 

@@ -7,9 +7,11 @@
  * non-extractable, decrypt-only CryptoKey inside mail-crypto's handle, by
  * keyId; the active key's public half; its binding key (A5); and the public
  * facts it needs to use a factor again. It is accepted only after K2′ (the
- * active key leads back to a key this browser trusts) and K3 (every tag in the
- * ring verifies). After a factor, it offers that factor's FreshFactor for 2
- * minutes (K1′); nothing else in it can be wrapped or sealed again.
+ * active key leads back to a key this browser trusts), and K3 checks every tag
+ * in the ring: a recipient whose tag fails is flagged (`flagged`), never sealed
+ * to, and removable, while the rest of the inbox works. After a factor, it
+ * offers that factor's FreshFactor for 2 minutes (K1′); nothing else in it can
+ * be wrapped or sealed again.
  *
  * On a kept device (K5 to K7) it also holds the device's record: it signs the
  * device's proofs, keeps the record's last use current, and locks by the
@@ -45,6 +47,7 @@ import { base64url, fromBase64url } from "./bytes";
 import { deviceLabelOk } from "./device-store";
 import {
   DeviceRemoved,
+  FlaggedRecipient,
   InvalidChallenge,
   InvalidDeviceLabel,
   KeySubstitutionDetected,
@@ -57,7 +60,7 @@ import {
 } from "./errors";
 import { activeOfFactor, decryptOnlyCopy, factorTag, makePasskeyWrap, makeRecoveryWrap, openFactor, type OpenedFactor } from "./factors";
 import { FreshFactorImpl, freshFactorOf } from "./fresh-factor";
-import { bindingOf, checkAdvertisedKey, checkTags, deviceRecipient, factorRecipient, readRing, trustChain, type Ring, type RingWrap } from "./keyring";
+import { bindingOf, checkAdvertisedKey, checkTags, deviceRecipient, factorRecipient, flaggedOf, NONE_FLAGGED, readRing, trustChain, type Ring, type RingWrap } from "./keyring";
 import { parseMail } from "./mime";
 import type {
   ChallengeView,
@@ -65,6 +68,7 @@ import type {
   DeviceStore,
   DraftInput,
   DraftRecord,
+  FlaggedRecipients,
   FreshFactor,
   KeptDevice,
   KeptDeviceChange,
@@ -141,6 +145,8 @@ export interface SessionParts {
   now: () => number;
   freshFactor: FreshFactorImpl | null;
   idleLockMs: number;
+  /** K3 at the unlock: the recipients whose tag failed. */
+  flagged?: FlaggedRecipients;
 }
 
 export class Session implements UnlockedMailbox {
@@ -151,6 +157,8 @@ export class Session implements UnlockedMailbox {
   /** The key ring as this session knows it: the view it was unlocked or refreshed with, and what it committed since. */
   private ring: Ring;
   private keptDevice: KeptDevice | null = null;
+  /** K3: the recipients of this.ring whose tag failed under the active key. */
+  private tagFlags: FlaggedRecipients;
   /** The device's tag over "no unlock key" under the active key: what Lock now sends, made while a key is held. */
   private lockedTag: string | null = null;
   private lastActivityWrite = Number.NEGATIVE_INFINITY;
@@ -172,6 +180,7 @@ export class Session implements UnlockedMailbox {
     this.now = parts.now;
     this.idleLockMs = parts.idleLockMs;
     this.freshFactor = parts.freshFactor;
+    this.tagFlags = parts.flagged ?? NONE_FLAGGED;
     if (parts.freshFactor !== null) this.factors.add(parts.freshFactor);
     this.arm();
   }
@@ -195,6 +204,10 @@ export class Session implements UnlockedMailbox {
 
   get locked(): boolean {
     return this.keys === null;
+  }
+
+  get flagged(): FlaggedRecipients {
+    return this.tagFlags;
   }
 
   get device(): DeviceInfo | null {
@@ -528,13 +541,13 @@ export class Session implements UnlockedMailbox {
     return ff;
   }
 
-  /** A newer view of the same active key: K3 again, then its wraps, seals and devices are this session's. */
+  /** A newer view of the same active key: K3 again (flagging what fails), then its wraps, seals and devices are this session's. */
   async refresh(view: MailboxView): Promise<void> {
     const keys = this.unlockedKeys();
     const ring = readRing(view);
     if (ring.mailboxId !== this.mailboxId) throw new TypeError("a view of another mailbox");
     if (ring.active.keyId !== this.ring.active.keyId || ring.keys.some((k) => !keys.has(k.keyId))) throw new MailboxChanged();
-    await checkTags(ring, this.binding);
+    this.tagFlags = await checkTags(ring, this.binding);
     this.ring = ring;
   }
 
@@ -550,8 +563,14 @@ export class Session implements UnlockedMailbox {
     const devices = ring.devices ?? [];
     if (!devices.some((d) => d.id === deviceId)) throw new MailboxChanged("the view does not list that device");
     const active = this.wrappableActive(freshFactor);
-    // K3: every remaining recipient's tag, under the active key, before anything is sealed to it.
-    await checkTags(ring, this.binding, { exceptDevice: deviceId });
+    // K3: the view's tags under the active key, before anything is sealed. A flagged recipient is never
+    // sealed to, so while one is there the only rotation is the removal of that one flagged device.
+    const flagged = await checkTags(ring, this.binding);
+    const inTheWay = flaggedOf(
+      flagged.devices.filter((id) => id !== deviceId),
+      flagged.factors,
+    );
+    if (inTheWay.devices.length > 0 || inTheWay.factors.length > 0) throw new FlaggedRecipient(undefined, inTheWay);
     const remaining = devices.filter((d) => d.id !== deviceId);
     const factors = ring.wraps.filter((w) => w.factorKey !== null);
     // M5′, D28: the new key must reach a recovery factor.
@@ -605,6 +624,8 @@ export class Session implements UnlockedMailbox {
       };
       if (this.keys !== null) this.keys = new Map([[newKeyId, decryptOnly], ...this.keys]);
       this.binding = nextBinding;
+      // Every recipient left was checked above and is tagged under the new key by this browser.
+      this.tagFlags = NONE_FLAGGED;
       // The FreshFactor's 2 minutes go on with the new key, so a second removal needs no new prompt.
       ff.retarget(next.privateKey);
       const d = this.keptDevice;
@@ -693,6 +714,8 @@ export class Session implements UnlockedMailbox {
 
   async addPasskey(passkey: PasskeyOptions, freshFactor: FreshFactor): Promise<WrapInput> {
     this.unlockedKeys();
+    // A flagged factor is removed first (removeWrap, with a proof from another factor).
+    if (this.flagged.factors.length > 0) throw new FlaggedRecipient(undefined, { factors: this.flagged.factors });
     const wrappable = this.wrappableActive(freshFactor);
     const wrap = await makePasskeyWrap(this.mailboxId, wrappable, passkey, this.ring.sessions === "required" ? this.binding : null);
     this.ring.wraps.push(ringWrapOf(wrap));
@@ -701,6 +724,10 @@ export class Session implements UnlockedMailbox {
 
   async replaceRecoveryKey(freshFactor: FreshFactor): Promise<{ recoveryKey: string; wrap: WrapInput }> {
     this.unlockedKeys();
+    // A flagged passkey is removed first. A flagged recovery factor is what this replaces: Mail keeps the
+    // only recovery factor until another one is there (M5′), so it could not be removed first.
+    const inTheWay = this.flagged.factors.filter((id) => this.ring.wraps.find((w) => w.id === id)?.kind !== "recovery");
+    if (inTheWay.length > 0) throw new FlaggedRecipient(undefined, { factors: inTheWay });
     const wrappable = this.wrappableActive(freshFactor);
     const made = await makeRecoveryWrap(this.mailboxId, wrappable, this.ring.sessions === "required" ? this.binding : null);
     this.ring.wraps.push(ringWrapOf(made.wrap));
@@ -744,9 +771,10 @@ async function unlockWithFactor(view: MailboxView, factor: ReAuth, options?: Unl
   // K2′ (a)/(b): the factor's own wrap is its anchor; on a kept device, so is the key it last accepted (no rollback).
   const keys = await trustChain(ring, active.key, record === null ? [opened.wrap.keyId] : [opened.wrap.keyId, record.lastKeyId]);
   const binding = await bindingOf(ring, active.key);
-  await checkTags(ring, binding);
+  // K3: a recipient whose tag fails is flagged; the unlock goes on (the key itself passed K2′).
+  const flagged = await checkTags(ring, binding);
   const freshFactor = freshFactorFor(ring.mailboxId, opened, active.wrappable, now);
-  const session = new Session({ ring, keys, binding, store, signInId: options?.signInId ?? null, now, freshFactor, idleLockMs });
+  const session = new Session({ ring, keys, binding, store, signInId: options?.signInId ?? null, now, freshFactor, idleLockMs, flagged });
   if (record !== null) {
     const current = await store!.update(ring.mailboxId, record.deviceId, { lastKeyId: ring.active.keyId, lastActiveAt: now() }).catch(() => null);
     if (current !== null) await session.bindDevice(current);

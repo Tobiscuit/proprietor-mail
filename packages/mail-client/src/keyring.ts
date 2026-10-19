@@ -14,12 +14,14 @@
  * walk reaches (G40), so old mail still opens after a rotation.
  *
  * K3: at every unlock, every tag in the key ring is checked under the active
- * key, and one that fails stops everything. Anyone can seal to a public key,
- * and whoever controls the server could add a recipient: only holders of the
- * mailbox key can make a tag.
+ * key. Anyone can seal to a public key, and whoever controls the server could
+ * add a recipient: only holders of the mailbox key can make a tag. A device or
+ * factor whose tag fails is flagged, not trusted: it is never sealed to, it is
+ * shown, and it can be removed. The key itself is trusted (K2′), so the rest
+ * of the inbox works. (Amended 2026-10-19: a failing tag stopped everything.)
  *
- * Every failure here is KeySubstitutionDetected: the screen stops and shows
- * the key-substitution warning.
+ * A failure of K2 or K2′ is KeySubstitutionDetected: the screen stops and
+ * shows the key-substitution warning.
  */
 import {
   bindingKey,
@@ -32,7 +34,7 @@ import {
 } from "@proprietor/mail-crypto";
 import { fromBase64url } from "./bytes";
 import { KeySubstitutionDetected, NoActiveKey } from "./errors";
-import type { DeviceView, MailboxView, SealView } from "./types";
+import type { DeviceView, FlaggedRecipients, MailboxView, SealView } from "./types";
 
 const KEY_ID = /^[0-9a-f]{32}$/;
 
@@ -165,29 +167,35 @@ export function factorRecipient(w: Pick<RingWrap, "id" | "kind" | "label" | "cre
   return { kind: "factor", factorId: w.id, factorKind: w.kind, label: w.label, factorKey, credentialId: w.credentialId }; // pragma: allowlist secret (field names and public values, not secrets)
 }
 
+/** Nothing flagged. */
+export const NONE_FLAGGED: FlaggedRecipients = Object.freeze({ devices: Object.freeze([]), factors: Object.freeze([]) });
+
+/** Frozen lists, without repeats, in the order given. */
+export function flaggedOf(devices: Iterable<string>, factors: Iterable<string>): FlaggedRecipients {
+  return Object.freeze({ devices: Object.freeze([...new Set(devices)]), factors: Object.freeze([...new Set(factors)]) });
+}
+
 /**
- * K3: every tag in the ring verifies under the active key's binding key, or
- * nothing proceeds. A rotation leaves out the device it removes (plan.md F6:
- * "every remaining recipient"): it is never sealed to, and a device someone
- * slipped in must stay removable.
+ * K3: every tag in the ring, under the active key's binding key. Answers the
+ * recipients whose tag fails, is malformed, or is made under another key:
+ * flagged, never sealed to. A factor with no factor key at all (before the
+ * upgrade) has nothing to check.
  */
-export async function checkTags(ring: Ring, binding: BindingKey, options: { exceptDevice?: string } = {}): Promise<void> {
+export async function checkTags(ring: Ring, binding: BindingKey): Promise<FlaggedRecipients> {
   if (binding.keyId !== ring.active.keyId || binding.mailboxId !== ring.mailboxId) throw new TypeError("the binding key is not the active key's");
+  const devices: string[] = [];
   for (const d of ring.devices ?? []) {
-    if (d.id === options.exceptDevice) continue;
     const recipient = deviceRecipient(d);
-    if (recipient === null || d.tagKeyId !== ring.active.keyId || !(await verifyBindingTag(binding, recipient, d.tag))) {
-      throw new KeySubstitutionDetected("a device in the key ring was not added by a holder of the mailbox key");
-    }
+    if (recipient === null || d.tagKeyId !== ring.active.keyId || !(await verifyBindingTag(binding, recipient, d.tag))) devices.push(d.id);
   }
+  const factors: string[] = [];
   for (const w of ring.wraps) {
     const keyed = [w.factorKey, w.tag, w.tagKeyId].filter((x) => x !== null).length;
-    if (keyed === 0) continue; // a factor not yet given its key (before the upgrade, or left out of it)
+    if (keyed === 0) continue; // a factor not yet given its key (before the upgrade)
     const recipient = keyed === 3 ? factorRecipient(w) : null;
-    if (recipient === null || w.tagKeyId !== ring.active.keyId || !(await verifyBindingTag(binding, recipient, w.tag!))) {
-      throw new KeySubstitutionDetected("a factor key in the key ring was not added by a holder of the mailbox key");
-    }
+    if (recipient === null || w.tagKeyId !== ring.active.keyId || !(await verifyBindingTag(binding, recipient, w.tag!))) factors.push(w.id);
   }
+  return flaggedOf(devices, factors);
 }
 
 /** The binding key of the ring's active key (A5). */

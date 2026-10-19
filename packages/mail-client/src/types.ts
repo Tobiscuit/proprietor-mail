@@ -472,6 +472,18 @@ export interface DraftInput {
   references: string[];
 }
 
+/**
+ * The recipients this browser does not trust (contracts/device-v1.md Part C, K3 and K9): a device or a
+ * factor whose tag fails under the active key, or a factor just used whose factor key is not the one
+ * Mail lists. Nothing is ever sealed to them; the screens show them, as recipients no holder of the key
+ * added, and offer to remove them (removeDevice for a device, removeWrap for a factor). Ids, as the
+ * view lists them.
+ */
+export interface FlaggedRecipients {
+  readonly devices: readonly string[];
+  readonly factors: readonly string[];
+}
+
 export interface UnlockedMailbox {
   readonly mailboxId: string;
   /** The active key (it changes when this browser commits a rotation). */
@@ -484,6 +496,8 @@ export interface UnlockedMailbox {
   readonly device: DeviceInfo | null;
   /** The FreshFactor of the factor this unlock used; null after resumeDevice or enrollment. */
   readonly freshFactor: FreshFactor | null;
+  /** K3, K9: the recipients flagged in the key ring as this session last read it. Frozen; both lists empty when all is well. */
+  readonly flagged: FlaggedRecipients;
   openMessages(items: MessageItem[]): Promise<OpenedMessage[]>;
   openBody(item: MessageItem, sealedBody: Uint8Array): Promise<MailBody>;
   /** A null id makes a new draft id. */
@@ -493,7 +507,7 @@ export interface UnlockedMailbox {
   sessionProof(challenge: ChallengeView): Promise<OpenSessionRequest>;
   /** A FreshFactor for a sensitive setting: one prompt, or the recovery key. */
   reauthenticate(reauth: ReAuth): Promise<FreshFactor>;
-  /** Re-checks a newer view of the same key (K3) and adopts its wraps, seals and devices. */
+  /** Re-checks a newer view of the same key (K3, flagging what fails) and adopts its wraps, seals and devices. */
   refresh(view: MailboxView): Promise<void>;
   /** "This device is mine": registerDevice's request; commit() keeps the device in this browser. */
   keepThisDevice(options: { label: string; lockAfter?: LockAfter }, freshFactor: FreshFactor): Promise<PendingChange<RegisterDeviceRequest>>;
@@ -501,15 +515,23 @@ export interface UnlockedMailbox {
   rekeyThisDevice(freshFactor: FreshFactor): Promise<PendingChange<UpdateDeviceRequest>>;
   /** Changes this device's lock setting at once; "right-away" drops its unlock key. */
   setLockAfter(lockAfter: LockAfter): Promise<{ updateDevice: UpdateDeviceRequest | null; needsRekey: boolean }>;
-  /** removeDevice's request with the whole rotation; commit() moves this session to the new key. */
+  /**
+   * removeDevice's request with the whole rotation; commit() moves this session to the new key. While a
+   * recipient is flagged, the only rotation is the removal of that one flagged device: anything else is
+   * FlaggedRecipient, because the new key would have to be sealed to it.
+   */
   removeDevice(view: MailboxView, deviceId: string, freshFactor: FreshFactor): Promise<PendingChange<RemoveDeviceRequest>>;
   /** The one-time upgrade (D26): factor keys and tags for the factors just used; one must be the recovery key. */
   upgradeRequest(factors: readonly FreshFactor[]): Promise<PendingChange<UpgradeRequest>>;
   /** Gives `target` its factor key; the factor proof for the call comes from `proving`, another factor. */
   setFactorKey(target: FreshFactor, proving: FreshFactor): Promise<PendingChange<SetFactorKeyRequest>>;
-  /** A wrap of the active key for a new passkey (one more prompt), with its factor key once sessions are required. */
+  /** A wrap of the active key for a new passkey (one more prompt), with its factor key once sessions are required. FlaggedRecipient while a factor is flagged: remove it first. */
   addPasskey(passkey: PasskeyOptions, freshFactor: FreshFactor): Promise<WrapInput>;
-  /** Then: addWrap(wrap), and removeWrap of the old recovery wrap, each with a factor proof. */
+  /**
+   * Then: addWrap(wrap), and removeWrap of the old recovery wrap, each with a factor proof.
+   * FlaggedRecipient while a factor other than a recovery factor is flagged; a flagged recovery factor
+   * is replaced this way (Mail keeps the only recovery factor until another one is there, M5′).
+   */
   replaceRecoveryKey(freshFactor: FreshFactor): Promise<{ recoveryKey: string; wrap: WrapInput }>;
   touch(): void;
   /** Lock now: drops every key at once; on a kept device, also deletes its unlock key (K6). */

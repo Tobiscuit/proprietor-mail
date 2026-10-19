@@ -166,3 +166,18 @@ export class InvalidChallenge extends MailClientError {
     super(message, "InvalidChallenge");
   }
 }
+
+// ---- Added by D1's round 2 (contracts/device-v1.md Part C as amended on 2026-10-19) ----
+
+/**
+ * K3, K9: the change would seal the mailbox key to a flagged recipient, or add a factor while a flagged
+ * one is there. `flagged` names the recipients in the way: remove them first (removeDevice for a
+ * device, removeWrap with a proof from another factor for a factor), then try again.
+ */
+export class FlaggedRecipient extends MailClientError {
+  readonly flagged: { readonly devices: readonly string[]; readonly factors: readonly string[] };
+  constructor(message = "remove the flagged device or factor first", flagged: { devices?: readonly string[]; factors?: readonly string[] } = {}) {
+    super(message, "FlaggedRecipient");
+    this.flagged = Object.freeze({ devices: Object.freeze([...(flagged.devices ?? [])]), factors: Object.freeze([...(flagged.factors ?? [])]) });
+  }
+}
