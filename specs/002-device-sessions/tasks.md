@@ -54,21 +54,21 @@ architect reviews them before D3 starts).
 `contracts/mail-client-v1.md`'s amendment; the browser job in
 `.github/workflows/ci.yml` if it needs a change.
 
-- [ ] D1a mail-crypto: factor keys (A2), key seals for both KEMs and successor
+- [x] D1a mail-crypto: factor keys (A2), key seals for both KEMs and successor
   seals (A4), the binding key and tags (A5), opening challenges (A6), signing
   device proofs (A7), P-256 device key generation (A3)
-- [ ] D1b `contracts/device-v1.vectors.json` with every positive and negative
+- [x] D1b `contracts/device-v1.vectors.json` with every positive and negative
   case of A9, and a test that checks every one
-- [ ] D1c mail-client: the kept-device store (IndexedDB and memory), the
+- [x] D1c mail-client: the kept-device store (IndexedDB and memory), the
   storage check, `resumeDevice`, the lock engine
-- [ ] D1d mail-client: sessions hold every key the chain reaches; K2′ and K3
+- [x] D1d mail-client: sessions hold every key the chain reaches; K2′ and K3
   at every unlock; FreshFactor; `sessionProof`
-- [ ] D1e mail-client: keep, rekey, lock now, forget, remove (with rotation),
+- [x] D1e mail-client: keep, rekey, lock now, forget, remove (with rotation),
   upgrade, `setFactorKey`, add a passkey and replace the recovery key with
   factor keys, enrollment with factor keys and a device, the send form's
   `session`
-- [ ] D1f PROTECTION gains spec §5's text and rows, compared with the spec
-- [ ] D1g browser tests in Chromium and Firefox (and WebKit in CI)
+- [x] D1f PROTECTION gains spec §5's text and rows, compared with the spec
+- [x] D1g browser tests in Chromium and Firefox (and WebKit in CI)
 
 **Acceptance tests:**
 - every A9 vector opens or verifies, and every negative case is refused;
@@ -118,18 +118,18 @@ there: new tests in new files, nothing within a few lines of `inboxUnread()`.
 Check with `git merge-tree` against that branch before the pull request, and
 report the result.
 
-- [ ] D2a `proofs.ts`: `sealChallenge(target, ids) → { sealed, answer }` and
+- [x] D2a `proofs.ts`: `sealChallenge(target, ids) → { sealed, answer }` and
   `verifyDeviceProof(signingKey, ids, signature) → boolean`, with tests that
   open the challenge with `@hpke/core` directly, per A6
-- [ ] D2b migration `0003_devices`; the view's new fields
-- [ ] D2c `challenge`, `openSession`; sessions and their checks;
+- [x] D2b migration `0003_devices`; the view's new fields
+- [x] D2c `challenge`, `openSession`; sessions and their checks;
   `SESSION_NEEDS` with its fitness test; the three error names
-- [ ] D2d `upgrade`, `registerDevice`, `updateDevice`, `setFactorKey`;
+- [x] D2d `upgrade`, `registerDevice`, `updateDevice`, `setFactorKey`;
   `addWrap` and `removeWrap` with factor proofs and factor keys; `enroll` with
   factor keys and a device
-- [ ] D2e `removeDevice` and the rotation, in one transaction (M18)
-- [ ] D2f housekeeping of challenges and sessions; audit rows
-- [ ] D2g `send` reads `request.session`
+- [x] D2e `removeDevice` and the rotation, in one transaction (M18)
+- [x] D2f housekeeping of challenges and sessions; audit rows
+- [x] D2g `send` reads `request.session`
 
 **Acceptance tests:**
 - 0003 on a mailbox created before it: existing keys, wraps and messages are
@@ -182,17 +182,17 @@ packages. Never the shell (`components/shell`, `lib/modules.ts`,
 `worker/index.ts`, `lib/mail.ts`, `lib/mail-capability.ts`, `lib/inbox-send.ts`,
 the send route): what it needs from there goes into the report as an ask.
 
-- [ ] D3a vendor mail-client and mail-crypto from the integration commit
-- [ ] D3b actions and the body route carry `auth`; the new actions; local
+- [x] D3a vendor mail-client and mail-crypto from the integration commit
+- [x] D3b actions and the body route carry `auth`; the new actions; local
   types and error names
-- [ ] D3c MailboxProvider: resume, sessions, renewal, `DeviceRevoked`, the
+- [x] D3c MailboxProvider: resume, sessions, renewal, `DeviceRevoked`, the
   lock engine
-- [ ] D3d the gate: the question, the upgrade offer, the removed notice, the
+- [x] D3d the gate: the question, the upgrade offer, the removed notice, the
   storage notice
-- [ ] D3e Settings: This device, Your devices, Security keys and passkeys,
+- [x] D3e Settings: This device, Your devices, Security keys and passkeys,
   Recovery key
-- [ ] D3f strings (US grade 8 at most), in the inbox's words file
-- [ ] D3g the fake Mail Worker's new methods
+- [x] D3f strings (US grade 8 at most), in the inbox's words file
+- [x] D3g the fake Mail Worker's new methods
 
 **Acceptance tests:** the dashboard's own suites (`npm run typecheck`,
 `npm test`), and the browser flow
@@ -215,13 +215,62 @@ with:
 
 ## D4 — Integration and audit  *(architect)*
 
-- [ ] merge D1 and D2 on an integration branch; the full suite and both
+- [x] merge D1 and D2 on an integration branch; the full suite and both
   typechecks; the cross-tests (real crypto on both sides) for F1, F2, F5, F6,
-  F10
-- [ ] each slice's mutation checks
-- [ ] the vendoring commit for D3
-- [ ] the report: what to review before merging, what needs the operator, what
+  F10 (`test/device-e2e.test.ts`, pull request #16)
+- [x] each slice's mutation checks
+- [x] the vendoring commit for D3
+- [x] the report: what to review before merging, what needs the operator, what
   needs the shell
+
+## Audit (architect, 2026-10-17 to 19)
+
+- **D1, pull request #15** (head 658f00f): 225 mail-crypto and 245 mail-client
+  tests pass in Node, Chromium and Firefox here. CI also passes in WebKit on
+  Linux and macOS. Each of these mutations fails tests: ignoring K2′'s anchors
+  (2), skipping K3's device tags (3), letting a key off the chain through (1).
+  The builder's own list is in its pull request. Found in CI and fixed: WebKit
+  bug 307095 (spec §9).
+- **D2, pull request #10** (head e83a610): 736 passed and 8 skipped; the
+  escape guard is clean; it merges cleanly with #8. Each of these mutations
+  fails tests: keeping the old key's seals at a rotation, dropping M21's
+  account check, dropping M5′ from the rotation, ignoring a sent token while
+  sessions are optional, and dropping openSession's checks after the
+  signature await. Found and fixed in review: MailService's and MailAdmin's
+  TypeScript-`private` helpers were served over RPC, so a caller holding the
+  binding could reach a Mailbox with a forged call context. That issue was
+  already on `main` and is fixed by this pull request; they are now
+  `#private`, with a test that pins each entrypoint's surface.
+- **D4, pull request #16** (head 0fed951): D1 and D2 merged, 959 passed and
+  8 skipped, typecheck clean. Its end-to-end test runs mail-client against
+  the real Worker for F12, F1, F2, F6, F10 and F5. It merges cleanly with #8
+  and with `main`.
+- **D3, the dashboard's pull request #13** (head db6e11e, with mail-crypto
+  repacked from 0fed951): typecheck; unit 245, render 111 and the Chromium
+  flow 13 all pass. Dropping the session from `list` fails 9 of the 13
+  browser tests, and the rules test catches it statically. Dropping the body
+  route's session header is caught by its unit test.
+
+## Round 2: an independent review (2026-10-19)
+
+A read-only review asked for these before the operator's upgrade. Each was
+checked against the code first; none was wrong.
+
+- [ ] R2-1 (D1, D3) K3 flags a recipient whose tag fails instead of stopping
+  everything: never sealed to, shown, removable (contract Part C K3)
+- [ ] R2-2 (D1) K8: a rotation opens its successor seal and the used factor's
+  seal before it is sent; tested with a corrupted seal
+- [ ] R2-3 (D1) K9: the factor just used derives the factor key Mail lists;
+  one that does not is flagged; tested
+- [ ] R2-4 (D1, D2, D3) the upgrade names every factor (B5, M20); `setFactorKey`,
+  the partial upgrade and the stale-factor flows are removed
+- [ ] R2-5 (D3) the body route's header is `x-proprietor-mail-session-token`,
+  a name Cloudflare's log redaction covers
+- [ ] R2-6 (architect) the rollback text and the upgrade's order (spec §7,
+  plan §8)
+- [ ] R2-7 (D3) the dashboard vendors the packages from the merged commit
+- [ ] R2-8 (D1) the workaround for WebKit bug 307095 leaves #15 for the
+  branch `feat/002-webkitgtk-workaround`; CI tests WebKit on macOS only
 
 ## Held
 

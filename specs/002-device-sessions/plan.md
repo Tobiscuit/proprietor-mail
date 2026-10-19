@@ -48,7 +48,8 @@ CREATE TABLE key_seals (
 CREATE TABLE challenges (
   id TEXT PRIMARY KEY, purpose TEXT NOT NULL CHECK (purpose IN ('session','factor')),
   target_id TEXT NOT NULL, answer_hash TEXT NOT NULL, nonce TEXT NOT NULL, account_id TEXT NOT NULL,
-  created_at TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT);
+  created_at TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT,
+  refused_at TEXT);                     -- set when a refusal of it as used or expired is first audited
 CREATE INDEX challenges_by_expiry ON challenges(expires_at);
 CREATE TABLE mail_sessions (
   token_hash TEXT PRIMARY KEY, account_id TEXT NOT NULL, device_id TEXT,
@@ -56,6 +57,9 @@ CREATE TABLE mail_sessions (
 CREATE INDEX mail_sessions_by_device ON mail_sessions(device_id);
 CREATE INDEX mail_sessions_by_expiry ON mail_sessions(expires_at);
 ```
+
+The answer is kept only as its SHA-256; the nonce is kept as it is, because
+Mail sends it with the challenge for the device to sign and it opens nothing.
 
 It runs inside `transactionSync` on the Mailbox's first wake after the deploy,
 like 0001 and 0002. Existing rows are untouched, and `sessions` starts
@@ -172,13 +176,7 @@ authenticator) → its envelope v1 wrap of the active key, and its factor key
 from the same PRF output, with tag → `addWrap(…, {session, factorProof})`. It
 gets the current key by its wrap and every older key through the chain (R8).
 
-### F9 — Give a factor its key later (`setFactorKey`)
-
-A security key left out of the upgrade, used in a browser where the recovery
-key is typed too: two FFs. The recovery FF answers a factor challenge. The
-security key's factor key comes from its PRF output, plus its tag, and a seal
-of the active key when its wrap is of a retired key → `setFactorKey(…,
-{session, factorProof})`.
+### F9 — (removed 2026-10-19: the upgrade takes every factor, D26)
 
 ### F10 — A removed device's next contact
 
@@ -243,7 +241,7 @@ the dashboard builder starts. What they must offer:
   `setLockAfter`, `forget` (K7), and `removeDevice(view, id, FF)`. Each returns
   the request to send and a `commit()` for after Mail accepted it.
 - **Factors:** `addPasskey(passkey, FF)` and `replaceRecoveryKey(FF)` (now with
-  factor keys), `upgradeRequest(FFs)`, `setFactorKey(FF target, FF proving)`.
+  factor keys), `upgradeRequest(FFs)` (every factor of the mailbox).
 - **Enrollment:** `startEnrollment(mailbox, passkey, {keep?})`; `request()`
   includes factor keys, tags and the device.
 - **Send form:** `encodeSendForm(compose, {…, session})`, and `decodeSendForm`
@@ -260,9 +258,11 @@ Inside `app/(modules)/inbox/**` and `lib/strings/inbox.ts`, with its tests:
 
 - **Actions:** every device-bound action takes `auth` from the client and
   passes it as Mail's last argument. New actions: `challenge`, `openSession`,
-  `upgrade`, `registerDevice`, `updateDevice`, `removeDevice`, `setFactorKey`.
+  `upgrade`, `registerDevice`, `updateDevice`, `removeDevice`.
   The body route reads the token from a request header
-  (`x-proprietor-mail-session`). New types and error names live in the inbox's
+  (`x-proprietor-mail-session-token`: Cloudflare redacts a header's value in
+  Workers Logs and tails only when its name contains `auth`, `key`, `secret`,
+  `token` or `jwt`). New types and error names live in the inbox's
   `_lib` until the shell folds them into `lib/mail.ts` (an ask, below).
 - **MailboxProvider:** `resumeDevice` on mount; a mail session opened and
   renewed in memory; `SessionRequired` opens a new session once;
@@ -336,11 +336,16 @@ Inside `app/(modules)/inbox/**` and `lib/strings/inbox.ts`, with its tests:
 2. Dashboard deploy, with the new inbox and the vendored packages.
 3. The operator upgrades their mailbox from the inbox (F5).
 
-Before step 3, either side rolls back freely. After it, an older Mail Worker
-ignores the new tables and stops enforcing sessions (the new dashboard's extra
-arguments are ignored), which loses the protection and no data. An older
-dashboard cannot open the upgraded mailbox until it is rolled forward; no data
-is lost.
+Before step 3, either side rolls back freely. After it, an older dashboard is
+refused by Mail until it is rolled forward. After the **first device
+removal**, rolling back either side locks the inbox until it is rolled
+forward: the new active key is reachable only through seals, which an older
+Mail Worker does not serve and an older dashboard cannot open. Nothing is
+lost: an older Mail Worker skips 0003 and seals arriving mail to the active
+key. The first removal is the point of no return for both.
+
+Step 3, the upgrade, in order: in Chrome, the security key first, then the
+recovery key (spec §7).
 
 ## 9. Who owns what
 

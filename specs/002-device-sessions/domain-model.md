@@ -13,9 +13,9 @@ unclear. Each has its resolution, and each resolution is a test.
 |---|---|---|---|
 | G26 | **WebKit cannot keep an X25519 key in IndexedDB**, and private windows keep no key at all. | "Store the mailbox key in the browser" fails on every iPhone, where the owner's security key cannot do PRF either. | Device keys are P-256. The mailbox key is never stored in the browser: a seal at Mail, opened by the device's unlock key (D24). A storage check before the first use; a failure means a shared computer (D31). |
 | G27 | **Anyone can seal a key to a public key.** A seal says nothing about who made it. | A server could seal a key it controls to a device and advertise it as the mailbox's new key. The device would open it, it would match the advertised key (K2 passes), and drafts and new mail would be readable by the server. | K2′: a sealed key is accepted only when successor seals lead from it to a key the browser already trusts. A successor seal can only be made by a holder of the older private key. |
-| G28 | **The server could add a recipient** (a device or factor key it controls) to the key ring. | The next rotation would seal the new key to it, and through the chain every old key. | K3: binding tags, an HMAC under a key derived from the mailbox key itself (contract A5), over every recipient. The rotating browser checks them before it seals. A tag that fails stops everything. |
+| G28 | **The server could add a recipient** (a device or factor key it controls) to the key ring. | The next rotation would seal the new key to it, and through the chain every old key. | K3: binding tags, an HMAC under a key derived from the mailbox key itself (contract A5), over every recipient. The rotating browser checks them before it seals. A recipient whose tag fails is flagged, never sealed to, shown to the owner and removable; the rest of the inbox keeps working (amended 2026-10-19). |
 | G29 | **A stolen device that is unlocked holds a session and the key.** | It could remove the owner's other devices, rotate to a key only it holds, add its own passkey, or change the recovery key: a takeover. | D25: those operations need a factor proof that Mail checks against the factor's public key. The device holds no factor. |
-| G30 | **Mail has never seen a factor's public key** for the mailbox enrolled under 001, so it cannot check one. | Either no factor proofs at all, or a first registration on trust that someone holding the key could also make. | D26: one upgrade, with the recovery key, only while no factor has a key, and before any device is kept. After it, every new factor key needs a proof from a factor Mail already knows. |
+| G30 | **Mail has never seen a factor's public key** for the mailbox enrolled under 001, so it cannot check one. | Either no factor proofs at all, or a first registration on trust that someone holding the key could also make. | D26: one upgrade, with every factor of the mailbox at once, only while no factor has a key, and before any device is kept. After it, every new factor key needs a proof from a factor Mail already knows (amended 2026-10-19). |
 | G31 | **Rotation needs the new key "wrapped under the recovery key", but the rotating browser may not have the recovery secret** (the owner used a passkey). | The recovery key would stop reaching new mail, and the last way back would be gone. | Every factor has a public factor key derived from its secret (contract A2). A rotation seals the new key to it, with no secret needed. M5′: rotation is refused unless a recovery factor receives the new key. |
 | G32 | **A device or factor added after a rotation gets only the active key.** | Mail sealed to retired keys would not open on it. | Successor seals: each retired key is sealed to its successor. Any holder of the active key walks back through the chain. |
 | G33 | **A key proof asks the browser to decrypt something for Mail.** | Mail could pass a message's key envelope off as a challenge and get the message key back: a decryption oracle. | K4: challenges are their own HPKE domain (`info` used by nothing else). Anything else fails to open, and the browser answers nothing. |
@@ -77,7 +77,7 @@ transaction (M18). Every invariant below is a test.
   its answer is wrong.** At most 20 are live per mailbox.
 - **M17 — Keeping a device, removing a device, adding or removing a factor,
   and giving a factor its key each consume a fresh factor proof** once
-  sessions are required. `setFactorKey`'s proof comes from another factor.
+  sessions are required.
 - **M18 — Removing a device rotates the key, in one transaction**: the device,
   its seals and its sessions are gone; a new key is active; the old one is
   retired with its successor seal; every remaining device with an unlock key
@@ -86,8 +86,8 @@ transaction (M18). Every invariant below is a test.
 - **M19 — Seals exist only for the active key**; a retired key is reachable
   only through its successor seal.
 - **M20 — The upgrade happens once**: while sessions are optional and no
-  factor has a key, with a live session, and with a recovery factor among
-  those it names.
+  factor has a key, with a live session, and naming every factor the mailbox
+  has (amended 2026-10-19).
 - **M21 — A device works only for the account that kept it** (G42).
 
 The invariants of 001 stand: M1 (no plaintext at rest; a token, an answer or
@@ -171,7 +171,7 @@ Mailbox sessions:   optional ──upgrade / enroll with factor keys──▶ re
 
 Key:                active ──removeDevice──▶ retired (successor seal set)       (never deleted)
 
-Factor:             legacy (no factor key) ──upgrade or setFactorKey──▶ keyed ──removeWrap──▶ gone
+Factor:             legacy (no factor key) ──upgrade (every factor at once)──▶ keyed ──removeWrap──▶ gone
                     (a keyed factor gets a seal of each new key at every rotation)
 
 Device:             registered (unlock key) ⇄ locked (no unlock key)  ──removeDevice──▶ gone

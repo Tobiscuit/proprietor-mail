@@ -176,7 +176,7 @@ with this section, as it does with 001's.
 |---|---|---|
 | **D24** | **What a kept device stores, and where the mailbox key lives.** WebKit (Safari, and every browser on iPhone) cannot read an X25519 key back from IndexedDB, and private windows keep no keys at all (§9). | **P-256 device keys** (ECDSA to sign, ECDH to unlock) in IndexedDB. The mailbox key is **never stored in the browser**: it is sealed to the device's unlock key, and the seal stays at Mail, so removing a device cuts it off even from old keys after a reload. A browser that fails the storage check acts as a shared computer. **The trade:** on a kept device that is unlocked, code on the dashboard's origin could take an extractable copy of the mailbox key (K1′), where today it could only use the key while the inbox is open. This is inside D2's boundary; it is said in §4. |
 | **D25** | **Mail checks a fresh factor** for keeping a device, removing a device, adding or removing a passkey, and giving a factor its key. | **Yes.** Without it, someone holding an unlocked device could remove the owner's other devices and rotate to a key only they hold. Mail checks the factor by a challenge sealed to the factor's public key, derived from the factor's secret (contract A2), so Mail never holds the secret. |
-| **D26** | **The one-time upgrade of an existing mailbox.** Mail cannot check an existing factor until it knows that factor's public key, and it can only learn it once, on trust. | **One upgrade, which must include the recovery key** (typed once), plus the security key if it was used for the same unlock. It is allowed only while no factor has a key. A security key left out gets its key later, the first time it is used in a browser where the recovery key is typed too (`setFactorKey`). Until the upgrade the mailbox works exactly as today. |
+| **D26** | **The one-time upgrade of an existing mailbox.** Mail cannot check an existing factor until it knows that factor's public key, and it can only learn it once, on trust. | **One upgrade, with every factor of the mailbox at once** (amended 2026-10-19 after an independent review): for the first mailbox, the security key and the recovery key in one browser where the key does PRF (Chrome). A factor the owner no longer has is removed first. Every factor then reaches every key made after it, so no factor is ever left behind. Until the upgrade the mailbox works exactly as today. (The first form took the recovery key alone, and a security key left out stopped reaching new keys after the first device removal.) |
 | **D27** | **Mail sessions.** | A session opens with a **key proof** (a challenge sealed to the active key) plus, for a kept device, its **signature**. It lasts 60 minutes and is renewed without a prompt while the device is unlocked. So a locked device cannot even send, and a cookie alone opens nothing. |
 | **D28** | **Rotation on every removal**, refused unless the recovery key can receive the new key. | **Yes** (M5′). A removal from a browser where only a passkey was used still seals the new key to the recovery key's public key, so no recovery secret is needed. |
 | **D29** | **How a session reaches Mail.** The capability (a claim `dsn`) would be the single cleanest place, but the dashboard mints capabilities in its shell, and its send route is the shell's. | **A last `auth` argument** on each method, and **`request.session` for `send`**, so the dashboard's send route passes it on unchanged and needs no change. A capability claim can replace both later, in a new contract version, if the shell wants it. |
@@ -193,21 +193,48 @@ recovery wrap, no factor keys, `sessions: "optional"`.
 - After the Mail Worker and the dashboard ship this, **everything keeps
   working as today**. Wraps are untouched, a factor still unlocks, and no
   session is needed (R10).
-- The first time the owner unlocks and chooses "this device is mine", the
-  inbox offers the **upgrade**. With the recovery key just typed, it happens at
-  once. With the security key, the screen asks for the recovery key once. The
-  upgrade gives both factors their public keys, turns sessions on for good, and
-  keeps that browser.
+- **The upgrade, in this order:** in Chrome (where the security key does
+  PRF), unlock with the **security key**, choose "this device is mine", then
+  type the **recovery key** when the inbox asks for it. The upgrade gives both
+  factors their public keys in one step, turns sessions on for good, and keeps
+  that browser. It needs every factor of the mailbox; one the owner no longer
+  has is removed first.
 - From then on each browser needs one unlock with either factor to be kept.
-  A security key left out of the upgrade gets its public key in the first
-  browser where it is used together with the recovery key.
 - Nothing is re-encrypted. Old mail keeps opening with the same key until the
   first device removal rotates it; after that the old key opens old mail
   through the chain.
-- **Rolling the dashboard back** to a version without sessions, after the
-  upgrade, leaves the inbox refusing its calls until the dashboard is rolled
-  forward. Mail data is not touched. `sessions` never returns to `"optional"`
-  (M13).
+- **Rolling back.** After the upgrade, a dashboard without sessions is
+  refused by Mail until it is rolled forward. After the **first device
+  removal**, rolling back either side locks the inbox until it is rolled
+  forward: the new active key is reachable only through seals, which an older
+  Mail Worker does not serve and an older dashboard cannot open. Nothing is
+  lost either way (an older Mail Worker skips migration 0003 and keeps sealing
+  arriving mail to the active key), and `sessions` never returns to
+  `"optional"` (M13). The first device removal is the point of no return for
+  both.
+
+## 7a. Before the first client mailbox (2026-10-19)
+
+The operator's own mailbox can use this as it is; these come first for a
+client's:
+
+- **D30 wired:** the dashboard shell's per-sign-in id. Until then "when I sign
+  out" is labelled "Until I lock it", which is what it does.
+- **A kept device names its account.** Today the record is keyed by mailbox
+  only, so another member who signs in on the same browser profile opens the
+  mailbox key in their own page before Mail refuses the device (M21), and the
+  refusal then wipes the owner's record. The record and `resumeDevice` must
+  name and check the account.
+- **D32's external review.**
+- **D24's trade, in full, in the owner's words:** any script that runs on the
+  dashboard's origin (an XSS bug, a compromised dependency, a browser
+  extension with access to the page) can read the seal from `mailbox()` and
+  open it with `deriveBits` on the stored unlock key whenever the device is
+  kept unlocked, and so take a copy of the mailbox key. **Later option:**
+  where engines can store X25519 keys (Chromium, Firefox, Safari once its
+  serializer accepts them), keep the opened mailbox key itself,
+  non-extractable, and make device seals one-shot (deleted once opened), so
+  the stored state can be used but never copied.
 
 ## 8. Out of scope
 
@@ -220,6 +247,11 @@ recovery wrap, no factor keys, `sessions: "optional"`.
 - Hardware-bound device keys. DBSC's TPM binding is not available to web
   pages.
 - Re-encrypting old mail to the new key after a removal.
+- **Deferred 2026-10-19: the workaround for WebKit bug 307095** (WebKitGTK and
+  WPE on Linux, §9). It is kept on the branch `feat/002-webkitgtk-workaround`.
+  CI tests WebKit on macOS only (the Cocoa port, Safari's Web Crypto), until
+  the fix reaches a WebKitGTK and WPE release. Until then a Linux WebKit
+  browser fails some keys closed (§9).
 
 ## 9. Facts this rests on (checked 2026-10-16)
 
@@ -235,15 +267,21 @@ recovery wrap, no factor keys, `sessions: "optional"`.
 | Workers Web Crypto: ECDSA sign/verify, ECDH and X25519 deriveBits, HKDF, HMAC, AES-GCM wrapKey/unwrapKey | Cloudflare Workers docs, through context7 |
 | `@hpke/core` 1.9.0 exports the export-only AEAD (`ExportOnly`) and `export()` on both contexts, and takes a `CryptoKey` (or pair) as the recipient key; DHKEM(P-256) is native Web Crypto | its installed type declarations (read) |
 
+**Checked while building (2026-10-18 and 19):**
+
+| Fact | Source |
+|---|---|
+| WebKit's libgcrypt backend (WebKitGTK and WPE on Linux, and Playwright's WebKit there) drops a leading zero byte from an X25519 scalar: it refuses a PKCS #8 key whose first scalar byte is zero (DataError, 300 of 300), and its X25519 `generateKey` fails about 1 draw in 256 (OperationError). It is WebKit bug 307095, fixed on WebKit main on 2026-10-09 (323215@main) and in no Playwright build yet | mail-client's WebKit probe in CI (runs 39166192512, 39168798436); the WebKit bug tracker |
+| mail-crypto works around it with no byte of any output changed: a factor key (never serialized) is imported with the three low bits of its first byte set, which X25519 ignores (RFC 7748 §5), and a fresh X25519 pair is drawn again after an OperationError | mail-crypto `src/keys.ts`, `test/engines.test.ts`; CI run 39178472679 green in WebKit on Linux and macOS, Chromium and Firefox |
+| WebKit's Cocoa port, the Web Crypto code Safari ships, does not have the bug, and keeps non-extractable P-256 keys across a reload | the probe and the kept-device browser tests on macOS (CI job `browsers-macos`); its source (`importPkcs8` copies the bytes) |
+| A mailbox key another engine made with a zero first scalar byte cannot be opened in an unfixed WebKitGTK or WPE browser. It fails closed, as a factor that did not work. Chromium never makes such a key; Firefox makes about 1 in 256 | the probe's tally of 1,200 keys per engine |
+| `@hpke/core` 1.9.0 opens a seal with a non-extractable P-256 recipient key only when it is given the key pair: from the private key alone it rebuilds the public key with an even y, which is the wrong point for about half of all keys. So a kept device keeps its unlock key's public form (K5), and opens its seal with both | the D1 builder's probe of the installed package (22 of 40 failed without the pair) |
+
 **Not verified**, and where it gets checked:
 
-- That Safari (macOS and iOS, a normal window) stores and reads back
-  non-extractable ECDSA and ECDH P-256 keys in IndexedDB. The mail-client's
-  WebKit test checks it in CI; Playwright's WebKit is not Safari, so the first
-  real check is the operator's own iPhone. Until then, D31 makes a failure
-  safe.
-- That `@hpke/core` opens with a non-extractable **P-256** recipient key (it
-  does with X25519, 001 §8). Checked by the mail-crypto builder.
+- Real Safari on macOS and iOS. Playwright's macOS WebKit runs the same Web
+  Crypto code (see above), and passes; the first check on Safari itself is the
+  operator's own iPhone. Until then, D31 makes a failure safe.
 - That Firefox on macOS and Linux passes PRF to external security keys. Not
   needed for the design (the recovery key covers any browser); worth knowing
   for the owner.
