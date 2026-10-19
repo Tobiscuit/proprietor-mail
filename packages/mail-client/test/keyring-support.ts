@@ -6,6 +6,7 @@ import {
   bindingKey,
   bindingTag,
   deriveFactorKey,
+  factorPublicKey,
   generateMailboxKey,
   newId,
   openKeySeal,
@@ -129,4 +130,21 @@ export async function substituteKey(fake: FakeMail, successor: "none" | "a key o
     old.successor = null;
   }
   fake.keys.push({ keyId: mine.publicKey.keyId, publicKey: b64url(mine.publicKey.publicKey), createdAt: old.retiredAt, createdBy: "server", retiredAt: null, successor: null });
+}
+
+/**
+ * What a buggy registration would leave (K9): the factor `wrapId` listed with a factor key that is not
+ * the one its secret derives, and a tag over that wrong key made correctly, under the active key, by a
+ * holder of it. K3 passes; only the factor itself, when used, can tell. Returns the wrong key.
+ */
+export async function misregisterFactor(fake: FakeMail, recoveryKey: string, wrapId: string): Promise<string> {
+  const active = await activeKeyByRecovery(fake, recoveryKey);
+  const bk = await bindingKey(active, { mailboxId: fake.mailboxId });
+  const wrap = fake.wraps.find((w) => w.id === wrapId)!;
+  const someoneElse = await deriveFactorKey({ mailboxId: fake.mailboxId, factorId: wrap.id, kind: wrap.kind, secret: crypto.getRandomValues(new Uint8Array(32)) }); // pragma: allowlist secret (a random test value)
+  const wrong = factorPublicKey(someoneElse);
+  wrap.factorKey = b64url(wrong);
+  wrap.tag = await bindingTag(bk, { kind: "factor", factorId: wrap.id, factorKind: wrap.kind, label: wrap.label, factorKey: wrong, credentialId: wrap.credentialId }); // pragma: allowlist secret (field names and public values, not secrets)
+  wrap.tagKeyId = fake.activeKey.keyId;
+  return wrap.factorKey;
 }

@@ -58,7 +58,7 @@ import {
   StorageUnavailable,
   UndecryptableBody,
 } from "./errors";
-import { activeOfFactor, decryptOnlyCopy, factorTag, makePasskeyWrap, makeRecoveryWrap, openFactor, type OpenedFactor } from "./factors";
+import { activeOfFactor, decryptOnlyCopy, factorTag, listedKeyMatches, makePasskeyWrap, makeRecoveryWrap, openFactor, type OpenedFactor } from "./factors";
 import { FreshFactorImpl, freshFactorOf } from "./fresh-factor";
 import { bindingOf, checkAdvertisedKey, checkTags, deviceRecipient, factorRecipient, flaggedOf, NONE_FLAGGED, readRing, trustChain, type Ring, type RingWrap } from "./keyring";
 import { parseMail } from "./mime";
@@ -147,6 +147,8 @@ export interface SessionParts {
   idleLockMs: number;
   /** K3 at the unlock: the recipients whose tag failed. */
   flagged?: FlaggedRecipients;
+  /** K9 at the unlock: the factor used, when the key ring lists another factor key for it. */
+  mismatched?: readonly string[];
 }
 
 export class Session implements UnlockedMailbox {
@@ -159,6 +161,8 @@ export class Session implements UnlockedMailbox {
   private keptDevice: KeptDevice | null = null;
   /** K3: the recipients of this.ring whose tag failed under the active key. */
   private tagFlags: FlaggedRecipients;
+  /** K9: factors used in this session whose listed factor key is not the one they derive. */
+  private readonly mismatched: Set<string>;
   /** The device's tag over "no unlock key" under the active key: what Lock now sends, made while a key is held. */
   private lockedTag: string | null = null;
   private lastActivityWrite = Number.NEGATIVE_INFINITY;
@@ -181,6 +185,7 @@ export class Session implements UnlockedMailbox {
     this.idleLockMs = parts.idleLockMs;
     this.freshFactor = parts.freshFactor;
     this.tagFlags = parts.flagged ?? NONE_FLAGGED;
+    this.mismatched = new Set(parts.mismatched ?? []);
     if (parts.freshFactor !== null) this.factors.add(parts.freshFactor);
     this.arm();
   }
@@ -207,7 +212,19 @@ export class Session implements UnlockedMailbox {
   }
 
   get flagged(): FlaggedRecipients {
-    return this.tagFlags;
+    return this.flaggedIn(this.ring);
+  }
+
+  /** K3's flags for `ring` and the factors K9 flagged, as long as the ring still lists them. */
+  private flaggedIn(ring: Ring, tagFlags: FlaggedRecipients = this.tagFlags): FlaggedRecipients {
+    const k9 = ring.wraps.filter((w) => this.mismatched.has(w.id)).map((w) => w.id);
+    return k9.length === 0 ? tagFlags : flaggedOf(tagFlags.devices, [...tagFlags.factors, ...k9]);
+  }
+
+  /** K9 for a factor just used: its derived factor key against the one the ring lists. */
+  private noteFactorMatch(factorId: string, matches: boolean | null): void {
+    if (matches === false) this.mismatched.add(factorId);
+    else if (matches === true) this.mismatched.delete(factorId);
   }
 
   get device(): DeviceInfo | null {
@@ -534,6 +551,7 @@ export class Session implements UnlockedMailbox {
     const keys = this.unlockedKeys();
     const opened = await openFactor(this.ring, reauth);
     if (!keys.has(opened.wrap.keyId)) throw new KeySubstitutionDetected("the factor's wrap is of a key the session does not hold");
+    this.noteFactorMatch(opened.wrap.id, opened.listedKeyMatches);
     const active = await activeOfFactor(this.ring, opened);
     if (active !== null) await checkAdvertisedKey(active.wrappable, this.ring.active);
     const ff = freshFactorFor(this.mailboxId, opened, active?.wrappable ?? null, this.now);
@@ -563,9 +581,13 @@ export class Session implements UnlockedMailbox {
     const devices = ring.devices ?? [];
     if (!devices.some((d) => d.id === deviceId)) throw new MailboxChanged("the view does not list that device");
     const active = this.wrappableActive(freshFactor);
+    const used = freshFactorOf(freshFactor);
+    // K9 for the factor that proves this, against the view.
+    const usedWrap = ring.wraps.find((w) => w.id === used.factorId);
+    if (usedWrap !== undefined) this.noteFactorMatch(used.factorId, listedKeyMatches(usedWrap, used.use(this.mailboxId).factorPublic));
     // K3: the view's tags under the active key, before anything is sealed. A flagged recipient is never
     // sealed to, so while one is there the only rotation is the removal of that one flagged device.
-    const flagged = await checkTags(ring, this.binding);
+    const flagged = this.flaggedIn(ring, await checkTags(ring, this.binding));
     const inTheWay = flaggedOf(
       flagged.devices.filter((id) => id !== deviceId),
       flagged.factors,
@@ -626,6 +648,7 @@ export class Session implements UnlockedMailbox {
       this.binding = nextBinding;
       // Every recipient left was checked above and is tagged under the new key by this browser.
       this.tagFlags = NONE_FLAGGED;
+      this.mismatched.clear();
       // The FreshFactor's 2 minutes go on with the new key, so a second removal needs no new prompt.
       ff.retarget(next.privateKey);
       const d = this.keptDevice;
@@ -774,7 +797,9 @@ async function unlockWithFactor(view: MailboxView, factor: ReAuth, options?: Unl
   // K3: a recipient whose tag fails is flagged; the unlock goes on (the key itself passed K2′).
   const flagged = await checkTags(ring, binding);
   const freshFactor = freshFactorFor(ring.mailboxId, opened, active.wrappable, now);
-  const session = new Session({ ring, keys, binding, store, signInId: options?.signInId ?? null, now, freshFactor, idleLockMs, flagged });
+  // K9: a factor whose listed factor key is not the one it derives is flagged too; its wrap stays its anchor.
+  const mismatched = opened.listedKeyMatches === false ? [opened.wrap.id] : [];
+  const session = new Session({ ring, keys, binding, store, signInId: options?.signInId ?? null, now, freshFactor, idleLockMs, flagged, mismatched });
   if (record !== null) {
     const current = await store!.update(ring.mailboxId, record.deviceId, { lastKeyId: ring.active.keyId, lastActiveAt: now() }).catch(() => null);
     if (current !== null) await session.bindDevice(current);

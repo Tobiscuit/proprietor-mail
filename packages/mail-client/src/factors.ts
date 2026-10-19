@@ -4,7 +4,8 @@
  * (contracts/device-v1.md A2) from the same secret, which is zeroed at once.
  * The wrap's key is the factor's anchor for K2′ (a). When the wrap is of a
  * retired key, the active key comes from the factor's seal (K2′ (b)), and the
- * chain walk must then lead back to the anchor.
+ * chain walk must then lead back to the anchor. K9: the factor key it derives
+ * is compared with the one the key ring lists for it; a mismatch flags it.
  */
 import {
   bindingTag,
@@ -22,7 +23,7 @@ import {
   type FactorPrivateKey,
   type MailboxPrivateKey,
 } from "@proprietor/mail-crypto";
-import { base64url } from "./bytes";
+import { base64url, bytesEqual, fromBase64url } from "./bytes";
 import { KeySubstitutionDetected, NoMatchingWrap, RecoveryKeyTypo, WrongRecoveryKey } from "./errors";
 import type { Ring, RingWrap } from "./keyring";
 import { assertPasskeyPrf, createPasskeyWithPrf } from "./passkeys";
@@ -37,6 +38,15 @@ export interface OpenedFactor {
   /** The same key, wrappable, for a FreshFactor when it is the active key. */
   wrapKeyWrappable: MailboxPrivateKey;
   factorKey: FactorPrivateKey;
+  /** K9: whether the factor key the wrap lists is the one this factor derives; null when it lists none. */
+  listedKeyMatches: boolean | null;
+}
+
+/** K9: the factor key a wrap lists, against the one the factor derives (null when the wrap lists none). */
+export function listedKeyMatches(wrap: Pick<RingWrap, "factorKey">, derived: Uint8Array): boolean | null {
+  if (wrap.factorKey === null) return null;
+  const listed = fromBase64url(wrap.factorKey);
+  return listed !== null && bytesEqual(listed, derived);
 }
 
 async function opened(ring: Ring, wrap: RingWrap, secret: Uint8Array): Promise<OpenedFactor> { // pragma: allowlist secret (a parameter type)
@@ -45,7 +55,7 @@ async function opened(ring: Ring, wrap: RingWrap, secret: Uint8Array): Promise<O
   const wrapKey = await unwrapPrivateKey(asWrap, ctx);
   const wrapKeyWrappable = await unwrapPrivateKey(asWrap, ctx, { wrappable: true });
   const factorKey = await deriveFactorKey({ mailboxId: ring.mailboxId, factorId: wrap.id, kind: wrap.kind, secret });
-  return { wrap, wrapKey, wrapKeyWrappable, factorKey };
+  return { wrap, wrapKey, wrapKeyWrappable, factorKey, listedKeyMatches: listedKeyMatches(wrap, factorPublicKey(factorKey)) };
 }
 
 /** Wraps of the active key first: they need no seal. */
