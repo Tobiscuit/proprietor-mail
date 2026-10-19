@@ -81,21 +81,11 @@ describe("factor proofs (B3, B6, M17)", () => {
     const keyId = u.mb.key!.keyId;
     const device = await newDevice();
     const added = await keyedWrap("passkey-prf", keyId);
-    const left = await newFactorKey(u.passkey.id, "passkey-prf");
     // A plain session for the removal: the upgrade's own becomes the kept device's, and ends with it.
     const remover = (await openSession(u.mb, u.mailboxKey)).session;
     return [
       ["registerDevice", async (proof) => mail().registerDevice(await capFor(u.mb), { device: deviceInput(device, keyId), seal: fakeSeal(142) }, { session: u.session, factorProof: proof })],
       ["addWrap", async (proof) => mail().addWrap(await capFor(u.mb), added.wrap, { session: u.session, factorProof: proof })],
-      [
-        "setFactorKey",
-        async (proof) =>
-          mail().setFactorKey(
-            await capFor(u.mb),
-            { factorId: u.passkey.id, factorKey: base64urlFromBytes(left.publicKey), tag: fakeTag(), tagKeyId: keyId, seal: null },
-            { session: u.session, factorProof: proof },
-          ),
-      ],
       ["removeWrap", async (proof) => mail().removeWrap(await capFor(u.mb), added.wrap.id, { session: u.session, factorProof: proof })],
       // Last: it rotates the key. The device is the one registerDevice kept above; the rotation is made from the view of the moment.
       [
@@ -107,8 +97,7 @@ describe("factor proofs (B3, B6, M17)", () => {
   }
 
   it("each method that needs one refuses without a factor proof, with a wrong, used or session one, and changes nothing; with a good one it works", async () => {
-    // The passkey is left out of the upgrade, so setFactorKey has a factor to key; the recovery key proves.
-    const u = await upgradedMailbox({ passkeyLeftOut: true });
+    const u = await upgradedMailbox();
     for (const [method, call] of await factorCalls(u)) {
       const before = await view(u.mb);
       expect([method, refusalOf(await call())]).toEqual([method, PROOF_REJECTED]);
@@ -125,7 +114,7 @@ describe("factor proofs (B3, B6, M17)", () => {
     }
     // Per method: the wrong answer, its reuse, the session challenge, and the good proof's reuse. A missing proof is not a proof, and is not audited.
     const reasons = (await audits(u.mb, "proof-rejected")).map((a) => a.detail.reason);
-    expect(reasons).toEqual(Array.from({ length: 5 }, () => ["answer", "used", "purpose", "used"]).flat());
+    expect(reasons).toEqual(Array.from({ length: 4 }, () => ["answer", "used", "purpose", "used"]).flat());
   });
 
   it("audits the replay of a spent factor proof once: five tries, one proof-rejected row", async () => {
@@ -412,66 +401,6 @@ describe("updateDevice (B7, F3, F4)", () => {
       expect(refusalOf(await mail().updateDevice(await capFor(u.mb), request, { session })).name).toBe("InvalidRequest");
     }
     expect((await view(u.mb)).devices[0]!.unlockKey).toBe(base64urlFromBytes(device.unlockKey!));
-  });
-});
-
-describe("setFactorKey (B7, F9)", () => {
-  it("gives a factor without one its key, proved by another factor, with no seal while its wrap is of the active key; audited factor-key-set", async () => {
-    const u = await upgradedMailbox({ passkeyLeftOut: true });
-    const keyId = u.mb.key!.keyId;
-    const tag = fakeTag();
-    const request = { factorId: u.passkey.id, factorKey: base64urlFromBytes(u.passkey.publicKey), tag, tagKeyId: keyId, seal: null };
-    expect(await mail().setFactorKey(await capFor(u.mb), request, { session: u.session, factorProof: await factorProof(u.mb, u.recovery) })).toEqual({ ok: true, value: null });
-    expect((await view(u.mb)).wraps.find((w) => w.id === u.passkey.id)).toMatchObject({ factorKey: request.factorKey, tag, tagKeyId: keyId });
-    expect(await audits(u.mb, "factor-key-set")).toEqual([{ actor: "acc_owner", detail: { factor: u.passkey.id, kind: "passkey-prf", seal: false, via: u.recovery.id } }]);
-    // From now on the passkey proves for itself.
-    await factorProof(u.mb, u.passkey);
-  });
-
-  it("refuses a proof from the factor being keyed, a factor that has a key, and an unknown factor", async () => {
-    const u = await upgradedMailbox({ passkeyLeftOut: true });
-    const keyId = u.mb.key!.keyId;
-    const other = await newFactorKey(testId("wrp"), "recovery");
-    const set = async (factorId: string, factor: TestFactor) =>
-      mail().setFactorKey(
-        await capFor(u.mb),
-        { factorId, factorKey: base64urlFromBytes(other.publicKey), tag: fakeTag(), tagKeyId: keyId, seal: null },
-        { session: u.session, factorProof: await factorProof(u.mb, factor) },
-      );
-    expect(refusalOf(await set(u.recovery.id, u.recovery))).toEqual({ name: "InvalidRequest", message: "invalid request: the factor proof must come from another factor" });
-    // A second recovery key, keyed, to prove with.
-    const second = await keyedWrap("recovery", keyId);
-    valueOf(await mail().addWrap(await capFor(u.mb), second.wrap, { session: u.session, factorProof: await factorProof(u.mb, u.recovery) }));
-    expect(refusalOf(await set(u.recovery.id, second.factor))).toEqual({ name: "InvalidRequest", message: "invalid request: that factor already has a factor key" });
-    expect(refusalOf(await set(testId("wrp"), u.recovery))).toEqual({ name: "InvalidRequest", message: "invalid request: no such factor" });
-  });
-
-  it("refuses an unusable factor key, a tag not under the active key, and a seal while the wrap is of the active key", async () => {
-    const u = await upgradedMailbox({ passkeyLeftOut: true });
-    const keyId = u.mb.key!.keyId;
-    const good = { factorId: u.passkey.id, factorKey: base64urlFromBytes(u.passkey.publicKey), tag: fakeTag(), tagKeyId: keyId, seal: null };
-    for (const over of [
-      { factorKey: base64urlFromBytes(new Uint8Array(32)) },
-      { factorKey: random(33) },
-      { tagKeyId: (await newKeyPair()).keyId },
-      { seal: fakeSeal(109) },
-      { seal: undefined },
-    ]) {
-      const answer = await mail().setFactorKey(await capFor(u.mb), { ...good, ...over }, { session: u.session, factorProof: await factorProof(u.mb, u.recovery) });
-      expect([Object.keys(over)[0], refusalOf(answer).name]).toEqual([Object.keys(over)[0], "InvalidRequest"]);
-    }
-    expect((await view(u.mb)).wraps.find((w) => w.id === u.passkey.id)!.factorKey).toBeNull();
-  });
-
-  it("is refused while sessions are optional", async () => {
-    const { mb, mailboxKey, passkeyId } = await legacyMailbox();
-    const { session } = await openSession(mb, mailboxKey);
-    const passkey = await newFactorKey(passkeyId, "passkey-prf");
-    const request = { factorId: passkeyId, factorKey: base64urlFromBytes(passkey.publicKey), tag: fakeTag(), tagKeyId: mb.key!.keyId, seal: null };
-    expect(refusalOf(await mail().setFactorKey(await capFor(mb), request, { session }))).toEqual({
-      name: "InvalidRequest",
-      message: "invalid request: sessions are not on for this mailbox: upgrade first",
-    });
   });
 });
 

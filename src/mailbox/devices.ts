@@ -50,9 +50,11 @@ async function parseFactorKey(value: unknown, what: string): Promise<FactorKeyIn
 /**
  * B5, M20: the one moment an existing mailbox learns factor keys without a
  * factor proof (D26, G30). Only while sessions are optional and no factor has
- * a key, in a live session (opened with a key proof), naming wraps of the
- * active key with tags under it, a recovery wrap among them. The factor keys,
- * the tags and `sessions = required` are written together, for good (M13).
+ * a key, in a live session (opened with a key proof), naming every wrap of the
+ * mailbox exactly once, each a wrap of the active key with a tag under it: so
+ * every factor, the recovery key included (M5), gets its key in this one step,
+ * and none is left that no later key could reach. The factor keys, the tags
+ * and `sessions = required` are written together, for good (M13).
  */
 export async function upgradeMailbox(store: MailboxStore, ctx: CallContext, access: Access, request: unknown): Promise<null> {
   if (access.session === null) throw new SessionRequired();
@@ -68,13 +70,15 @@ export async function upgradeMailbox(store: MailboxStore, ctx: CallContext, acce
     const key = store.activeKey();
     if (key === null) throw new MailboxNotActive();
     if (rows(store.sql, "SELECT 1 FROM key_wraps WHERE factor_key IS NOT NULL LIMIT 1").length > 0) throw new InvalidRequest("a factor already has a factor key");
-    const kinds = factors.map((f) => {
+    for (const f of factors) {
       const wrap = wrapRow(store.sql, f.id);
       if (wrap === null || wrap.key_id !== key.keyId) throw new InvalidRequest("a factor is not a wrap of the active key");
       if (f.tagKeyId !== key.keyId) throw new InvalidRequest("a tag must be made under the active key");
-      return wrap.kind;
-    });
-    if (!kinds.includes("recovery")) throw new InvalidRequest("the upgrade must name a recovery factor");
+    }
+    // Every wrap the mailbox has, once each (names are unique, checked above).
+    const wraps = rows<{ id: string }>(store.sql, "SELECT id FROM key_wraps");
+    const named = new Set(factors.map((f) => f.id));
+    if (wraps.length !== named.size || wraps.some((w) => !named.has(w.id))) throw new InvalidRequest("the upgrade must name every wrap of the mailbox, once each");
     for (const f of factors) {
       store.sql.exec("UPDATE key_wraps SET factor_key = ?, tag = ?, tag_key_id = ? WHERE id = ?", f.factorKey, f.tag, f.tagKeyId, f.id);
     }
@@ -324,35 +328,6 @@ export function removeKeyedWrap(store: MailboxStore, ctx: CallContext, wrapId: s
     store.sql.exec("DELETE FROM key_seals WHERE to_kind = 'factor' AND to_id = ?", wrapId);
     store.sql.exec("DELETE FROM key_wraps WHERE id = ?", wrapId);
     store.audit(ctx.actor.accountId, "wrap-removed", { wrap: wrapId, kind: wrap.kind });
-  });
-  return null;
-}
-
-/**
- * B7, F9: a factor left out of the upgrade gets its factor key, proved by
- * another factor. When its wrap is of a retired key, it also needs a seal of
- * the active key, or it could not reach the key new mail is sealed to.
- */
-export async function setFactorKey(store: MailboxStore, ctx: CallContext, access: Access, request: unknown): Promise<null> {
-  if (access.sessions === "optional") throw new InvalidRequest(UPGRADE_FIRST);
-  const r = v.object(request, "factor key", ["factorId", "factorKey", "tag", "tagKeyId", "seal"]);
-  const factorId = v.id(r.factorId, "factor id", "wrp");
-  if (access.factor?.id === factorId) throw new InvalidRequest("the factor proof must come from another factor");
-  const factorKey = await x25519Key(r.factorKey, "factor key");
-  const newTag = tag(r.tag, "tag");
-  const tagKeyId = keyIdOf(r.tagKeyId, "tag key id");
-  store.transaction(() => {
-    const key = activeKeyOf(store);
-    const wrap = wrapRow(store.sql, factorId);
-    if (wrap === null) throw new InvalidRequest("no such factor");
-    if (wrap.factor_key !== null) throw new InvalidRequest("that factor already has a factor key");
-    if (tagKeyId !== key.keyId) throw new InvalidRequest("a tag must be made under the active key");
-    let seal: string | null = null;
-    if (wrap.key_id !== key.keyId) seal = v.base64url(r.seal, "seal", { bytes: FACTOR_SEAL_BYTES });
-    else if (r.seal !== null) throw new InvalidRequest("the factor's wrap is of the active key: it takes no seal");
-    store.sql.exec("UPDATE key_wraps SET factor_key = ?, tag = ?, tag_key_id = ? WHERE id = ?", factorKey, newTag, tagKeyId, factorId);
-    if (seal !== null) insertSeal(store, key.keyId, "factor", factorId, seal, store.now().toISOString(), ctx.actor.accountId);
-    store.audit(ctx.actor.accountId, "factor-key-set", { factor: factorId, kind: wrap.kind, seal: seal !== null, via: access.factor!.id });
   });
   return null;
 }

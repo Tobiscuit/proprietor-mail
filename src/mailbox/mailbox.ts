@@ -37,7 +37,6 @@ import {
   registerDevice,
   removeDevice,
   removeKeyedWrap,
-  setFactorKey,
   splitFactorFields,
   updateDevice,
   upgradeMailbox,
@@ -633,14 +632,6 @@ export class Mailbox extends Agent<Env> {
     return this.answer("removeDevice", async () => {
       const access = await this.enter(ctx, "removeDevice", "owner");
       return removeDevice(this.store(), ctx, access, request);
-    });
-  }
-
-  /** B7, F9: a factor left out of the upgrade gets its factor key, proved by another factor. */
-  async setFactorKey(ctx: CallContext, request: unknown): Promise<MailResult<null>> {
-    return this.answer("setFactorKey", async () => {
-      const access = await this.enter(ctx, "setFactorKey", "owner");
-      return setFactorKey(this.store(), ctx, access, request);
     });
   }
 

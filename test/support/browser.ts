@@ -187,20 +187,14 @@ export interface Upgraded {
   passkey: TestFactor;
 }
 
-/**
- * F5: a legacy mailbox, a session opened with a key proof, then the upgrade
- * naming both factors, or the recovery key alone (`passkeyLeftOut`: the
- * passkey then has no factor key until setFactorKey, F9; its TestFactor is
- * the key it would be given).
- */
-export async function upgradedMailbox(opts: { passkeyLeftOut?: boolean } = {}): Promise<Upgraded> {
+/** F5: a legacy mailbox, a session opened with a key proof, then the upgrade, which names every factor (B5). */
+export async function upgradedMailbox(): Promise<Upgraded> {
   const { mb, mailboxKey, recoveryId, passkeyId } = await legacyMailbox();
   const recovery = await newFactorKey(recoveryId, "recovery");
   const passkey = await newFactorKey(passkeyId, "passkey-prf");
   const { session } = await openSession(mb, mailboxKey);
   const keyId = mb.key!.keyId;
-  const factors = opts.passkeyLeftOut ? [factorInput(recovery, keyId)] : [factorInput(recovery, keyId), factorInput(passkey, keyId)];
-  valueOf(await mail().upgrade(await capFor(mb), { factors }, { session }));
+  valueOf(await mail().upgrade(await capFor(mb), { factors: [factorInput(recovery, keyId), factorInput(passkey, keyId)] }, { session }));
   return { mb, mailboxKey, session, recovery, passkey };
 }
 

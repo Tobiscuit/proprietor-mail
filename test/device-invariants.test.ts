@@ -208,7 +208,6 @@ describe("answers are values from every new method (contracts/mail-service-v1.md
       ["registerDevice", () => mail().registerDevice(cap, {}, {})],
       ["updateDevice", () => mail().updateDevice(cap, {}, {})],
       ["removeDevice", () => mail().removeDevice(cap, {}, {})],
-      ["setFactorKey", () => mail().setFactorKey(cap, {}, {})],
     ];
   }
 

@@ -52,7 +52,6 @@ export const SESSION_NEEDS = {
   registerDevice: "factor",
   updateDevice: "device-session",
   removeDevice: "factor",
-  setFactorKey: "factor",
 } as const satisfies Record<string, Need>;
 
 export type MailServiceMethod = keyof typeof SESSION_NEEDS;

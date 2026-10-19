@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest";
 import worker from "../src/index";
 import {
   challenge,
-  factorInput,
   factorProof,
   fakeSeal,
   fakeTag,
@@ -17,7 +16,6 @@ import {
   openSession,
   rotationFor,
   signProof,
-  type TestDevice,
   type Upgraded,
   upgradedMailbox,
 } from "./support/browser";
@@ -231,24 +229,13 @@ describe("removeDevice: the device goes and the key rotates, in one transaction 
 });
 
 describe("M5′ through rotations: the active key stays reachable by a recovery factor", () => {
-  /** A legacy mailbox with a second recovery wrap, upgraded naming the first only: the second has no factor key. */
-  async function twoRecoveries() {
-    const { mb, mailboxKey, recoveryId, passkeyId } = await legacyMailbox();
-    const spare = recoveryWrap(mb.key!.keyId, { label: "Spare sheet" });
-    valueOf(await mail().addWrap(await capFor(mb), spare));
-    const recovery = await newFactorKey(recoveryId, "recovery");
-    const passkey = await newFactorKey(passkeyId, "passkey-prf");
-    const { session } = await openSession(mb, mailboxKey);
-    valueOf(await mail().upgrade(await capFor(mb), { factors: [factorInput(recovery, mb.key!.keyId), factorInput(passkey, mb.key!.keyId)] }, { session }));
-    const u: Upgraded = { mb, mailboxKey, session, recovery, passkey };
-    return { u, spare };
-  }
-
   it("refuses a rotation that would reach no recovery factor", async () => {
-    const { u } = await twoRecoveries();
+    const u = await upgradedMailbox();
     const device = await keepDevice(u);
-    // The keyed recovery key goes: the spare, unkeyed, still reaches the active key through its own wrap (M5′).
-    valueOf(await mail().removeWrap(await capFor(u.mb), u.recovery.id, { session: u.session, factorProof: await factorProof(u.mb, u.passkey) }));
+    // The upgrade takes every factor (B5), so no call leaves a recovery wrap without a factor key now. The
+    // state is made here directly, so removeDevice's guard keeps a test: the recovery wrap still reaches the
+    // active key through its own wrap, but a new key would reach no recovery factor.
+    await sql(u.mb, "UPDATE key_wraps SET factor_key = NULL, tag = NULL, tag_key_id = NULL WHERE id = ?", u.recovery.id);
     const { session: remover } = await openSession(u.mb, u.mailboxKey);
     const { rotation } = await rotationFor(u.mb, device.id);
     const answer = await mail().removeDevice(await capFor(u.mb), { deviceId: device.id, rotation }, { session: remover, factorProof: await factorProof(u.mb, u.passkey) });
@@ -256,35 +243,27 @@ describe("M5′ through rotations: the active key stays reachable by a recovery 
     expect((await view(u.mb)).devices.map((d) => d.id)).toEqual([device.id]);
   });
 
-  it("after a rotation, removeWrap counts only recovery factors that reach the new key", async () => {
-    const { u, spare } = await twoRecoveries();
+  it("after a rotation, a recovery factor reaches the new key through its seal, and removeWrap counts it so", async () => {
+    const u = await upgradedMailbox();
+    const keyId = u.mb.key!.keyId;
+    const spareWrap = recoveryWrap(keyId, { label: "Spare sheet" });
+    const spare = await newFactorKey(spareWrap.id, "recovery");
+    valueOf(
+      await mail().addWrap(
+        await capFor(u.mb),
+        { ...spareWrap, factorKey: base64urlFromBytes(spare.publicKey), tag: fakeTag(), tagKeyId: keyId },
+        { session: u.session, factorProof: await factorProof(u.mb, u.recovery) },
+      ),
+    );
     const device = await keepDevice(u);
     const { session: remover } = await openSession(u.mb, u.mailboxKey);
     const { rotation } = await rotationFor(u.mb, device.id);
     valueOf(await mail().removeDevice(await capFor(u.mb), { deviceId: device.id, rotation }, { session: remover, factorProof: await factorProof(u.mb, u.recovery) }));
-    // The spare's wrap is of the retired key and it has no factor key: it does not reach the new one.
-    expect(refusalOf(await mail().removeWrap(await capFor(u.mb), u.recovery.id, { session: remover, factorProof: await factorProof(u.mb, u.passkey) }))).toEqual({
+    // Both recovery wraps are of the retired key now: each reaches the new key only through its seal.
+    valueOf(await mail().removeWrap(await capFor(u.mb), u.recovery.id, { session: remover, factorProof: await factorProof(u.mb, spare) }));
+    expect(refusalOf(await mail().removeWrap(await capFor(u.mb), spareWrap.id, { session: remover, factorProof: await factorProof(u.mb, u.passkey) }))).toEqual({
       name: "InvalidRequest",
       message: "invalid request: the last recovery factor that reaches the active key cannot be removed",
     });
-    valueOf(await mail().removeWrap(await capFor(u.mb), spare.id, { session: remover, factorProof: await factorProof(u.mb, u.recovery) }));
-  });
-});
-
-describe("setFactorKey after a rotation (B7, F9)", () => {
-  it("needs a seal of the active key for a factor whose wrap is of a retired key, and stores it with the factor's seals", async () => {
-    const u = await upgradedMailbox({ passkeyLeftOut: true });
-    const device: TestDevice = await keepDevice(u);
-    const { session: remover } = await openSession(u.mb, u.mailboxKey);
-    const { next, rotation } = await rotationFor(u.mb, device.id);
-    valueOf(await mail().removeDevice(await capFor(u.mb), { deviceId: device.id, rotation }, { session: remover, factorProof: await factorProof(u.mb, u.recovery) }));
-    const request = { factorId: u.passkey.id, factorKey: base64urlFromBytes(u.passkey.publicKey), tag: fakeTag(), tagKeyId: next.keyId, seal: null as string | null };
-    expect(refusalOf(await mail().setFactorKey(await capFor(u.mb), request, { session: remover, factorProof: await factorProof(u.mb, u.recovery) })).name).toBe("InvalidRequest");
-    const seal = fakeSeal(109);
-    valueOf(await mail().setFactorKey(await capFor(u.mb), { ...request, seal }, { session: remover, factorProof: await factorProof(u.mb, u.recovery) }));
-    expect((await view(u.mb)).seals).toContainEqual({ keyId: next.keyId, to: { kind: "factor", id: u.passkey.id }, sealed: seal });
-    expect((await sql<{ detail: string }>(u.mb, "SELECT detail FROM audit WHERE action = 'factor-key-set'")).map((r) => JSON.parse(r.detail))).toEqual([
-      { factor: u.passkey.id, kind: "passkey-prf", seal: true, via: u.recovery.id },
-    ]);
   });
 });

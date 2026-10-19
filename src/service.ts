@@ -78,7 +78,6 @@ export type MailboxRpc = Pick<
   | "registerDevice"
   | "updateDevice"
   | "removeDevice"
-  | "setFactorKey"
   | "enroll"
   | "addWrap"
   | "removeWrap"
@@ -175,11 +174,6 @@ export class MailService extends WorkerEntrypoint<Env> {
    */
   async removeDevice(cap: string, request: unknown, auth?: Auth): Promise<MailResult<{ keyId: string }>> {
     return this.#withMailbox("removeDevice", cap, auth, (stub, ctx) => stub.removeDevice(ctx, request));
-  }
-
-  /** B7, F9: a factor left out of the upgrade gets its factor key, proved by another factor. */
-  async setFactorKey(cap: string, request: unknown, auth?: Auth): Promise<MailResult<null>> {
-    return this.#withMailbox("setFactorKey", cap, auth, (stub, ctx) => stub.setFactorKey(ctx, request));
   }
 
   async addWrap(cap: string, wrap: unknown, auth?: Auth): Promise<MailResult<null>> {

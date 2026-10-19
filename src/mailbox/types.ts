@@ -52,7 +52,7 @@ export interface WrapView {
   wrapped: string;
   createdAt: string;
   createdBy: string;
-  /** The factor's X25519 public key (device-v1 A2), base64url; null until the upgrade or `setFactorKey`. */
+  /** The factor's X25519 public key (device-v1 A2), base64url; null until the upgrade gives every factor its key. */
   factorKey: string | null;
   /** Its binding tag (A5), base64url, made under `tagKeyId`; null while `factorKey` is. */
   tag: string | null;

@@ -275,15 +275,29 @@ describe("the upgrade (B5, M20, M13)", () => {
     expect(await sql(u.mb, "SELECT sessions FROM policy")).toEqual([{ sessions: "required" }]);
   });
 
-  it("needs a recovery factor among those it names (M20)", async () => {
-    const { mb, mailboxKey, passkeyId } = await legacyMailbox();
+  it("names every wrap of the mailbox, exactly once (B5, M20): one left out is refused, and nothing changes", async () => {
+    const { mb, mailboxKey, recoveryId, passkeyId } = await legacyMailbox();
+    const recovery = await newFactorKey(recoveryId, "recovery");
     const passkey = await newFactorKey(passkeyId, "passkey-prf");
     const { session } = await openSession(mb, mailboxKey);
-    expect(refusalOf(await mail().upgrade(await capFor(mb), { factors: [factorInput(passkey, mb.key!.keyId)] }, { session }))).toEqual({
-      name: "InvalidRequest",
-      message: "invalid request: the upgrade must name a recovery factor",
-    });
+    const keyId = mb.key!.keyId;
+    const every = { name: "InvalidRequest", message: "invalid request: the upgrade must name every wrap of the mailbox, once each" };
+    expect(refusalOf(await mail().upgrade(await capFor(mb), { factors: [factorInput(recovery, keyId)] }, { session }))).toEqual(every);
+    expect(refusalOf(await mail().upgrade(await capFor(mb), { factors: [factorInput(passkey, keyId)] }, { session }))).toEqual(every);
     expect(valueOf(await mail().mailbox(await capFor(mb))).sessions).toBe("optional");
+    expect(await sql(mb, "SELECT COUNT(*) AS n FROM key_wraps WHERE factor_key IS NOT NULL OR tag IS NOT NULL")).toEqual([{ n: 0 }]);
+    valueOf(await mail().upgrade(await capFor(mb), { factors: [factorInput(passkey, keyId), factorInput(recovery, keyId)] }, { session }));
+    expect(valueOf(await mail().mailbox(await capFor(mb))).sessions).toBe("required");
+  });
+
+  it("takes a mailbox whose owner first removed a factor they no longer have: no proof is needed while sessions are optional", async () => {
+    const { mb, mailboxKey, recoveryId, passkeyId } = await legacyMailbox();
+    valueOf(await mail().removeWrap(await capFor(mb), passkeyId));
+    const recovery = await newFactorKey(recoveryId, "recovery");
+    const { session } = await openSession(mb, mailboxKey);
+    valueOf(await mail().upgrade(await capFor(mb), { factors: [factorInput(recovery, mb.key!.keyId)] }, { session }));
+    const view = valueOf(await mail().mailbox(await capFor(mb)));
+    expect([view.sessions, view.wraps.map((w) => [w.id, w.factorKey !== null])]).toEqual(["required", [[recoveryId, true]]]);
   });
 
   it("names wraps of the active key only, each once, with tags under the active key and usable factor keys", async () => {
@@ -348,7 +362,6 @@ function sessionMethods(mb: TestMailbox): [string, (cap: string, auth?: { sessio
     ["registerDevice", (cap, auth) => mail().registerDevice(cap, {}, auth)],
     ["updateDevice", (cap, auth) => mail().updateDevice(cap, {}, auth)],
     ["removeDevice", (cap, auth) => mail().removeDevice(cap, {}, auth)],
-    ["setFactorKey", (cap, auth) => mail().setFactorKey(cap, {}, auth)],
   ];
 }
 
@@ -435,7 +448,6 @@ describe("SESSION_NEEDS (plan.md §4): one table names what every MailService me
       registerDevice: "factor",
       updateDevice: "device-session",
       removeDevice: "factor",
-      setFactorKey: "factor",
     });
   });
 
