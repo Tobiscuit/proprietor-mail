@@ -2,14 +2,13 @@
  * The byte formats of contracts/envelope-v1.md: the HPKE key envelope and the
  * AES-256-GCM blocks, with every piece of associated data spelled out once.
  */
-import { Aes256Gcm, CipherSuite, HkdfSha256 } from "@hpke/core";
+import { Aes256Gcm, CipherSuite, DhkemX25519HkdfSha256, HkdfSha256 } from "@hpke/core";
 import { bytesEqual, concat, copy, randomBytes, utf8 } from "./bytes";
 import { DecryptionFailed } from "./errors";
-import { X25519Kem } from "./keys";
 
-/** HPKE base mode, DHKEM(X25519, HKDF-SHA256) / HKDF-SHA256 / AES-256-GCM (0x0020, 0x0001, 0x0002). The KEM is @hpke/core's, with its ephemeral key drawn by generateX25519KeyPair (keys.ts). */
+/** HPKE base mode, DHKEM(X25519, HKDF-SHA256) / HKDF-SHA256 / AES-256-GCM (0x0020, 0x0001, 0x0002). */
 const suite = new CipherSuite({
-  kem: new X25519Kem(),
+  kem: new DhkemX25519HkdfSha256(),
   kdf: new HkdfSha256(),
   aead: new Aes256Gcm(),
 });
