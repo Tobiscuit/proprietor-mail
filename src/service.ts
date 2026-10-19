@@ -6,15 +6,19 @@ import type { Env } from "./env";
 import { CapabilityRejected, InvalidRequest, type MailResult, NotFound, Refusal, errorName, internalError, ok, refused } from "./errors";
 import { logAlert, logEvent } from "./log";
 import type { Mailbox } from "./mailbox/mailbox";
+import { NO_AUTH, parseAuth } from "./mailbox/sessions";
 import type {
   AuditEntry,
   CallContext,
+  ChallengeView,
+  DeviceView,
   DraftRecord,
   ListPage,
   MailboxView,
   MessageItem,
   PolicyView,
   SendResult,
+  SessionView,
 } from "./mailbox/types";
 
 /**
@@ -33,7 +37,23 @@ import type {
  *
  * Every call writes exactly one log line: the method, the capability's jti and
  * the outcome, so the dashboard's log of the same jti finds it. Never content.
+ *
+ * Spec 002 (contracts/device-v1.md Part B): every mailbox call but
+ * `mailboxes`, `mailbox`, `unread`, `enroll`, `challenge` and `openSession`
+ * takes a last argument `auth` (B1), the mail session and, where it is
+ * needed, a factor proof; `send` carries its session inside the request (D29).
+ * Each answer's need is SESSION_NEEDS's (src/mailbox/sessions.ts), applied in
+ * the Mailbox. Every public method of this class is an RPC method; its
+ * helpers are `#private`, so the runtime does not serve them.
  */
+
+/** device-v1 B1: the last argument of every method that needs a session. */
+export interface Auth {
+  /** The token from openSession(). */
+  session?: string;
+  /** A fresh factor proof, for the methods that need one. */
+  factorProof?: { challengeId: string; answer: string };
+}
 
 let keyCache: { json: string | undefined; keys: CapabilityKeys } | undefined;
 
@@ -52,6 +72,12 @@ function capabilityKeys(env: Env): CapabilityKeys {
 export type MailboxRpc = Pick<
   Mailbox,
   | "describe"
+  | "createChallenge"
+  | "openSession"
+  | "upgrade"
+  | "registerDevice"
+  | "updateDevice"
+  | "removeDevice"
   | "enroll"
   | "addWrap"
   | "removeWrap"
@@ -90,7 +116,7 @@ export interface MailboxSummary {
 export class MailService extends WorkerEntrypoint<Env> {
   /** The capability's business's mailboxes, for "not set up" / "set up your inbox" / the inbox. Any member role. */
   async mailboxes(cap: string): Promise<MailResult<MailboxSummary[]>> {
-    return this.call("mailboxes", cap, async (capability) =>
+    return this.#call("mailboxes", cap, async (capability) =>
       ok(
         (await new Directory(this.env.DIRECTORY).forBusiness(capability.business)).map((m) => ({
           id: m.id,
@@ -103,12 +129,12 @@ export class MailService extends WorkerEntrypoint<Env> {
   }
 
   async mailbox(cap: string): Promise<MailResult<MailboxView>> {
-    return this.withMailbox("mailbox", cap, (stub, ctx) => stub.describe(ctx));
+    return this.#withMailbox("mailbox", cap, undefined, (stub, ctx) => stub.describe(ctx));
   }
 
   /** Only while provisioned; M5: the Directory row turns active only after the key ring has a key and a recovery wrap. */
   async enroll(cap: string, input: unknown): Promise<MailResult<{ keyId: string }>> {
-    return this.withMailbox("enroll", cap, async (stub, ctx) => {
+    return this.#withMailbox("enroll", cap, undefined, async (stub, ctx) => {
       const enrolled = await stub.enroll(ctx, input);
       // A failed activation is an InternalError; the retry is safe (the Mailbox takes the same key again).
       if (enrolled.ok) await new Directory(this.env.DIRECTORY).activate(ctx.mailbox.id, new Date());
@@ -116,16 +142,50 @@ export class MailService extends WorkerEntrypoint<Env> {
     });
   }
 
-  async addWrap(cap: string, wrap: unknown): Promise<MailResult<null>> {
-    return this.withMailbox("addWrap", cap, (stub, ctx) => stub.addWrap(ctx, wrap));
+  /** B6: a challenge sealed to the active key (`purpose: "session"`) or to a factor's key. No session needed. */
+  async challenge(cap: string, request: unknown): Promise<MailResult<ChallengeView>> {
+    return this.#withMailbox("challenge", cap, undefined, (stub, ctx) => stub.createChallenge(ctx, request));
   }
 
-  async removeWrap(cap: string, wrapId: string): Promise<MailResult<null>> {
-    return this.withMailbox("removeWrap", cap, (stub, ctx) => stub.removeWrap(ctx, wrapId));
+  /** B6: a 60-minute mail session from a key proof (and a kept device's signature). */
+  async openSession(cap: string, request: unknown): Promise<MailResult<SessionView>> {
+    return this.#withMailbox("openSession", cap, undefined, (stub, ctx) => stub.openSession(ctx, request));
   }
 
-  async list(cap: string, query: unknown): Promise<MailResult<ListPage>> {
-    return this.withMailbox("list", cap, (stub, ctx) => stub.listMessages(ctx, query));
+  /** B5: an existing mailbox learns its factors' keys, and sessions become required, once. */
+  async upgrade(cap: string, request: unknown, auth?: Auth): Promise<MailResult<null>> {
+    return this.#withMailbox("upgrade", cap, auth, (stub, ctx) => stub.upgrade(ctx, request));
+  }
+
+  /** B7, F1: keeps the calling browser as a device, with a factor proof; the caller's session becomes the device's. */
+  async registerDevice(cap: string, request: unknown, auth?: Auth): Promise<MailResult<DeviceView>> {
+    return this.#withMailbox("registerDevice", cap, auth, (stub, ctx) => stub.registerDevice(ctx, request));
+  }
+
+  /** B7: from a device's own session, its new unlock key, tag and seal, or none (it locked). */
+  async updateDevice(cap: string, request: unknown, auth?: Auth): Promise<MailResult<DeviceView>> {
+    return this.#withMailbox("updateDevice", cap, auth, (stub, ctx) => stub.updateDevice(ctx, request));
+  }
+
+  /**
+   * B7, F6: removes a kept device and rotates the mailbox key in one step: the
+   * new key sealed to every remaining recipient, the old one retired with its
+   * successor seal, every other session ended. Answers the new key's id.
+   */
+  async removeDevice(cap: string, request: unknown, auth?: Auth): Promise<MailResult<{ keyId: string }>> {
+    return this.#withMailbox("removeDevice", cap, auth, (stub, ctx) => stub.removeDevice(ctx, request));
+  }
+
+  async addWrap(cap: string, wrap: unknown, auth?: Auth): Promise<MailResult<null>> {
+    return this.#withMailbox("addWrap", cap, auth, (stub, ctx) => stub.addWrap(ctx, wrap));
+  }
+
+  async removeWrap(cap: string, wrapId: string, auth?: Auth): Promise<MailResult<null>> {
+    return this.#withMailbox("removeWrap", cap, auth, (stub, ctx) => stub.removeWrap(ctx, wrapId));
+  }
+
+  async list(cap: string, query: unknown, auth?: Auth): Promise<MailResult<ListPage>> {
+    return this.#withMailbox("list", cap, auth, (stub, ctx) => stub.listMessages(ctx, query));
   }
 
   /**
@@ -133,8 +193,8 @@ export class MailService extends WorkerEntrypoint<Env> {
    * `value` of an ok answer is the object's byte stream, which Workers RPC
    * carries inside the result with flow control.
    */
-  async body(cap: string, messageId: string): Promise<MailResult<ReadableStream>> {
-    return this.withMailbox("body", cap, async (stub, ctx) => {
+  async body(cap: string, messageId: string, auth?: Auth): Promise<MailResult<ReadableStream>> {
+    return this.#withMailbox("body", cap, auth, async (stub, ctx) => {
       const key = await stub.bodyKey(ctx, messageId);
       if (!key.ok) return key;
       const object = await this.env.MAIL.get(key.value);
@@ -143,57 +203,69 @@ export class MailService extends WorkerEntrypoint<Env> {
     });
   }
 
-  async update(cap: string, messageId: string, patch: unknown): Promise<MailResult<MessageItem>> {
-    return this.withMailbox("update", cap, (stub, ctx) => stub.updateMessage(ctx, messageId, patch));
+  async update(cap: string, messageId: string, patch: unknown, auth?: Auth): Promise<MailResult<MessageItem>> {
+    return this.#withMailbox("update", cap, auth, (stub, ctx) => stub.updateMessage(ctx, messageId, patch));
   }
 
-  async purge(cap: string, messageId: string): Promise<MailResult<null>> {
-    return this.withMailbox("purge", cap, (stub, ctx) => stub.purgeMessage(ctx, messageId));
+  async purge(cap: string, messageId: string, auth?: Auth): Promise<MailResult<null>> {
+    return this.#withMailbox("purge", cap, auth, (stub, ctx) => stub.purgeMessage(ctx, messageId));
   }
 
-  async drafts(cap: string): Promise<MailResult<DraftRecord[]>> {
-    return this.withMailbox("drafts", cap, (stub, ctx) => stub.listDrafts(ctx));
+  async drafts(cap: string, auth?: Auth): Promise<MailResult<DraftRecord[]>> {
+    return this.#withMailbox("drafts", cap, auth, (stub, ctx) => stub.listDrafts(ctx));
   }
 
-  async saveDraft(cap: string, draft: unknown): Promise<MailResult<{ id: string; updatedAt: string }>> {
-    return this.withMailbox("saveDraft", cap, (stub, ctx) => stub.saveDraft(ctx, draft));
+  async saveDraft(cap: string, draft: unknown, auth?: Auth): Promise<MailResult<{ id: string; updatedAt: string }>> {
+    return this.#withMailbox("saveDraft", cap, auth, (stub, ctx) => stub.saveDraft(ctx, draft));
   }
 
-  async deleteDraft(cap: string, draftId: string): Promise<MailResult<null>> {
-    return this.withMailbox("deleteDraft", cap, (stub, ctx) => stub.deleteDraft(ctx, draftId));
+  async deleteDraft(cap: string, draftId: string, auth?: Auth): Promise<MailResult<null>> {
+    return this.#withMailbox("deleteDraft", cap, auth, (stub, ctx) => stub.deleteDraft(ctx, draftId));
   }
 
-  /** Plaintext lives only for this call: MIME → SES → the Sent copy, sealed. */
+  /**
+   * Plaintext lives only for this call: MIME → SES → the Sent copy, sealed.
+   * The session rides inside the request (`request.session`, device-v1 B1,
+   * D29), because the dashboard's send route hands the browser's request on
+   * unchanged; it goes no further than the session check.
+   */
   async send(cap: string, request: unknown): Promise<MailResult<SendResult>> {
-    return this.withMailbox("send", cap, (stub, ctx) => stub.send(ctx, request));
+    return this.#withMailbox("send", cap, sessionInside(request), (stub, ctx) => stub.send(ctx, request));
   }
 
   async unread(cap: string): Promise<MailResult<{ inbox: number }>> {
-    return this.withMailbox("unread", cap, (stub, ctx) => stub.unreadCount(ctx));
+    return this.#withMailbox("unread", cap, undefined, (stub, ctx) => stub.unreadCount(ctx));
   }
 
-  async setPolicy(cap: string, patch: unknown): Promise<MailResult<PolicyView & { displayName: string }>> {
-    return this.withMailbox("setPolicy", cap, (stub, ctx) => stub.setPolicy(ctx, patch));
+  async setPolicy(cap: string, patch: unknown, auth?: Auth): Promise<MailResult<PolicyView & { displayName: string }>> {
+    return this.#withMailbox("setPolicy", cap, auth, (stub, ctx) => stub.setPolicy(ctx, patch));
   }
 
-  async audit(cap: string, query: unknown): Promise<MailResult<AuditEntry[]>> {
-    return this.withMailbox("audit", cap, (stub, ctx) => stub.readAudit(ctx, query));
+  async audit(cap: string, query: unknown, auth?: Auth): Promise<MailResult<AuditEntry[]>> {
+    return this.#withMailbox("audit", cap, auth, (stub, ctx) => stub.readAudit(ctx, query));
   }
 
   // ---- the checks every method shares ----------------------------------------
 
-  private async withMailbox<T>(
+  /** `auth` is the method's last argument as the caller sent it (B1); its shape is checked here, its worth in the Mailbox. */
+  async #withMailbox<T>(
     method: string,
     cap: string,
+    auth: unknown,
     fn: (stub: Stub, ctx: CallContext) => Promise<MailResult<T>>,
   ): Promise<MailResult<T>> {
-    return this.call(method, cap, async (capability) => {
+    return this.#call(method, cap, async (capability) => {
       if (capability.mbx === undefined) throw new InvalidRequest("the capability names no mailbox");
       const entry = await new Directory(this.env.DIRECTORY).byId(capability.mbx);
       // Rule 7 and M4: one answer for missing, closed and another business's.
       if (entry === null || entry.status === "closed" || entry.businessId !== capability.business) throw new NotFound();
+      const ctx: CallContext = {
+        mailbox: entry,
+        actor: { accountId: capability.sub, role: capability.role },
+        auth: auth === undefined ? NO_AUTH : parseAuth(auth),
+      };
       const stub = await mailboxRpc(this.env, entry.id);
-      return fn(stub, { mailbox: entry, actor: { accountId: capability.sub, role: capability.role } });
+      return fn(stub, ctx);
     });
   }
 
@@ -203,7 +275,7 @@ export class MailService extends WorkerEntrypoint<Env> {
    * (the Directory, the Mailbox binding, a bug), and an InternalError the
    * Mailbox answered, is raised to the operator with the jti.
    */
-  private async call<T>(method: string, cap: unknown, fn: (capability: Capability) => Promise<MailResult<T>>): Promise<MailResult<T>> {
+  async #call<T>(method: string, cap: unknown, fn: (capability: Capability) => Promise<MailResult<T>>): Promise<MailResult<T>> {
     const jti = typeof cap === "string" ? loggableJti(cap) : null;
     let capability: Capability;
     try {
@@ -234,4 +306,11 @@ export class MailService extends WorkerEntrypoint<Env> {
     logEvent("mail-service", { method, jti, outcome: "accepted", mailbox, result: answer.ok ? "ok" : answer.error.name });
     return answer.ok ? answer : refused(answer.error);
   }
+}
+
+/** `send`'s auth (D29): the `session` field of its request, when the request is an object; its shape is checked with any other auth. */
+function sessionInside(request: unknown): unknown {
+  if (typeof request !== "object" || request === null || Array.isArray(request)) return undefined;
+  const session = (request as { session?: unknown }).session;
+  return session === undefined ? undefined : { session };
 }

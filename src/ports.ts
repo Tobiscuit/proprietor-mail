@@ -21,9 +21,10 @@ export interface Sealer {
   keyIdOf(publicKey: Uint8Array): Promise<string>;
 }
 
-/** Message ids in the contract's shape (`msg_` + 26 Crockford base32 characters). */
+/** Ids in the contracts' shape: `msg_` (envelope v1) and `chl_` (device-v1 A1), each + 26 Crockford base32 characters. */
 export interface IdSource {
   messageId(): string;
+  challengeId(): string;
 }
 
 export interface MimeBuilder {
@@ -48,6 +49,25 @@ export interface Clock {
   now(): Date;
 }
 
+/**
+ * contracts/device-v1.md A6 and A7, Mail's side only
+ * (@proprietor/mail-crypto, src/proofs.ts): a challenge sealed to a public
+ * key, with the answer Mail hashes and forgets, and a device's signature
+ * verified with its public signing key. Mail holds nothing that opens a
+ * challenge or makes a signature.
+ */
+export interface Proofs {
+  sealChallenge(
+    target: { publicKey: Uint8Array },
+    ids: { mailboxId: string; challengeId: string; purpose: "session" | "factor"; targetId: string },
+  ): Promise<{ sealed: string; answer: Uint8Array }>;
+  verifyDeviceProof(
+    signingKey: Uint8Array, // pragma: allowlist secret (a type annotation: a public P-256 point)
+    ids: { mailboxId: string; deviceId: string; challengeId: string; nonce: Uint8Array },
+    signature: Uint8Array,
+  ): Promise<boolean>;
+}
+
 export interface MailboxPorts {
   sealer: Sealer;
   ids: IdSource;
@@ -55,4 +75,5 @@ export interface MailboxPorts {
   mailer: RawMailer;
   signal: NewMailSignal;
   clock: Clock;
+  proofs: Proofs;
 }

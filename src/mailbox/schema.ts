@@ -71,6 +71,46 @@ export const mailboxMigrations: Migration[] = [
       CREATE INDEX suppression_by_last ON suppression(last_at);
     `,
   },
+  {
+    // Kept devices, factor keys and mail sessions (spec 002, plan.md §2,
+    // contracts/device-v1.md Part B). Existing rows are untouched: every
+    // added column is nullable, or NOT NULL with a default, so `sessions`
+    // starts 'optional' and the mailbox behaves exactly as before (R10).
+    // SQLite tests an added column's CHECK against every existing row (since
+    // 3.37.0), and the default passes it. Tokens and challenge answers are
+    // stored only as SHA-256.
+    name: "0003_devices",
+    sql: `
+      ALTER TABLE policy    ADD COLUMN sessions TEXT NOT NULL DEFAULT 'optional' CHECK (sessions IN ('optional','required'));
+      ALTER TABLE keys      ADD COLUMN successor_key_id TEXT;            -- set when the key is retired
+      ALTER TABLE keys      ADD COLUMN successor_seal   TEXT;            -- this key sealed to its successor (109 bytes)
+      ALTER TABLE key_wraps ADD COLUMN factor_key  BLOB;                 -- X25519 public key, 32 bytes (contract A2)
+      ALTER TABLE key_wraps ADD COLUMN tag         TEXT;                 -- binding tag (A5)
+      ALTER TABLE key_wraps ADD COLUMN tag_key_id  TEXT;                 -- the key the tag is made under
+      CREATE TABLE devices (
+        id TEXT PRIMARY KEY, account_id TEXT NOT NULL, label TEXT NOT NULL,
+        signing_key BLOB NOT NULL,            -- P-256, 65 bytes
+        unlock_key  BLOB,                     -- P-256, 65 bytes; NULL while locked or for "right away"
+        tag TEXT NOT NULL, tag_key_id TEXT NOT NULL,
+        created_at TEXT NOT NULL, created_by TEXT NOT NULL, last_seen_at TEXT);
+      CREATE TABLE key_seals (
+        key_id TEXT NOT NULL REFERENCES keys(key_id),
+        to_kind TEXT NOT NULL CHECK (to_kind IN ('device','factor')), to_id TEXT NOT NULL,
+        sealed TEXT NOT NULL, created_at TEXT NOT NULL, created_by TEXT NOT NULL,
+        PRIMARY KEY (key_id, to_kind, to_id));
+      CREATE TABLE challenges (
+        id TEXT PRIMARY KEY, purpose TEXT NOT NULL CHECK (purpose IN ('session','factor')),
+        target_id TEXT NOT NULL, answer_hash TEXT NOT NULL, nonce TEXT NOT NULL, account_id TEXT NOT NULL,
+        created_at TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT,
+        refused_at TEXT);                     -- set when a refusal of it as used or expired is first audited
+      CREATE INDEX challenges_by_expiry ON challenges(expires_at);
+      CREATE TABLE mail_sessions (
+        token_hash TEXT PRIMARY KEY, account_id TEXT NOT NULL, device_id TEXT,
+        created_at TEXT NOT NULL, expires_at TEXT NOT NULL);
+      CREATE INDEX mail_sessions_by_device ON mail_sessions(device_id);
+      CREATE INDEX mail_sessions_by_expiry ON mail_sessions(expires_at);
+    `,
+  },
 ];
 
 /**

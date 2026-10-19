@@ -30,17 +30,33 @@ import type { MailboxPorts } from "../ports";
 import { productionPorts } from "../wiring";
 import { type FolderId, Folders } from "./folders";
 import { applyMigrations, mailboxMigrations } from "./schema";
+import {
+  addKeyedWrap,
+  enrolmentDevice,
+  enrolmentFactors,
+  registerDevice,
+  removeDevice,
+  removeKeyedWrap,
+  splitFactorFields,
+  updateDevice,
+  upgradeMailbox,
+  writeKeyedEnrolment,
+} from "./devices";
+import { keyRingView, sessionsMode } from "./keyring";
+import { type Access, checkAccess, deleteExpired, issueChallenge, type MailServiceMethod, openMailSession } from "./sessions";
+import type { MailboxStore } from "./store";
 import type {
   AuditEntry,
   CallContext,
+  ChallengeView,
+  DeviceView,
   DraftRecord,
-  KeyView,
   ListPage,
   MailboxView,
   MessageItem,
   PolicyView,
   SendResult,
-  WrapView,
+  SessionView,
 } from "./types";
 import * as v from "./validate";
 
@@ -344,8 +360,7 @@ export class Mailbox extends Agent<Env> {
 
   async describe(ctx: CallContext): Promise<MailResult<MailboxView>> {
     return this.answer("describe", async () => {
-      await this.enter(ctx);
-      this.requireRole(ctx, "open");
+      await this.enter(ctx, "mailbox", "open");
       const identity = this.identityRow()!;
       return {
         id: identity.mailbox_id,
@@ -354,29 +369,9 @@ export class Mailbox extends Agent<Env> {
         addresses: ctx.mailbox.addresses,
         status: ctx.mailbox.status,
         displayName: identity.display_name,
-        keys: this.rows<{ key_id: string; public_key: ArrayBuffer; created_at: string; created_by: string; retired_at: string | null }>(
-          "SELECT key_id, public_key, created_at, created_by, retired_at FROM keys ORDER BY created_at",
-        ).map(
-          (k): KeyView => ({
-            keyId: k.key_id,
-            publicKey: v.encodeBase64url(new Uint8Array(k.public_key)),
-            createdAt: k.created_at,
-            createdBy: k.created_by,
-            retiredAt: k.retired_at,
-          }),
-        ),
-        wraps: this.rows<{ id: string; key_id: string; kind: WrapView["kind"]; credential_id: string | null; label: string; wrapped: string; created_at: string; created_by: string }>(
-          "SELECT id, key_id, kind, credential_id, label, wrapped, created_at, created_by FROM key_wraps ORDER BY created_at, id",
-        ).map((w) => ({
-          id: w.id,
-          keyId: w.key_id,
-          kind: w.kind,
-          credentialId: w.credential_id, // pragma: allowlist secret (a field name, not a value)
-          label: w.label,
-          wrapped: w.wrapped,
-          createdAt: w.created_at,
-          createdBy: w.created_by,
-        })),
+        sessions: sessionsMode(this.ctx.storage.sql),
+        // Keys with their successor seals, wraps with their factor keys, devices and seals (device-v1 B4).
+        ...keyRingView(this.ctx.storage.sql),
         policy: this.policyView(),
       };
     });
@@ -384,8 +379,7 @@ export class Mailbox extends Agent<Env> {
 
   async listMessages(ctx: CallContext, query: unknown): Promise<MailResult<ListPage>> {
     return this.answer("listMessages", async () => {
-      await this.enter(ctx);
-      this.requireRole(ctx, "open");
+      await this.enter(ctx, "list", "open");
       const q = v.object(query, "list query", ["folder", "before", "limit"]);
       const folder = v.oneOf(q.folder, "folder", Object.values(Folders));
       const limit = v.optional(q.limit, (l) => v.integer(l, "limit", 1, 100)) ?? 50;
@@ -410,16 +404,14 @@ export class Mailbox extends Agent<Env> {
   /** The R2 key of a message's sealed body; MailService streams it from R2 itself. */
   async bodyKey(ctx: CallContext, messageId: unknown): Promise<MailResult<string>> {
     return this.answer("bodyKey", async () => {
-      await this.enter(ctx);
-      this.requireRole(ctx, "open");
+      await this.enter(ctx, "body", "open");
       return this.messageRow(v.id(messageId, "message id", "msg")).body_key;
     });
   }
 
   async updateMessage(ctx: CallContext, messageId: unknown, patch: unknown): Promise<MailResult<MessageItem>> {
     return this.answer("updateMessage", async () => {
-      await this.enter(ctx);
-      this.requireRole(ctx, "open");
+      await this.enter(ctx, "update", "open");
       const id = v.id(messageId, "message id", "msg");
       const p = v.object(patch, "update", ["seen", "flagged", "folder"]);
       const seen = v.optional(p.seen, (s) => v.bool(s, "seen"));
@@ -446,8 +438,7 @@ export class Mailbox extends Agent<Env> {
 
   async purgeMessage(ctx: CallContext, messageId: unknown): Promise<MailResult<null>> {
     return this.answer("purgeMessage", async () => {
-      await this.enter(ctx);
-      this.requireRole(ctx, "owner");
+      await this.enter(ctx, "purge", "owner");
       const row = this.messageRow(v.id(messageId, "message id", "msg"));
       await this.deleteMessage(row);
       this.audit(ctx.actor.accountId, "message-purged", { message: row.id });
@@ -457,8 +448,7 @@ export class Mailbox extends Agent<Env> {
 
   async unreadCount(ctx: CallContext): Promise<MailResult<{ inbox: number }>> {
     return this.answer("unreadCount", async () => {
-      await this.enter(ctx);
-      this.requireRole(ctx, "open");
+      await this.enter(ctx, "unread", "open");
       return { inbox: this.inboxUnread() };
     });
   }
@@ -467,8 +457,7 @@ export class Mailbox extends Agent<Env> {
 
   async listDrafts(ctx: CallContext): Promise<MailResult<DraftRecord[]>> {
     return this.answer("listDrafts", async () => {
-      await this.enter(ctx);
-      this.requireRole(ctx, "open");
+      await this.enter(ctx, "drafts", "open");
       return this.rows<{ id: string; key_id: string; key_envelope: string; sealed: string; updated_at: string }>(
         "SELECT id, key_id, key_envelope, sealed, updated_at FROM drafts ORDER BY updated_at DESC, id DESC",
       ).map((d) => ({ id: d.id, keyId: d.key_id, keyEnvelope: d.key_envelope, sealed: d.sealed, updatedAt: d.updated_at }));
@@ -477,8 +466,7 @@ export class Mailbox extends Agent<Env> {
 
   async saveDraft(ctx: CallContext, draft: unknown): Promise<MailResult<{ id: string; updatedAt: string }>> {
     return this.answer("saveDraft", async () => {
-      await this.enter(ctx);
-      this.requireRole(ctx, "open");
+      await this.enter(ctx, "saveDraft", "open");
       const d = v.object(draft, "draft", ["id", "keyId", "keyEnvelope", "sealed"]);
       const id = v.id(d.id, "draft id", "drf");
       const keyId = this.knownKeyId(d.keyId);
@@ -501,8 +489,7 @@ export class Mailbox extends Agent<Env> {
 
   async deleteDraft(ctx: CallContext, draftId: unknown): Promise<MailResult<null>> {
     return this.answer("deleteDraft", async () => {
-      await this.enter(ctx);
-      this.requireRole(ctx, "open");
+      await this.enter(ctx, "deleteDraft", "open");
       const id = v.id(draftId, "draft id", "drf");
       if (this.ctx.storage.sql.exec("DELETE FROM drafts WHERE id = ?", id).rowsWritten === 0) throw new NotFound();
       return null;
@@ -514,20 +501,25 @@ export class Mailbox extends Agent<Env> {
   /** Stores the public key and its wraps. MailService then activates the Directory row. */
   async enroll(ctx: CallContext, input: unknown): Promise<MailResult<{ keyId: string }>> {
     return this.answer("enroll", async () => {
-      await this.enter(ctx);
-      this.requireRole(ctx, "owner");
+      await this.enter(ctx, "enroll", "owner");
       if (ctx.mailbox.status !== "provisioned") throw new InvalidRequest("the mailbox is not awaiting enrolment");
-      const req = v.object(input, "enrolment", ["publicKey", "wraps"]);
+      const req = v.object(input, "enrolment", ["publicKey", "wraps", "device"]);
       const publicKey = v.decodeBase64url(v.base64url(req.publicKey, "public key", { bytes: 32 }));
       // Recomputed here: a keyId the browser claims is never trusted.
       const keyId = await this.ports.sealer.keyIdOf(publicKey);
-      const wraps = v.array(req.wraps, "wraps", 10).map((w, i) => parseWrap(w, `wrap ${i + 1}`));
+      const split = v.array(req.wraps, "wraps", 10).map(splitFactorFields);
+      const wraps = split.map((w, i) => parseWrap(w.plain, `wrap ${i + 1}`));
       if (wraps.length === 0 || !wraps.some((w) => w.kind === "recovery")) throw new InvalidRequest("a recovery wrap is required");
       if (wraps.some((w) => w.keyId !== keyId)) throw new InvalidRequest("a wrap names another key");
       if (new Set(wraps.map((w) => w.id)).size !== wraps.length) throw new InvalidRequest("wrap ids repeat");
+      // device-v1 B5: wraps that all carry factor keys start the mailbox with sessions required, and may bring the enrolling device.
+      const factors = await enrolmentFactors(wraps, split.map((w) => w.fields), keyId);
+      const device = req.device === undefined ? null : await enrolmentDevice(req.device, keyId);
+      if (device !== null && factors === null) throw new InvalidRequest("a device needs factor keys");
 
       const at = this.now();
       const by = ctx.actor.accountId;
+      const store = this.store();
       this.ctx.storage.transactionSync(() => {
         const existing = this.rows<{ key_id: string }>("SELECT key_id FROM keys WHERE retired_at IS NULL");
         if (existing.length > 0) {
@@ -542,8 +534,9 @@ export class Mailbox extends Agent<Env> {
           at,
           by,
         );
-        for (const w of wraps) this.insertWrap(w, at, by);
+        if (factors === null) for (const w of wraps) this.insertWrap(w, at, by);
         this.audit(by, "key-enrolled", { keyId, wraps: wraps.map((w) => `${w.id}:${w.kind}`).join(",") });
+        if (factors !== null) writeKeyedEnrolment(store, ctx, keyId, wraps, factors, device, at);
       });
       return { keyId };
     });
@@ -551,8 +544,12 @@ export class Mailbox extends Agent<Env> {
 
   async addWrap(ctx: CallContext, wrap: unknown): Promise<MailResult<null>> {
     return this.answer("addWrap", async () => {
-      await this.enter(ctx);
-      this.requireRole(ctx, "owner");
+      const access = await this.enter(ctx, "addWrap", "owner");
+      if (access.sessions === "required") {
+        // device-v1 B7: once sessions are required a wrap also brings its factor key and a tag (devices.ts).
+        const { plain, fields } = splitFactorFields(wrap);
+        return addKeyedWrap(this.store(), ctx, parseWrap(plain, "wrap"), fields);
+      }
       const w = parseWrap(wrap, "wrap");
       const key = this.activeKey();
       if (key === null || w.keyId !== key.keyId) throw new InvalidRequest("a wrap must name the mailbox's key");
@@ -567,9 +564,10 @@ export class Mailbox extends Agent<Env> {
 
   async removeWrap(ctx: CallContext, wrapId: unknown): Promise<MailResult<null>> {
     return this.answer("removeWrap", async () => {
-      await this.enter(ctx);
-      this.requireRole(ctx, "owner");
+      const access = await this.enter(ctx, "removeWrap", "owner");
       const id = v.id(wrapId, "wrap id", "wrp");
+      // device-v1 B7: once sessions are required its seals go with it, and M5′ guards the active key.
+      if (access.sessions === "required") return removeKeyedWrap(this.store(), ctx, id);
       const wrap = this.rows<{ id: string; key_id: string; kind: string }>("SELECT id, key_id, kind FROM key_wraps WHERE id = ?", id)[0];
       if (wrap === undefined) throw new NotFound();
       if (wrap.kind === "recovery") {
@@ -585,12 +583,63 @@ export class Mailbox extends Agent<Env> {
     });
   }
 
+  // ---- sessions and devices (spec 002, contracts/device-v1.md Part B) --------------
+  // Thin: the logic is in sessions.ts and devices.ts; each method enters
+  // through `enter`, which applies SESSION_NEEDS.
+
+  /** B6: a challenge sealed to the active key or to a factor's key. MailService's `challenge`. */
+  async createChallenge(ctx: CallContext, request: unknown): Promise<MailResult<ChallengeView>> {
+    return this.answer("createChallenge", async () => {
+      await this.enter(ctx, "challenge", "open");
+      return issueChallenge(this.store(), ctx, request);
+    });
+  }
+
+  /** B6, M15: a 60-minute session from a key proof, and a kept device's signature when it names one. */
+  async openSession(ctx: CallContext, request: unknown): Promise<MailResult<SessionView>> {
+    return this.answer("openSession", async () => {
+      await this.enter(ctx, "openSession", "open");
+      return openMailSession(this.store(), ctx, request);
+    });
+  }
+
+  /** B5, M20: the factors' keys and `sessions = required`, once. */
+  async upgrade(ctx: CallContext, request: unknown): Promise<MailResult<null>> {
+    return this.answer("upgrade", async () => {
+      const access = await this.enter(ctx, "upgrade", "owner");
+      return upgradeMailbox(this.store(), ctx, access, request);
+    });
+  }
+
+  /** B7, F1: keeps the calling browser, with a factor proof. */
+  async registerDevice(ctx: CallContext, request: unknown): Promise<MailResult<DeviceView>> {
+    return this.answer("registerDevice", async () => {
+      const access = await this.enter(ctx, "registerDevice", "owner");
+      return registerDevice(this.store(), ctx, access, request);
+    });
+  }
+
+  /** B7, F3, F4: a device's own session sets or clears its unlock key, tag and seal. */
+  async updateDevice(ctx: CallContext, request: unknown): Promise<MailResult<DeviceView>> {
+    return this.answer("updateDevice", async () => {
+      const access = await this.enter(ctx, "updateDevice", "owner");
+      return updateDevice(this.store(), ctx, access, request);
+    });
+  }
+
+  /** B7, F6, M18: the device goes and the key rotates, in one transaction. */
+  async removeDevice(ctx: CallContext, request: unknown): Promise<MailResult<{ keyId: string }>> {
+    return this.answer("removeDevice", async () => {
+      const access = await this.enter(ctx, "removeDevice", "owner");
+      return removeDevice(this.store(), ctx, access, request);
+    });
+  }
+
   // ---- policy and audit ----------------------------------------------------------
 
   async setPolicy(ctx: CallContext, patch: unknown): Promise<MailResult<PolicyView & { displayName: string }>> {
     return this.answer("setPolicy", async () => {
-      await this.enter(ctx);
-      this.requireRole(ctx, "owner");
+      await this.enter(ctx, "setPolicy", "owner");
       const p = v.object(patch, "policy", ["displayName", "assistant"]);
       const assistant = v.optional(p.assistant, (a) => v.oneOf(a, "assistant", ["off", "on"] as const));
       // Spec §6 and decision D1: v1 builds only the safe default.
@@ -609,8 +658,7 @@ export class Mailbox extends Agent<Env> {
 
   async readAudit(ctx: CallContext, query: unknown): Promise<MailResult<AuditEntry[]>> {
     return this.answer("readAudit", async () => {
-      await this.enter(ctx);
-      this.requireRole(ctx, "owner");
+      await this.enter(ctx, "audit", "owner");
       const q = v.object(query ?? {}, "audit query", ["before"]);
       const before = v.optional(q.before, (b) => v.integer(b, "before", 1, Number.MAX_SAFE_INTEGER));
       const rows = this.rows<{ id: number; at: string; actor: string; action: string; detail: string }>(
@@ -625,8 +673,7 @@ export class Mailbox extends Agent<Env> {
 
   async send(ctx: CallContext, request: unknown): Promise<MailResult<SendResult>> {
     return this.answer("send", async () => {
-      await this.enter(ctx);
-      this.requireRole(ctx, "send");
+      await this.enter(ctx, "send", "send");
       if (ctx.mailbox.status !== "active") throw new MailboxNotActive();
       const req = parseSendRequest(request);
       const key = this.activeKey();
@@ -901,9 +948,12 @@ export class Mailbox extends Agent<Env> {
    * The daily alarm (HOUSEKEEPING_CRON): empties Trash of messages 30 days in
    * it (M9), then deletes `sends` rows more than 30 days old, audit rows more
    * than a year old, and suppression entries whose last event is more than a
-   * year old (M11). A row exactly at its limit stays. Not reached over RPC by
-   * MailService; a failure throws into the Agents SDK's scheduler (agents
-   * 0.24.0), which retries the job and runs the cron again next day.
+   * year old (M11). A row exactly at its limit stays. It also deletes the
+   * challenges and mail sessions that have expired (device-v1 B9); their
+   * counts are in the log line, and the answer keeps its shape. Not reached
+   * over RPC by MailService; a failure throws into the Agents SDK's
+   * scheduler (agents 0.24.0), which retries the job and runs the cron again
+   * next day.
    */
   async dailyHousekeeping(): Promise<{ trash: number; sends: number; audit: number; suppression: number }> {
     const trash = await this.purgeExpiredTrash();
@@ -911,7 +961,8 @@ export class Mailbox extends Agent<Env> {
     const sends = this.deleteOlderThan("sends", "created_at", new Date(now - SENDS_KEPT_DAYS * DAY_MS));
     const audit = this.deleteOlderThan("audit", "at", new Date(now - AUDIT_KEPT_DAYS * DAY_MS));
     const suppression = this.deleteOlderThan("suppression", "last_at", new Date(now - SUPPRESSION_KEPT_DAYS * DAY_MS));
-    logEvent("housekeeping", { mailbox: this.safeName(), trash, sends, audit, suppression });
+    const { challenges, sessions } = deleteExpired(this.ctx.storage.sql, this.ports.clock.now());
+    logEvent("housekeeping", { mailbox: this.safeName(), trash, sends, audit, suppression, challenges, sessions });
     return { trash, sends, audit, suppression };
   }
 
@@ -953,8 +1004,31 @@ export class Mailbox extends Agent<Env> {
     }
   }
 
-  private async enter(ctx: CallContext): Promise<void> {
+  /**
+   * Every MailService call comes in here: the mailbox's identity (M4), the
+   * caller's role, then what the method needs by SESSION_NEEDS (a session, a
+   * factor proof, a device's session: device-v1 B2, B3), in one place. The
+   * caller passes the MailService method it serves; the table decides.
+   */
+  private async enter(ctx: CallContext, method: MailServiceMethod, role: "open" | "send" | "owner"): Promise<Access> {
     await this.ensureIdentity(ctx.mailbox, ctx.actor.accountId);
+    this.requireRole(ctx, role);
+    return checkAccess(this.store(), ctx, method);
+  }
+
+  /** The key ring's modules reach this object only through this (src/mailbox/store.ts). */
+  private store(): MailboxStore {
+    return {
+      mailboxId: this.name,
+      sql: this.ctx.storage.sql,
+      transaction: (fn) => this.ctx.storage.transactionSync(fn),
+      now: () => this.ports.clock.now(),
+      newChallengeId: () => this.ports.ids.challengeId(),
+      keyIdOf: (publicKey) => this.ports.sealer.keyIdOf(publicKey),
+      activeKey: () => this.activeKey(),
+      audit: (actor, action, detail) => this.audit(actor, action, detail),
+      proofs: this.ports.proofs,
+    };
   }
 
   /**
@@ -1149,7 +1223,9 @@ export interface ParsedSendRequest {
 }
 
 function parseSendRequest(value: unknown): ParsedSendRequest {
+  // `session` (device-v1 B1, D29) was read by MailService into the call's auth; it is never stored or passed to SES.
   const r = v.object(value, "send request", [
+    "session",
     "idempotencyKey",
     "from",
     "to",
