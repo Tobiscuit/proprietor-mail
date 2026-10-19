@@ -245,11 +245,10 @@ one is refused (a token is never silently ignored).
 | `registerDevice(cap, request, auth)` | session, factor | B7 |
 | `updateDevice(cap, request, auth)` | a device's session | B7 |
 | `removeDevice(cap, request, auth)` | session, factor | B7: the key rotates |
-| `setFactorKey(cap, request, auth)` | session, factor | B7 |
 
 "factor" means `auth.factorProof` answers a live `purpose: "factor"` challenge
 for a factor that has a factor key; it is consumed by the call. While a
-mailbox is `"optional"`, `registerDevice`, `removeDevice` and `setFactorKey`
+mailbox is `"optional"`, `registerDevice` and `removeDevice`
 refuse with `InvalidRequest` (upgrade first).
 
 Roles are unchanged: reading needs `openRoles`, sending `sendRoles`, and every
@@ -288,10 +287,15 @@ factor keys is refused.
 one moment an existing mailbox learns factor keys without a factor proof
 (spec D26, G30). Conditions: the mailbox is `"optional"`; no wrap has a factor
 key yet; `auth.session` is live (it was opened with a key proof); every listed
-id is a wrap of the active key; `tagKeyId` is the active key; **at least one
-listed factor is a recovery wrap**. Effect: the factor keys and tags are
-stored and `sessions` becomes `"required"`, in one transaction; audit
-`mailbox-upgraded` with the factor ids.
+id is a wrap of the active key; `tagKeyId` is the active key; **the list
+names every wrap the mailbox has, exactly once** (so every factor, the
+recovery key included, gets its key in this one step; a factor the owner no
+longer has is removed with `removeWrap` first, which needs no proof while the
+mailbox is `"optional"`). Effect: the factor keys and tags are stored and
+`sessions` becomes `"required"`, in one transaction; audit `mailbox-upgraded`
+with the factor ids. (Amended 2026-10-19: this said "at least one recovery
+wrap", and a factor left out could not reach any key made after the first
+rotation; `setFactorKey`, which repaired that, is gone.)
 
 ### B6. Challenges and sessions
 
@@ -334,7 +338,6 @@ interface DeviceInput {
 registerDevice(cap, { device: DeviceInput, seal: string | null }, auth)        → DeviceView
 updateDevice(cap, { unlockKey: string | null, tag, tagKeyId, seal: string | null }, auth) → DeviceView
 removeDevice(cap, { deviceId, rotation: Rotation }, auth)                         → { keyId }
-setFactorKey(cap, { factorId, factorKey, tag, tagKeyId, seal: string | null }, auth) → null
 
 interface Rotation {
   from: string;                // the active keyId; anything else is refused (another browser rotated first)
@@ -353,10 +356,6 @@ interface Rotation {
   key, its tag and its seal, and deletes the device's earlier seals. `null`
   clears them (the device locked). Audit `device-unlock-key` with `set` or
   `cleared`.
-- `setFactorKey`: gives a factor that has none its factor key, after the
-  upgrade. The factor proof must come from **another** factor. `seal` is the
-  active key sealed to the new factor key; it is required exactly when the
-  factor's wrap is of a retired key. Audit `factor-key-set`.
 - `addWrap` once `"required"`: the wrap is of the active key and carries
   `factorKey`, `tag` and `tagKeyId` (the active key). `removeWrap` once
   `"required"` also deletes that factor's seals. Neither may leave the active
@@ -400,8 +399,7 @@ A caller that does not know a name still treats it as `InternalError`.
 The daily housekeeping deletes expired challenges and sessions. Audit rows
 carry ids, kinds, counts and labels, never a token, an answer, a seal or a key.
 The audit actions are `mailbox-upgraded`, `device-registered`,
-`device-unlock-key`, `device-removed`, `key-rotated`, `factor-key-set` and
-`proof-rejected`, plus the existing `wrap-added` and `wrap-removed`.
+`device-unlock-key`, `device-removed`, `key-rotated` and `proof-rejected`, plus the existing `wrap-added` and `wrap-removed`.
 
 ## Part C — what the browser must do
 
@@ -432,8 +430,25 @@ The API is `mail-client-v1.md` (amended); these are the rules it implements.
 - **K3 — A key is sealed only to recipients whose tag verifies.** Before
   sealing anything to a device or a factor, the browser checks that
   recipient's tag under the active key. At every unlock it checks every tag in
-  the key ring, and one that fails stops everything with the same warning.
+  the key ring. A device or factor whose tag fails is **flagged, not
+  trusted**: it is never sealed to, the owner is shown it as one a holder of
+  the key did not add, and it can be removed (a removal is the only rotation
+  allowed while it is there, so nothing new is ever sealed to it). The rest
+  of the inbox keeps working, because the key itself is trusted (K2′). Only a
+  failure of the key itself (K2, K2′) stops everything. (Amended 2026-10-19:
+  this stopped everything on any failing tag, so one bad record, with no way
+  past it in the inbox, stopped every browser.)
 - **K4 — Only challenges are answered** (A6).
+- **K8 — A rotation proves itself before it is sent.** The browser opens the
+  successor seal with the new key, and the new key's seal for the factor just
+  used with that factor's key, and sends the rotation only when both give back
+  the keys they name. A rotation whose seals cannot be opened would leave mail
+  that arrives after it readable only in the page that made it.
+- **K9 — The factor just used is the one Mail lists.** After a factor is used,
+  the browser derives its factor key (A2) and checks that it is the
+  `factorKey` the key ring lists for that factor. A factor that does not match
+  is flagged as in K3: nothing is sealed to it, and the owner is asked to
+  remove it and add it again.
 - **K5 — Only a kept device persists, and only P-256 keys and plain facts:**
   in IndexedDB, per mailbox: the device id, its label, the two private keys
   (non-extractable `CryptoKey`s, A3), their public forms, the keyId it last

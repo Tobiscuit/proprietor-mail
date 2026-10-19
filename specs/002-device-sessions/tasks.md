@@ -251,6 +251,27 @@ with:
   browser tests, and the rules test catches it statically. Dropping the body
   route's session header is caught by its unit test.
 
+## Round 2: an independent review (2026-10-19)
+
+A read-only review asked for these before the operator's upgrade. Each was
+checked against the code first; none was wrong.
+
+- [ ] R2-1 (D1, D3) K3 flags a recipient whose tag fails instead of stopping
+  everything: never sealed to, shown, removable (contract Part C K3)
+- [ ] R2-2 (D1) K8: a rotation opens its successor seal and the used factor's
+  seal before it is sent; tested with a corrupted seal
+- [ ] R2-3 (D1) K9: the factor just used derives the factor key Mail lists;
+  one that does not is flagged; tested
+- [ ] R2-4 (D1, D2, D3) the upgrade names every factor (B5, M20); `setFactorKey`,
+  the partial upgrade and the stale-factor flows are removed
+- [ ] R2-5 (D3) the body route's header is `x-proprietor-mail-session-token`,
+  a name Cloudflare's log redaction covers
+- [ ] R2-6 (architect) the rollback text and the upgrade's order (spec §7,
+  plan §8)
+- [ ] R2-7 (D3) the dashboard vendors the packages from the merged commit
+- [ ] R2-8 (D1) the workaround for WebKit bug 307095 leaves #15 for the
+  branch `feat/002-webkitgtk-workaround`; CI tests WebKit on macOS only
+
 ## Held
 
 - [H] Mail enforcing timed locks (spec §8), until the operator wants it.
