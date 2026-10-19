@@ -56,6 +56,10 @@ export default defineConfig({
           include: ["test/**/*.test.ts"],
           exclude: ["**/node_modules/**", "test/node/**"],
           setupFiles: ["./test/support/apply-migrations.ts"],
+          // A shared CI runner, with every file's crypto running at once, is several times slower than a
+          // laptop: M7's 101 sends take about 1 s here and came within a few milliseconds of vitest's default
+          // 5 s there. A bound still, just not one that load can trip.
+          testTimeout: 20_000,
         },
       },
       "packages/*",

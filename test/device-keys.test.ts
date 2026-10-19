@@ -272,7 +272,24 @@ describe("registerDevice (B7, F1)", () => {
     });
     await keepDevice(u, { device });
     expect(refusalOf(await register(deviceInput(device, keyId)))).toEqual({ name: "InvalidRequest", message: "invalid request: that device id is in use" });
-    for (let i = 1; i < 20; i++) await keepDevice(u);
+    // Eighteen more, written directly (the test is about the limit, and 18 full registrations are slow on a
+    // shared runner); then the 20th through the API, which still works, and the 21st, which does not.
+    await runInDurableObject(u.mb.stub, (_i, state) => {
+      for (let i = 0; i < 18; i++) {
+        state.storage.sql.exec(
+          "INSERT INTO devices (id, account_id, label, signing_key, unlock_key, tag, tag_key_id, created_at, created_by) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)",
+          newId("dev"),
+          "acc_owner",
+          `Kept ${i + 2}`,
+          device.signingKey,
+          fakeTag(),
+          keyId,
+          now(u.mb),
+          "acc_owner",
+        );
+      }
+    });
+    await keepDevice(u);
     expect((await view(u.mb)).devices).toHaveLength(20);
     expect(refusalOf(await register(deviceInput(await newDevice(), keyId)))).toEqual({ name: "InvalidRequest", message: "invalid request: a mailbox keeps at most 20 devices" });
   });
