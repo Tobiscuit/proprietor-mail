@@ -87,6 +87,24 @@ One thing the model keeps that the code does not: a kept device updates its
 | `keyId` | first 16 bytes of SHA-256(pk) | the public key itself | HIGH — a hash is a bijection in the symbolic model |
 | Key commitment of AES-GCM, clamping, PKCS #8 lengths | A4, envelope v1 | not modelled | LOW — bytes-level; outside a symbolic model's reach |
 
+**Two choices made for the prover, not for the protocol** (MEDIUM — confirm
+they lose nothing you care about):
+
+- *Received keys, answers and ids are matched as fresh names.* Where a rule
+  reads a mailbox key out of a wrap, a seal or a successor seal, a challenge
+  answer out of a challenge, or a factor or device id out of a record, the
+  model requires a fresh name (`~x`) there. Every honest value in those
+  positions is a fresh name, and the attacker can mint fresh names of its own
+  and use them in every attack described in §7 (its own key in the fork and
+  the relay hijack, its own device id in the planted record). What is
+  excluded is an attacker sending a *composite* term as a key, which no rule
+  could use as one anyway. Without this, Tamarin's sources analysis does not
+  terminate (ir.md was written before that was known; README.md records it).
+- *Signatures are verified, not pattern-matched* (M2): Mail receives a
+  signature and a public key and checks `verify(sig, message, pk) = true`,
+  which is what the Worker does (A7); the digest in the bound-proof variant is
+  matched as `h(request)` on purpose.
+
 ## 5. Message flows
 
 Each step: who acts, what it needs, what it does, what the attacker learns.
