@@ -87,10 +87,17 @@ export interface MailboxSummary {
   status: string;
 }
 
+/**
+ * Every method on this class's prototype is served over Workers RPC,
+ * TypeScript `private` ones included: `private` is only a compile-time
+ * check. The helpers below are `#private`, which the runtime does not
+ * serve, so a caller reaches the Mailbox only through the public methods
+ * and their checks (test/rpc-surface.test.ts pins what is served).
+ */
 export class MailService extends WorkerEntrypoint<Env> {
   /** The capability's business's mailboxes, for "not set up" / "set up your inbox" / the inbox. Any member role. */
   async mailboxes(cap: string): Promise<MailResult<MailboxSummary[]>> {
-    return this.call("mailboxes", cap, async (capability) =>
+    return this.#call("mailboxes", cap, async (capability) =>
       ok(
         (await new Directory(this.env.DIRECTORY).forBusiness(capability.business)).map((m) => ({
           id: m.id,
@@ -103,12 +110,12 @@ export class MailService extends WorkerEntrypoint<Env> {
   }
 
   async mailbox(cap: string): Promise<MailResult<MailboxView>> {
-    return this.withMailbox("mailbox", cap, (stub, ctx) => stub.describe(ctx));
+    return this.#withMailbox("mailbox", cap, (stub, ctx) => stub.describe(ctx));
   }
 
   /** Only while provisioned; M5: the Directory row turns active only after the key ring has a key and a recovery wrap. */
   async enroll(cap: string, input: unknown): Promise<MailResult<{ keyId: string }>> {
-    return this.withMailbox("enroll", cap, async (stub, ctx) => {
+    return this.#withMailbox("enroll", cap, async (stub, ctx) => {
       const enrolled = await stub.enroll(ctx, input);
       // A failed activation is an InternalError; the retry is safe (the Mailbox takes the same key again).
       if (enrolled.ok) await new Directory(this.env.DIRECTORY).activate(ctx.mailbox.id, new Date());
@@ -117,15 +124,15 @@ export class MailService extends WorkerEntrypoint<Env> {
   }
 
   async addWrap(cap: string, wrap: unknown): Promise<MailResult<null>> {
-    return this.withMailbox("addWrap", cap, (stub, ctx) => stub.addWrap(ctx, wrap));
+    return this.#withMailbox("addWrap", cap, (stub, ctx) => stub.addWrap(ctx, wrap));
   }
 
   async removeWrap(cap: string, wrapId: string): Promise<MailResult<null>> {
-    return this.withMailbox("removeWrap", cap, (stub, ctx) => stub.removeWrap(ctx, wrapId));
+    return this.#withMailbox("removeWrap", cap, (stub, ctx) => stub.removeWrap(ctx, wrapId));
   }
 
   async list(cap: string, query: unknown): Promise<MailResult<ListPage>> {
-    return this.withMailbox("list", cap, (stub, ctx) => stub.listMessages(ctx, query));
+    return this.#withMailbox("list", cap, (stub, ctx) => stub.listMessages(ctx, query));
   }
 
   /**
@@ -134,7 +141,7 @@ export class MailService extends WorkerEntrypoint<Env> {
    * carries inside the result with flow control.
    */
   async body(cap: string, messageId: string): Promise<MailResult<ReadableStream>> {
-    return this.withMailbox("body", cap, async (stub, ctx) => {
+    return this.#withMailbox("body", cap, async (stub, ctx) => {
       const key = await stub.bodyKey(ctx, messageId);
       if (!key.ok) return key;
       const object = await this.env.MAIL.get(key.value);
@@ -144,50 +151,50 @@ export class MailService extends WorkerEntrypoint<Env> {
   }
 
   async update(cap: string, messageId: string, patch: unknown): Promise<MailResult<MessageItem>> {
-    return this.withMailbox("update", cap, (stub, ctx) => stub.updateMessage(ctx, messageId, patch));
+    return this.#withMailbox("update", cap, (stub, ctx) => stub.updateMessage(ctx, messageId, patch));
   }
 
   async purge(cap: string, messageId: string): Promise<MailResult<null>> {
-    return this.withMailbox("purge", cap, (stub, ctx) => stub.purgeMessage(ctx, messageId));
+    return this.#withMailbox("purge", cap, (stub, ctx) => stub.purgeMessage(ctx, messageId));
   }
 
   async drafts(cap: string): Promise<MailResult<DraftRecord[]>> {
-    return this.withMailbox("drafts", cap, (stub, ctx) => stub.listDrafts(ctx));
+    return this.#withMailbox("drafts", cap, (stub, ctx) => stub.listDrafts(ctx));
   }
 
   async saveDraft(cap: string, draft: unknown): Promise<MailResult<{ id: string; updatedAt: string }>> {
-    return this.withMailbox("saveDraft", cap, (stub, ctx) => stub.saveDraft(ctx, draft));
+    return this.#withMailbox("saveDraft", cap, (stub, ctx) => stub.saveDraft(ctx, draft));
   }
 
   async deleteDraft(cap: string, draftId: string): Promise<MailResult<null>> {
-    return this.withMailbox("deleteDraft", cap, (stub, ctx) => stub.deleteDraft(ctx, draftId));
+    return this.#withMailbox("deleteDraft", cap, (stub, ctx) => stub.deleteDraft(ctx, draftId));
   }
 
   /** Plaintext lives only for this call: MIME → SES → the Sent copy, sealed. */
   async send(cap: string, request: unknown): Promise<MailResult<SendResult>> {
-    return this.withMailbox("send", cap, (stub, ctx) => stub.send(ctx, request));
+    return this.#withMailbox("send", cap, (stub, ctx) => stub.send(ctx, request));
   }
 
   async unread(cap: string): Promise<MailResult<{ inbox: number }>> {
-    return this.withMailbox("unread", cap, (stub, ctx) => stub.unreadCount(ctx));
+    return this.#withMailbox("unread", cap, (stub, ctx) => stub.unreadCount(ctx));
   }
 
   async setPolicy(cap: string, patch: unknown): Promise<MailResult<PolicyView & { displayName: string }>> {
-    return this.withMailbox("setPolicy", cap, (stub, ctx) => stub.setPolicy(ctx, patch));
+    return this.#withMailbox("setPolicy", cap, (stub, ctx) => stub.setPolicy(ctx, patch));
   }
 
   async audit(cap: string, query: unknown): Promise<MailResult<AuditEntry[]>> {
-    return this.withMailbox("audit", cap, (stub, ctx) => stub.readAudit(ctx, query));
+    return this.#withMailbox("audit", cap, (stub, ctx) => stub.readAudit(ctx, query));
   }
 
   // ---- the checks every method shares ----------------------------------------
 
-  private async withMailbox<T>(
+  async #withMailbox<T>(
     method: string,
     cap: string,
     fn: (stub: Stub, ctx: CallContext) => Promise<MailResult<T>>,
   ): Promise<MailResult<T>> {
-    return this.call(method, cap, async (capability) => {
+    return this.#call(method, cap, async (capability) => {
       if (capability.mbx === undefined) throw new InvalidRequest("the capability names no mailbox");
       const entry = await new Directory(this.env.DIRECTORY).byId(capability.mbx);
       // Rule 7 and M4: one answer for missing, closed and another business's.
@@ -203,7 +210,7 @@ export class MailService extends WorkerEntrypoint<Env> {
    * (the Directory, the Mailbox binding, a bug), and an InternalError the
    * Mailbox answered, is raised to the operator with the jti.
    */
-  private async call<T>(method: string, cap: unknown, fn: (capability: Capability) => Promise<MailResult<T>>): Promise<MailResult<T>> {
+  async #call<T>(method: string, cap: unknown, fn: (capability: Capability) => Promise<MailResult<T>>): Promise<MailResult<T>> {
     const jti = typeof cap === "string" ? loggableJti(cap) : null;
     let capability: Capability;
     try {
