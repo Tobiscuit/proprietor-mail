@@ -19,9 +19,10 @@ import { mailboxRpc } from "./service";
  */
 const OPERATOR = /^[A-Za-z0-9._@:-]{1,100}$/;
 
+/** As with MailService: its helper is `#private`, so Workers RPC serves only the three operator methods. */
 export class MailAdmin extends WorkerEntrypoint<Env> {
   async suspend(input: { mailboxId: string; operator: string }): Promise<MailResult<{ status: "suspended" }>> {
-    return this.run("suspend", input, async (entry, operator) => {
+    return this.#run("suspend", input, async (entry, operator) => {
       if (!(await new Directory(this.env.DIRECTORY).transition(entry.id, "active", "suspended"))) {
         throw new InvalidRequest("only an active mailbox can be suspended");
       }
@@ -31,7 +32,7 @@ export class MailAdmin extends WorkerEntrypoint<Env> {
   }
 
   async resume(input: { mailboxId: string; operator: string }): Promise<MailResult<{ status: "active" }>> {
-    return this.run("resume", input, async (entry, operator) => {
+    return this.#run("resume", input, async (entry, operator) => {
       if (!(await new Directory(this.env.DIRECTORY).transition(entry.id, "suspended", "active"))) {
         throw new InvalidRequest("only a suspended mailbox can be resumed");
       }
@@ -42,14 +43,14 @@ export class MailAdmin extends WorkerEntrypoint<Env> {
 
   /** `store`, or `store-and-forward` with a verified Email Routing destination (plan.md §8, step 4). */
   async setDelivery(input: { mailboxId: string; operator: string; delivery: string; forwardTo?: string | null }): Promise<MailResult<PolicyView>> {
-    return this.run("setDelivery", input, async (entry, operator) => {
+    return this.#run("setDelivery", input, async (entry, operator) => {
       const { delivery, forwardTo } = input;
       const stub = await mailboxRpc(this.env, entry.id);
       return stub.setDelivery(entry, operator, forwardTo === undefined ? { delivery } : { delivery, forwardTo });
     });
   }
 
-  private async run<T>(
+  async #run<T>(
     method: string,
     input: { mailboxId: string; operator: string },
     fn: (entry: DirectoryEntry, operator: string) => Promise<MailResult<T>>,
