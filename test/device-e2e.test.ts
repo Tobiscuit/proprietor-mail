@@ -1,5 +1,5 @@
 import * as mailCrypto from "@proprietor/mail-crypto";
-import { createExecutionContext } from "cloudflare:test";
+import { createExecutionContext, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import worker from "../src/index";
@@ -48,6 +48,7 @@ interface UnlockedMailbox {
   readonly keyIds: readonly string[];
   readonly device: { readonly id: string } | null;
   readonly freshFactor: FreshFactor | null;
+  readonly flagged: { readonly devices: readonly string[]; readonly factors: readonly string[] };
   sessionProof(challenge: ChallengeView): Promise<unknown>;
   reauthenticate(reauth: { recoveryKey: string }): Promise<FreshFactor>;
   keepThisDevice(options: { label: string; lockAfter?: "sign-out" }, freshFactor: FreshFactor): Promise<PendingChange>;
@@ -228,6 +229,59 @@ describe("spec 002 end to end: mail-client (D1) against the Mail Worker (D2), re
     expect(await a.store.get(a.mb.id)).toBeNull();
     // The removed device was never sent the new key.
     expect((await view(a.mb)).seals.some((s) => s.to.kind === "device" && s.to.id === a.session.device!.id)).toBe(false);
+  });
+
+  it("K3 after review: a device planted in Mail's storage is flagged, not a stop; mail stays readable, other removals wait, and removing it works", async () => {
+    const a = await enrolledByClient();
+    const b = await keptWithRecoveryKey(a.mb, a.recoveryKey, "Work computer", "sign-in-b");
+    await deliver(a.mb, "readable while flagged");
+
+    // Whoever controls Mail's storage adds a device: well-formed keys and a tag that no holder of the mailbox key made.
+    const activeKeyId = (await view(a.mb)).keys.find((k) => k.retiredAt === null)!.keyId;
+    const point = async (name: "ECDSA" | "ECDH") => {
+      const pair = (await crypto.subtle.generateKey({ name, namedCurve: "P-256" }, true, name === "ECDSA" ? ["sign", "verify"] : ["deriveBits"])) as CryptoKeyPair;
+      return new Uint8Array((await crypto.subtle.exportKey("raw", pair.publicKey)) as ArrayBuffer);
+    };
+    const planted = mailCrypto.newId("dev");
+    const signingKey = await point("ECDSA");
+    const unlockKey = await point("ECDH");
+    const forgedTag = base64urlFromBytes(crypto.getRandomValues(new Uint8Array(32)));
+    await runInDurableObject(a.mb.stub, (_instance, state) => {
+      state.storage.sql.exec(
+        "INSERT INTO devices (id, account_id, label, signing_key, unlock_key, tag, tag_key_id, created_at, created_by, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        planted, "acc_owner", "Laptop", signingKey, unlockKey, forgedTag, activeKeyId, "2026-10-19T00:00:00.000Z", "acc_owner", null,
+      );
+    });
+
+    // B loads: no stop screen. The planted device is flagged, and the inbox reads mail as before.
+    const resumedB = await resumeDevice(asView(await view(a.mb)), { store: b.store, signInId: "sign-in-b" });
+    expect(resumedB.state).toBe("unlocked");
+    if (resumedB.state !== "unlocked") return;
+    expect(resumedB.mailbox.flagged.devices).toEqual([planted]);
+    const tokenB = await openSession(a.mb, resumedB.mailbox);
+    expect(await inboxSubjects(a.mb, resumedB.mailbox, tokenB)).toEqual(["readable while flagged"]);
+
+    // Removing a real device while the planted one is there would seal the new key to it: refused in the browser.
+    const freshFactor = await resumedB.mailbox.reauthenticate({ recoveryKey: a.recoveryKey });
+    await expect(resumedB.mailbox.removeDevice(asView(await view(a.mb)), a.session.device!.id, freshFactor)).rejects.toMatchObject({ name: "FlaggedRecipient" });
+
+    // Removing the planted device is the way out: the rotation names only the real recipients, and Mail accepts it.
+    const factorProof = await freshFactor.answer(await challenge(a.mb, { purpose: "factor", factorId: freshFactor.factorId }));
+    const removal = await resumedB.mailbox.removeDevice(asView(await view(a.mb)), planted, freshFactor);
+    valueOf(await mail().removeDevice(await capFor(a.mb), removal.request, { session: tokenB, factorProof }));
+    await removal.commit();
+    freshFactor.dispose();
+    const after = await view(a.mb);
+    expect(after.devices.map((d) => d.id)).not.toContain(planted);
+    expect(after.seals.some((s) => s.to.kind === "device" && s.to.id === planted)).toBe(false);
+
+    // A, the other real device, reloads: nothing flagged, and it reads old and new mail on the new key.
+    await deliver(a.mb, "after the planted one went");
+    const resumedA = await resumeDevice(asView(await view(a.mb)), { store: a.store, signInId: "sign-in-a" });
+    expect(resumedA.state).toBe("unlocked");
+    if (resumedA.state !== "unlocked") return;
+    expect(resumedA.mailbox.flagged).toEqual({ devices: [], factors: [] });
+    expect(await inboxSubjects(a.mb, resumedA.mailbox, await openSession(a.mb, resumedA.mailbox))).toEqual(["after the planted one went", "readable while flagged"]);
   });
 
   it("F5: a mailbox enrolled before spec 002 upgrades with the recovery key, then keeps the browser", async () => {
