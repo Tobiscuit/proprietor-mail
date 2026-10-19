@@ -102,7 +102,7 @@ export const mailboxMigrations: Migration[] = [
         id TEXT PRIMARY KEY, purpose TEXT NOT NULL CHECK (purpose IN ('session','factor')),
         target_id TEXT NOT NULL, answer_hash TEXT NOT NULL, nonce TEXT NOT NULL, account_id TEXT NOT NULL,
         created_at TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT,
-        refused_at TEXT);                     -- when a refusal of it as used or expired was first audited
+        refused_at TEXT);                     -- set when a refusal of it as used or expired is first audited
       CREATE INDEX challenges_by_expiry ON challenges(expires_at);
       CREATE TABLE mail_sessions (
         token_hash TEXT PRIMARY KEY, account_id TEXT NOT NULL, device_id TEXT,
