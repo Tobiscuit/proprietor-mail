@@ -226,6 +226,16 @@ client's:
   refusal then wipes the owner's record. The record and `resumeDevice` must
   name and check the account.
 - **D32's external review.**
+- **Two limits of K3 and K9 found while building round 2**, each needing a
+  change at Mail:
+  - Two flagged devices are a dead end: a removal seals the new key to every
+    other device (B7), so removing either would seal it to the other, and the
+    browser refuses both. Removing several devices in one rotation would fix
+    it.
+  - A recovery factor whose listed factor key is wrong (K9), in a mailbox
+    with no other factor, cannot be repaired from the browser: Mail seals that
+    factor's challenges to the wrong key, so no factor proof is possible. It
+    needs an operator repair at Mail, specified with the review.
 - **D24's trade, in full, in the owner's words:** any script that runs on the
   dashboard's origin (an XSS bug, a compromised dependency, a browser
   extension with access to the page) can read the seal from `mailbox()` and
