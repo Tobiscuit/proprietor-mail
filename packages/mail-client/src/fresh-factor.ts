@@ -27,7 +27,7 @@ export type FactorFacts = Pick<RingWrap, "id" | "keyId" | "kind" | "label" | "cr
 interface Material {
   factorKey: FactorPrivateKey;
   factorPublic: Uint8Array<ArrayBuffer>;
-  /** The active key, wrappable; null when this factor cannot reach it (StaleFactor, a setFactorKey target). */
+  /** The active key, wrappable; null when this factor cannot reach it (StaleFactor). */
   active: MailboxPrivateKey | null;
 }
 

@@ -220,16 +220,7 @@ export interface RemoveDeviceRequest {
   rotation: Rotation;
 }
 
-/** What `MailService.setFactorKey` takes: a seal of the active key only when the factor's wrap is of a retired key. */
-export interface SetFactorKeyRequest {
-  factorId: string;
-  factorKey: string;
-  tag: string;
-  tagKeyId: string;
-  seal: string | null;
-}
-
-/** What `MailService.upgrade` takes (device-v1 B5): it must name a recovery factor. */
+/** What `MailService.upgrade` takes (device-v1 B5 as amended on 2026-10-19): every wrap of the mailbox, exactly once. */
 export interface UpgradeRequest {
   factors: { id: string; factorKey: string; tag: string; tagKeyId: string }[];
 }
@@ -521,10 +512,11 @@ export interface UnlockedMailbox {
    * FlaggedRecipient, because the new key would have to be sealed to it.
    */
   removeDevice(view: MailboxView, deviceId: string, freshFactor: FreshFactor): Promise<PendingChange<RemoveDeviceRequest>>;
-  /** The one-time upgrade (D26): factor keys and tags for the factors just used; one must be the recovery key. */
+  /**
+   * The one-time upgrade (D26): factor keys and tags for every factor of the mailbox, each just used
+   * (B5, M20 as amended on 2026-10-19). One that is not among `factors` is MissingFactors, naming it.
+   */
   upgradeRequest(factors: readonly FreshFactor[]): Promise<PendingChange<UpgradeRequest>>;
-  /** Gives `target` its factor key; the factor proof for the call comes from `proving`, another factor. */
-  setFactorKey(target: FreshFactor, proving: FreshFactor): Promise<PendingChange<SetFactorKeyRequest>>;
   /** A wrap of the active key for a new passkey (one more prompt), with its factor key once sessions are required. FlaggedRecipient while a factor is flagged: remove it first. */
   addPasskey(passkey: PasskeyOptions, freshFactor: FreshFactor): Promise<WrapInput>;
   /**

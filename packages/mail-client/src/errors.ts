@@ -138,10 +138,11 @@ export class MailboxChanged extends MailClientError {
   }
 }
 /**
- * A security key or passkey that opens only an older key and has no seal of
- * the current one (it was left out of the upgrade before a device was
- * removed): unlock with the recovery key, then use it once more to bring it
- * up to date (setFactorKey).
+ * A refusal: a security key or passkey that opens only an older key and has no
+ * seal of the current one, so it reaches no key Mail seals to now (the key
+ * ring is missing that factor's seal). Unlock with another factor. Since the
+ * upgrade names every factor (B5 as amended on 2026-10-19), a factor is never
+ * left without its key, and there is no repair flow.
  */
 export class StaleFactor extends MailClientError {
   constructor(message = "this security key only opens an older mailbox key") {
@@ -191,5 +192,18 @@ export class FlaggedRecipient extends MailClientError {
 export class RotationUnproven extends MailClientError {
   constructor(message = "the key change could not be checked in this browser, so it was not made") {
     super(message, "RotationUnproven");
+  }
+}
+
+/**
+ * B5, M20 as amended on 2026-10-19: the upgrade names every factor of the mailbox, each just used, and
+ * these were not among them. Use each (the screen asks for it by its label), or remove one the owner no
+ * longer has (removeWrap, which needs no proof while sessions are optional), then ask again.
+ */
+export class MissingFactors extends MailClientError {
+  readonly missing: readonly { readonly id: string; readonly kind: "passkey-prf" | "recovery"; readonly label: string }[];
+  constructor(message = "every security key and the recovery key must be used for the upgrade", missing: readonly { id: string; kind: "passkey-prf" | "recovery"; label: string }[] = []) {
+    super(message, "MissingFactors");
+    this.missing = Object.freeze(missing.map((m) => Object.freeze({ id: m.id, kind: m.kind, label: m.label })));
   }
 }

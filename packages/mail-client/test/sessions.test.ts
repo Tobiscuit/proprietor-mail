@@ -286,8 +286,8 @@ describe("sessionProof: the key proof for openSession", () => {
   });
 });
 
-describe("StaleFactor", () => {
-  test("a passkey left out of the upgrade (no factor key) reaches no key after a rotation: unlock with the recovery key instead", async () => {
+describe("StaleFactor, a refusal", () => {
+  test("a passkey whose wrap is of a retired key and that has no seal of the active one (here: listed with no factor key, so a rotation sealed nothing to it) reaches no key: StaleFactor; the recovery key still unlocks", async () => {
     const e = await enrolledMailbox();
     const passkey = e.fake.wraps.find((w) => w.kind === "passkey-prf")!;
     Object.assign(passkey, { factorKey: null, tag: null, tagKeyId: null });

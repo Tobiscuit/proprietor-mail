@@ -74,8 +74,14 @@ Nothing here names a host.
   K6), then K7 (a device the view no longer lists is wiped: `removed`), then
   the device's seal, K2′ from the key it last accepted, and K3. It answers
   `unlocked` (no prompt), `locked` with a reason, `removed`, or `none`.
-- `keepThisDevice`, `rekeyThisDevice`, `removeDevice` (the whole rotation),
-  `upgradeRequest` and `setFactorKey` answer the request for Mail and a
+- K3 and K9 flag instead of stopping: a device or factor whose tag fails,
+  or a factor whose listed factor key is not the one it derives, is in
+  `mailbox.flagged`, is never sealed to, and is removed by the owner; while
+  one is there, `removeDevice` of that flagged device is the only rotation
+  (`FlaggedRecipient` otherwise). K2 and K2′ still stop everything.
+- `keepThisDevice`, `rekeyThisDevice`, `removeDevice` (the whole rotation,
+  which opens its own seals before it answers, K8) and `upgradeRequest`
+  (every factor of the mailbox at once) answer the request for Mail and a
   `commit()` for after Mail accepted it; nothing in the browser changes
   before. `lock()` answers the request that clears the unlock key at Mail;
   `forget()` is K7 after `DeviceRevoked`.
@@ -196,11 +202,13 @@ them back from both specs.
   missing nonce" test. Spec 002's (all run): dropping `trustChain`'s walk
   fails 15 tests (`test/sessions.test.ts`, `test/devices.test.ts`), and
   dropping only its anchor check fails the two that only it can pass (the
-  rollback, and a ring made only of the server's key); making `checkTags` a
-  no-op fails 6; letting `resumeDevice` skip the lock settings fails 5; a
-  store that keeps another field, or anything at all, fails 3 each; a
+  rollback, and a ring made only of the server's key); a `checkTags` that
+  flags nothing fails 16; letting `resumeDevice` skip the lock settings fails
+  5; a store that keeps another field, or anything at all, fails 3 each; a
   `resumeDevice` that does not wipe, or a `forget()` that keeps the record,
-  fails 3.
+  fails 3. Round 2's: no `FlaggedRecipient` refusal in `removeDevice` fails 4;
+  no K8 check fails 3; a K9 comparison that always matches fails 4; letting
+  the upgrade leave a factor out fails 1.
 
 ## Vendoring
 

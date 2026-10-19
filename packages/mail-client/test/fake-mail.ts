@@ -20,7 +20,6 @@ import type {
   RegisterDeviceRequest,
   RemoveDeviceRequest,
   SealView,
-  SetFactorKeyRequest,
   UpdateDeviceRequest,
   UpgradeRequest,
   WrapInput,
@@ -222,7 +221,8 @@ export class FakeMail {
       return { wrap, factorKey: b64(x.factorKey, "factor key", 32), tag: b64(x.tag, "tag", 32) };
     });
     if (new Set(factors.map((f) => f.wrap.id)).size !== factors.length) invalid("a factor is named twice");
-    if (!factors.some((f) => f.wrap.kind === "recovery")) invalid("M20: a recovery factor is required");
+    // B5 and M20 as amended on 2026-10-19: the list names every wrap the mailbox has, exactly once.
+    if (factors.length !== this.wraps.length) invalid("M20: the upgrade names every wrap of the mailbox");
     for (const f of factors) Object.assign(f.wrap, { factorKey: f.factorKey, tag: f.tag, tagKeyId: active });
     this.sessionsMode = "required";
     this.accepted.push({ method: "upgrade", request: input });
@@ -291,7 +291,7 @@ export class FakeMail {
   }
 
   /** B2: the session (and, for "factor" methods, the factor proof) a call needs. Returns the session's record. */
-  private async checkAuth(auth: Auth, needs: { session: boolean; factor?: boolean; device?: boolean; notFactor?: string }): Promise<MailSession | null> {
+  private async checkAuth(auth: Auth, needs: { session: boolean; factor?: boolean; device?: boolean }): Promise<MailSession | null> {
     const a = exactly(auth, "auth", [], ["session", "factorProof"]);
     let session: MailSession | null = null;
     if (a.session !== undefined) {
@@ -311,7 +311,6 @@ export class FakeMail {
       const c = await this.consume(proof.challengeId, proof.answer, "factor");
       const factor = this.wraps.find((w) => w.id === c.targetId);
       if (factor === undefined || factor.factorKey === null) refuse("ProofRejected");
-      if (needs.notFactor !== undefined && c.targetId === needs.notFactor) refuse("ProofRejected", "the proof must come from another factor");
     }
     if (needs.device && (session === null || session.deviceId === null)) refuse("SessionRequired", "a device's session");
     return session;
@@ -377,22 +376,6 @@ export class FakeMail {
     this.accepted.push({ method: "updateDevice", request: input });
     const { accountId: _a, ...view } = device;
     return structuredClone(view);
-  }
-
-  async setFactorKey(input: SetFactorKeyRequest, auth: Auth = {}): Promise<null> {
-    if (this.sessionsMode !== "required") invalid("upgrade first");
-    const req = exactly(input, "setFactorKey", ["factorId", "factorKey", "tag", "tagKeyId", "seal"]);
-    await this.checkAuth(auth, { session: true, factor: true, notFactor: req.factorId as string });
-    const wrap = this.wraps.find((w) => w.id === req.factorId) ?? refuse("NotFound");
-    if (wrap.factorKey !== null) invalid("the factor has a key");
-    const active = this.activeKey.keyId;
-    if (req.tagKeyId !== active) invalid("tagKeyId");
-    const needsSeal = wrap.keyId !== active;
-    if ((req.seal !== null) !== needsSeal) invalid("a seal exactly when the wrap is of a retired key");
-    Object.assign(wrap, { factorKey: b64(req.factorKey, "factor key", 32), tag: b64(req.tag, "tag", 32), tagKeyId: active });
-    if (needsSeal) this.seals.push({ keyId: active, to: { kind: "factor", id: wrap.id }, sealed: b64(req.seal, "seal", 109) });
-    this.accepted.push({ method: "setFactorKey", request: input });
-    return null;
   }
 
   async addWrap(input: WrapInput, auth: Auth = {}): Promise<null> {

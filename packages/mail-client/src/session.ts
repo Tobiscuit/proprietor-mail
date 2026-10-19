@@ -54,6 +54,7 @@ import {
   KeySubstitutionDetected,
   MailboxChanged,
   MailboxLocked,
+  MissingFactors,
   NoRecoveryFactor,
   RotationUnproven,
   StaleFactor,
@@ -91,7 +92,6 @@ import type {
   RemoveDeviceRequest,
   Rotation,
   SaveDraftRequest,
-  SetFactorKeyRequest,
   UnlockedMailbox,
   UnlockOptions,
   UpdateDeviceRequest,
@@ -679,7 +679,7 @@ export class Session implements UnlockedMailbox {
     });
   }
 
-  // ---- Factors' keys (device-v1 B5, B7; plan.md F5, F9) ----
+  // ---- The upgrade (device-v1 B5, M20 as amended on 2026-10-19; plan.md F5) ----
 
   async upgradeRequest(factors: readonly FreshFactor[]): Promise<PendingChange<UpgradeRequest>> {
     this.unlockedKeys();
@@ -690,9 +690,10 @@ export class Session implements UnlockedMailbox {
       return { ff, material: ff.use(this.mailboxId) };
     });
     if (new Set(used.map((u) => u.ff.factorId)).size !== used.length) throw new TypeError("a factor is named twice");
-    // M20: the upgrade names a recovery factor, and only wraps of the active key.
-    if (!used.some((u) => u.ff.kind === "recovery")) throw new NoRecoveryFactor();
-    if (used.some((u) => u.ff.facts.keyId !== this.ring.active.keyId)) throw new MailboxChanged();
+    if (used.some((u) => u.ff.facts.keyId !== this.ring.active.keyId || !this.ring.wraps.some((w) => w.id === u.ff.factorId))) throw new MailboxChanged();
+    // M20: every factor of the mailbox at once, so that none is left without a key after the first rotation.
+    const missing = this.ring.wraps.filter((w) => !used.some((u) => u.ff.factorId === w.id));
+    if (missing.length > 0) throw new MissingFactors(undefined, missing.map((w) => ({ id: w.id, kind: w.kind, label: w.label })));
     const keyId = this.ring.active.keyId;
     const request: UpgradeRequest = {
       factors: await Promise.all(
@@ -707,39 +708,6 @@ export class Session implements UnlockedMailbox {
     return pendingChange(request, async () => {
       this.ring.sessions = "required";
       for (const f of request.factors) this.keyFactorLocally(f.id, f.factorKey, f.tag, keyId);
-    });
-  }
-
-  async setFactorKey(target: FreshFactor, proving: FreshFactor): Promise<PendingChange<SetFactorKeyRequest>> {
-    this.unlockedKeys();
-    const t = freshFactorOf(target);
-    const p = freshFactorOf(proving);
-    if (t.factorId === p.factorId) throw new TypeError("the factor proof must come from another factor");
-    const tm = t.use(this.mailboxId);
-    const pm = p.use(this.mailboxId);
-    if (this.ring.sessions !== "required") throw new TypeError("upgrade the mailbox first");
-    const wrap = this.ring.wraps.find((w) => w.id === t.factorId);
-    if (wrap === undefined) throw new MailboxChanged();
-    if (wrap.factorKey !== null) throw new TypeError("this factor has its factor key already");
-    if (this.ring.wraps.find((w) => w.id === p.factorId)?.factorKey == null) throw new TypeError("the proof must come from a factor that has its factor key");
-    const keyId = this.ring.active.keyId;
-    // A seal of the active key exactly when the factor's wrap is of a retired key (B7).
-    let seal: string | null = null;
-    if (t.facts.keyId !== keyId) {
-      const wrappable = [pm.active, tm.active].find((k) => k !== null && k.keyId === keyId) ?? null;
-      if (wrappable === null) throw new StaleFactor();
-      seal = await sealKey(wrappable, { mailboxId: this.mailboxId }, { kind: "factor", factorId: t.factorId, publicKey: tm.factorPublic });
-    }
-    const request: SetFactorKeyRequest = {
-      factorId: t.factorId,
-      factorKey: base64url(tm.factorPublic),
-      tag: await factorTag(this.binding, t.facts, tm.factorPublic),
-      tagKeyId: keyId,
-      seal,
-    };
-    return pendingChange(request, async () => {
-      this.keyFactorLocally(request.factorId, request.factorKey, request.tag, keyId);
-      if (seal !== null) this.ring.seals = [...this.ring.seals, { keyId, to: { kind: "factor", id: request.factorId }, sealed: seal }];
     });
   }
 
