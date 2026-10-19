@@ -97,11 +97,13 @@ that export entirely.
 
 RFC 9180 says `SerializePrivateKey` MUST clamp its output and
 `DeserializePrivateKey` MUST clamp its input. `@hpke/core` does neither, and
-the RFC's own test vectors carry unclamped `skRm`. So this package clamps
-twice:
+the RFC's own test vectors carry unclamped `skRm`. This package relies on
+Web Crypto clamping before every use:
 
-- **At generation**: Web Crypto's `generateKey` produces a clamped scalar;
-  the PKCS #8 bytes inside a wrap carry it.
+- **At generation** the engine decides the bytes, and `wrapKey` carries
+  them as they are (envelope v1, "The mailbox key pair", as corrected on
+  2026-10-19): Chromium sets the three low bits of the first byte, Firefox
+  leaves the bytes as drawn, Safari's engine and Node clamp.
 - **On unwrap**: Web Crypto clamps before every use, so an unclamped key
   wrapped by another implementation still unwraps to the same key pair. A
   test does this with RFC 7748's Alice key. The test vectors import a known
