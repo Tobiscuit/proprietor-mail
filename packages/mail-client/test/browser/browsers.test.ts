@@ -276,8 +276,7 @@ describe.each(chosen)("%s under the dashboard's policy", (name) => {
     test("startEnrollment: a key pair, a passkey wrap from the PRF output and a recovery wrap, all made in this browser", async () => {
       const useDouble = !hasVirtualAuthenticator;
       const result = await page.evaluate(([id, host, d]) => harness.enroll(id, host, d, true), [mailboxId, server.host, useDouble] as const);
-      // On a failure, say which crypto call failed and on what input, not only the error's name.
-      if (!result.ok) throw new Error(`${result.error.name}: ${result.error.message}\nfailed calls: ${JSON.stringify(result.failedCalls)}\nstack: ${result.stack}`);
+      if (!result.ok) throw new Error(`${result.error.name}: ${result.error.message}`);
       expect(result.passkey).toBe("prf");
       expect(result.confirmed).toBe(true);
       expect(result.wrapBytes).toEqual([77, 77]);

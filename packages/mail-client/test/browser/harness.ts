@@ -30,11 +30,6 @@ import {
   type RenderedBody,
   type UnlockedMailbox,
 } from "@proprietor/mail-client";
-import { installRecorder, PROBE_CHECKS, runProbe, takeFailures } from "./crypto-probe";
-
-// Every crypto.subtle call that throws is recorded with its inputs (test code only): a failing flow
-// reports which operation failed, and on what.
-installRecorder();
 
 // ---- bytes (no Buffer in a browser) ----
 
@@ -302,7 +297,7 @@ const harness = {
       const request = enrollment.request();
       return { ok: true as const, request, recoveryKey: enrollment.recoveryKey, fingerprint: enrollment.fingerprint, passkey: enrollment.passkey, confirmed, wrapBytes: request.wraps.map((w) => fromBase64(w.wrapped).length) };
     } catch (e) {
-      return { ok: false as const, error: errorOf(e), stack: e instanceof Error ? String(e.stack ?? "") : "", failedCalls: takeFailures() };
+      return { ok: false as const, error: errorOf(e) };
     }
   },
   async keyIdOfRequest(request: EnrollRequest) {
@@ -342,13 +337,6 @@ const harness = {
   lock() {
     void unlocked?.lock();
     return unlocked?.locked ?? null;
-  },
-
-  // ---- diagnostics: the crypto probe (test/browser/crypto-probe.ts) ----
-  probe: {
-    checks: () => PROBE_CHECKS,
-    run: (rounds: number, only?: string[]) => runProbe(rounds, only),
-    failedCalls: () => takeFailures(),
   },
 
   // ---- kept devices (spec 002, contracts/device-v1.md Part C) ----
