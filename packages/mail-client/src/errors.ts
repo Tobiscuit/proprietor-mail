@@ -181,3 +181,15 @@ export class FlaggedRecipient extends MailClientError {
     this.flagged = Object.freeze({ devices: Object.freeze([...(flagged.devices ?? [])]), factors: Object.freeze([...(flagged.factors ?? [])]) });
   }
 }
+
+/**
+ * K8: the rotation this browser made did not prove itself: its successor seal did not open with the new
+ * key, or the new key's seal for the factor just used did not open with that factor's key (or there is
+ * none). Nothing was sent and nothing changed here; mail that arrived after such a rotation would have
+ * opened only in this page. Try again; if it fails again, use another browser.
+ */
+export class RotationUnproven extends MailClientError {
+  constructor(message = "the key change could not be checked in this browser, so it was not made") {
+    super(message, "RotationUnproven");
+  }
+}

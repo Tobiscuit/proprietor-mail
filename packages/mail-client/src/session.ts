@@ -35,6 +35,7 @@ import {
   openChallenge,
   openDraft,
   openHeader,
+  openKeySeal,
   openBody as openSealedBody,
   sealDraft as sealDraftBlock,
   sealKey,
@@ -54,6 +55,7 @@ import {
   MailboxChanged,
   MailboxLocked,
   NoRecoveryFactor,
+  RotationUnproven,
   StaleFactor,
   StorageUnavailable,
   UndecryptableBody,
@@ -628,7 +630,19 @@ export class Session implements UnlockedMailbox {
       deviceId,
       rotation: { from: ring.active.keyId, publicKey: base64url(next.publicKey.publicKey), successorSeal, seals, tags },
     };
-    const ff = freshFactorOf(freshFactor);
+    // K8: the rotation proves itself before it is sent. The new key opens the successor seal to the old
+    // key, and the factor just used opens the new key's seal for it; mail that arrives after a rotation
+    // whose seals do not open would be readable only in this page.
+    try {
+      const old = await openKeySeal({ kind: "successor", key: next.privateKey }, { mailboxId, sealedKeyId: ring.active.keyId }, successorSeal);
+      const own = seals.find((x) => x.to.kind === "factor" && x.to.id === used.factorId);
+      if (own === undefined) throw new RotationUnproven("the factor just used receives no seal of the new key");
+      const back = await openKeySeal({ kind: "factor", key: used.use(mailboxId).factorKey }, { mailboxId, sealedKeyId: next.publicKey.keyId }, own.sealed);
+      if (old.keyId !== ring.active.keyId || back.keyId !== next.publicKey.keyId) throw new RotationUnproven();
+    } catch (e) {
+      throw e instanceof RotationUnproven ? e : new RotationUnproven();
+    }
+    const ff = used;
     return pendingChange(request, async () => {
       // Mail applied M18. This session moves to the new key: a decrypt-only copy (K1′), the old keys kept.
       const decryptOnly = await decryptOnlyCopy(mailboxId, next.privateKey);

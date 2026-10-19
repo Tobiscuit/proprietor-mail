@@ -93,6 +93,7 @@ export {
   PrfUnavailable,
   RecoveryKeyTypo,
   RecoveryNotConfirmed,
+  RotationUnproven,
   StaleFactor,
   StorageUnavailable,
   UndecryptableBody,

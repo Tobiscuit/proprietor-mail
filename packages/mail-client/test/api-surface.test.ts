@@ -49,6 +49,7 @@ const errors = [
   "InvalidChallenge",
   // D1's round 2 (contracts/device-v1.md Part C as amended on 2026-10-19)
   "FlaggedRecipient",
+  "RotationUnproven",
 ] as const;
 
 describe("@proprietor/mail-client exports the contract's API", () => {
