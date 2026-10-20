@@ -30,7 +30,7 @@ a mailbox is `m`, keys are `K0, K1, …`, devices `D1, D2, …`.
 | P2 | **Kept device** | One browser profile with two P-256 keys in IndexedDB and the id of the key it last accepted (K5). | A record `(device id, last accepted key)` plus the two private keys, and a page holding the active key while unlocked. Any number. | HIGH |
 | P3 | **Factor secret** | The recovery key, or a security key's PRF output for this mailbox (A2). Used only when a person types or touches it. | One factor per mailbox, held by the owner, usable from any browser at any time. | MEDIUM — one factor stands for all; the model does not distinguish passkey from recovery key, and the owner is always willing to use it. Confirm that nothing in §7 depends on having two factors. |
 | P4a | **Mail as a store** (attacker-controlled) | The key ring the browser reads from `mailbox()`: keys, successor seals, wraps, factor keys, tags, devices, seals (B4). | **The attacker.** Everything a browser reads comes from the attacker; everything a browser sends is seen by the attacker. The dashboard relay is the same attacker (it is the network). | HIGH — as instructed. |
-| P4b | **Mail as a verifier** (honest) | The checks the Worker code enforces on data it made itself: a challenge is used once (M16), an answer is compared by hash (B6), a device signature is verified (A7), a rotation is applied only with a live session and a spent factor proof (B3, B7), and inbound mail is sealed to the key its own active pointer names. | Honest rules with their own state. They read *inputs* (which key to seal a challenge to, which device public key to verify with) from the attacker, because in the system those come from the store. | MEDIUM — the split "hostile storage, honest checks" is the question being asked: *what can a hostile or compromised Mail or relay do, given that the Worker code runs as written?* Confirm this is the question you want answered. |
+| P4b | **Mail as a verifier** (honest) | The checks the Worker code enforces on data it made itself: a challenge is used once (M16), an answer is compared by hash (B6), a device signature is verified (A7), a rotation is applied only with a live session and a spent factor proof (B3, B7), and inbound mail is sealed to the key its own active pointer names. | Honest rules with their own records: the active-key pointer, the **factor public keys registered at enrollment**, challenges and sessions. A session challenge is sealed to the pointer's key; a factor challenge to the registered factor key. Every *request* (an answer, a rotation, a device signature and the public key to check it with) arrives from the attacker. | MEDIUM — the split is: *the view the browser reads is hostile, the records Mail's own checks rely on are honest.* Without the second half, D25 would be void in the model (an attacker who can rewrite the stored factor key answers its own factor challenges), and nothing about proofs could be learned. In the system the factor keys are written once (enrollment, or the upgrade) and changed only with a factor proof. Confirm this is the question you want answered. |
 | P5 | **Removed device as a compromise event** | A lost or stolen device, locked or unlocked (spec §4 rows 1–3). | At any moment the attacker may take everything a kept device stored or ever held in a page: its two device keys and every mailbox key it accepted or walked through. | HIGH |
 | P6 | **Honest sealer** (Mail's inbound path) | `Mailbox.deliver` seals each arriving message to `activeKey()`. | Two versions. **H1** seals to the key the honest pointer names. **H2** seals to a key the store hands it (this is finding A of the review: the client opens any key it holds without checking the key's `retiredAt`). | HIGH |
 
@@ -67,7 +67,7 @@ One thing the model keeps that the code does not: a kept device updates its
 | `dsk`, `dss` (device keys) | the device | the device; the attacker on compromise | Mail | A3 | HIGH |
 | `bindkey(K)` | any holder of `K` | holders of `K` | Mail, unless `K` leaked | A5 | **LOW** — stands for the self-Diffie-Hellman key; "only a holder of `K` can make or check a tag" is *assumed*, not derived. The Square-DH argument is a separate, later item. |
 | `ans` (challenge answer) | Mail (verifier) | the holder of the key it was sealed to; then the attacker, because the answer is relayed in the clear | — | A6, A8 | HIGH |
-| `nonce`, `tok` | Mail | everyone (the token passes through the dashboard) | — | A7, A8 | HIGH |
+| `nonce`, `tok` | Mail | everyone (the token passes through the dashboard) | — | A7, A8 | HIGH — public the moment they exist, so the model does not give them names: the device signs the challenge id, and a session is simply open (see "choices made for the prover") |
 | `dek` (message key) | the sealer | holders of the key it was sealed to | Mail | envelope v1 | HIGH |
 
 ## 4. Cryptographic operations and their symbolic form
@@ -76,19 +76,20 @@ One thing the model keeps that the code does not: a kept device updates its
 |---|---|---|---|
 | HPKE base-mode seal to `pk`, with `info` and `aad` | A4, A6, envelope v1 | `aenc(<tag, ids…, payload>, pk)`. The tag and the ids inside the plaintext stand for `info` and `aad`: a ciphertext made for one purpose does not open as another (K4). | HIGH — this is what HPKE's `info` does. The run `ORACLE_MUTANT` removes the separation to show the verdict depends on it. |
 | Envelope v1 wrap | `AES-GCM(kek, pkcs8(K))` | `senc(K, kek(fs, fid))` | HIGH |
-| Key seal to a device or factor | A4 | `aenc(<'keyseal', m, K, kind, id>, pkRecipient)` | HIGH |
-| Successor seal | A4 | `aenc(<'succ', m, K_old, pk(K_new)>, pk(K_new))`: the old private key, sealed to the new public key | HIGH |
+| Key seal to a device or factor | A4 | `aenc(<'keyseal', K, kind>, pkRecipient)`; the mailbox and recipient ids of A4's `info` are left out because the recipient's key already fixes them (a seal opens only for its recipient) | HIGH |
+| Successor seal | A4 | `aenc(<'succ', K_old>, pk(K_new))`: the old private key, sealed to the new public key | HIGH |
 | Binding tag | A5 | `mac(<kind, m, id, public keys…>, bindkey(K))` | LOW (see §3) |
-| Factor key | A2 DeriveKeyPair | `fkey(fs, fid)`, public `pk(fkey(fs, fid))` | HIGH |
+| Factor key | A2 DeriveKeyPair | `fkey(fs, 'f1')`, public `pk(fkey(fs, 'f1'))` (one factor, so its id is a constant) | HIGH |
 | Session challenge | A6 | `aenc(<'challenge', 'session', chid, ans>, pk)` | HIGH |
-| Factor challenge | A6 | `aenc(<'challenge', 'factor', fid, chid, ans>, pkF)`; with `BOUND_PROOFS`: `…, chid, bind, ans` where `bind = h(request)` | HIGH / the bound form is a proposed change, not the contract |
-| Device proof | A7 | `sign(<'proof', m, did, chid, nonce>, dss)` | HIGH |
-| Message-key envelope | envelope v1 | `aenc(<'msgkey', m, dek>, pk)` | HIGH |
+| Factor challenge | A6 | `aenc(<'challenge', 'factor', chid, ans>, pkF)`; with `BOUND_PROOFS`: `…, chid, bind, ans` where `bind = h(request)` | HIGH / the bound form is a proposed change, not the contract |
+| Device proof | A7 | `sign(<'proof', did, chid>, dss)`: A7's nonce is redundant once the challenge id is fresh | HIGH |
+| Message-key envelope | envelope v1 | `aenc(<'msgkey', dek>, pk)` | HIGH |
 | `keyId` | first 16 bytes of SHA-256(pk) | the public key itself | HIGH — a hash is a bijection in the symbolic model |
 | Key commitment of AES-GCM, clamping, PKCS #8 lengths | A4, envelope v1 | not modelled | LOW — bytes-level; outside a symbolic model's reach |
 
-**Two choices made for the prover, not for the protocol** (MEDIUM — confirm
-they lose nothing you care about):
+**Choices made for the prover, not for the protocol** (MEDIUM — confirm
+they lose nothing you care about; README.md says what each one cost before
+it was made):
 
 - *Received keys, answers and ids are matched as fresh names.* Where a rule
   reads a mailbox key out of a wrap, a seal or a successor seal, a challenge
@@ -104,6 +105,34 @@ they lose nothing you care about):
   signature and a public key and checks `verify(sig, message, pk) = true`,
   which is what the Worker does (A7); the digest in the bound-proof variant is
   matched as `h(request)` on purpose.
+- *A page is persistent, and records carry an id.* An unlocked page is a fact
+  that is never consumed: the page holds every key it ever accepted (which is
+  G40), and may still act with an older one — Mail's pointer decides what
+  counts, so this only gives the attacker more. The device record, the chain
+  walks and a prepared rotation carry a fresh id in first position. Both let
+  Tamarin treat these facts as *injective*, without which the existence
+  searches for the sanity lemmas did not terminate.
+- *Honest messages travel on named channels, and the attacker may write to
+  every channel.* An answer, a device's signed answer, a factor answer, a
+  rotation request, a device record and a factor record are each a fact the
+  honest sender puts down **and** publishes; six injection rules (`Z…`) let
+  the attacker put any content it can compute on the same channel. That is
+  the Dolev-Yao power of a plain `In()`, arranged so that the honest source
+  of a message is examined before the attacker's.
+- *Public-the-moment-they-exist and symbolically redundant values are not
+  fresh names.* The challenge nonce (the challenge id is already fresh; the
+  device signs the id), the session token (a bearer secret the attacker
+  always holds, so a session is simply "open"), the factor id (one factor:
+  `'f1'`), and the mailbox and recipient ids inside encrypted payloads (the
+  recipient's key already binds them; the tags still cover them). Each fresh
+  name in an honest output is one more case for every "the attacker knows
+  some fresh name" goal; two hundred of them made every search stall.
+- *Rules are named in the order Tamarin should try them as sources* (`A00`
+  for enrollment through `A28` for compromise, `Z` for injection), because
+  the prover tries the cases of a goal in alphabetical order of the rules
+  that could have produced it; base cases before loops, honest before
+  attacker. `oracle.py` additionally orders the goals within a proof state:
+  protocol facts first, knowledge of fresh names last.
 
 ## 5. Message flows
 
@@ -112,18 +141,18 @@ Each step: who acts, what it needs, what it does, what the attacker learns.
 
 | Step | Who | Needs | Does | Attacker learns | Contract | Confidence |
 |---|---|---|---|---|---|---|
-| **E1 Enroll** | a new stateless page | nothing | makes `m`, `K0`, factor `fid` with secret `fs`; publishes `pk(K0)`, the wrap `senc(K0, kek)`, `pkF`, and the factor's tag under `bindkey(K0)`; Mail's pointer starts at `pk(K0)`; the page is unlocked with `K0` | all of it except `K0`, `fs` | B5, envelope v1 | MEDIUM — the enrollment request is assumed to reach Mail unmodified. A relay that swaps the key at enrollment is a 001 concern (G7 catches it at the next unlock) and is out of scope here. |
+| **E1 Enroll** | a new stateless page | nothing | makes `m`, `K0`, factor `fid` with secret `fs`; publishes `pk(K0)`, the wrap `senc(K0, kek)`, `pkF`, and the factor's tag under `bindkey(K0)`; Mail's pointer starts at `pk(K0)` and Mail registers `pkF` as the factor's key; the page is unlocked with `K0` | all of it except `K0`, `fs` | B5, envelope v1 | MEDIUM — the enrollment request is assumed to reach Mail unmodified (both the key and the factor key). A relay that swaps either at enrollment is a 001 concern (G7 and K9 catch it at the next unlock) and is out of scope here. |
 | **U1 Unlock, stateless** | P1 with the factor | the wrap from the store; for U1b also a seal of the active key to `pkF` | opens the wrap → `K0` is the **anchor**; the active key is `K0` (U1a) or the key inside the factor seal (U1b); starts a walk from the active key to the anchor | which factor was used | K2′ (a)/(b) | HIGH |
 | **U2 Unlock, kept device after a lock** | P2 with the factor | as U1, plus its record | as U1, but the anchor is `lastpk` from the record | as U1 | K2′ | MEDIUM — K2′ names two anchors (the wrap's key and `lastpk`); the model uses `lastpk`, which is the later of the two, so it is the stricter check. |
 | **W1 Walk step** | P1/P2 mid-walk | a successor seal from the store | opens `aenc(<'succ', m, K_prev, pk(K_cur)>, pk(K_cur))` with `K_cur`, now at `K_prev`; a device remembers it held `K_prev` | nothing | K2′, G40 | HIGH |
 | **A1/A2 Accept** | P1/P2 | the walk is at the anchor | the active key is accepted; the page is unlocked with it; a device writes `lastpk := the accepted key` only if the record still holds the walk's anchor | nothing | K2′, K5 | MEDIUM — the compare-and-swap (§2) |
 | **R1 Resume** | P2 | its record, its unlock key, a seal of the active key to its unlock key from the store | opens the seal, starts a walk from that key to `lastpk` | nothing | F2, K2′ | HIGH |
 | **K1 Keep this device** | P1, after a factor | the unlocked page | makes `did`, `dsk`, `dss`; publishes their public halves, the active key sealed to `pk(dsk)`, and the device's tag under `bindkey(K_active)`; the page becomes the device's page; record `lastpk := pk(K_active)` | the public record, the seal, the tag | B7, K5 | MEDIUM — Mail's own check of the registration (a factor proof, D25) is not modelled: the store is the attacker, so a record is simply there or not. |
-| **C1 Session challenge** | Mail (verifier) | a target key, read from the store | draws `chid`, `ans`, `nonce`; publishes `chid`, `nonce`, `aenc(<'challenge','session',chid,ans>, target)`; remembers the challenge | all of it except `ans` | A6, B6 | HIGH |
-| **C2 Factor challenge** | Mail (verifier) | a factor id and its public key, from the store (with `BOUND_PROOFS`: also a request digest `bind`) | as C1, sealed to `pkF`, tagged `'factor'` | as C1 | A6, B6 | HIGH |
-| **P1/P2 Session proof** | P1 / P2 | the unlocked page; a challenge sealed to the page's active key | answers `ans`; a device adds `sign(<'proof', m, did, chid, nonce>, dss)` | `ans`, the signature | A6, A7 | HIGH |
+| **C1 Session challenge** | Mail (verifier) | its own pointer's key | draws `chid`, `ans`; publishes `chid` and `aenc(<'challenge','session',chid,ans>, pointer key)`; remembers the challenge | all of it except `ans` | A6, B6 | HIGH |
+| **C2 Factor challenge** | Mail (verifier) | the factor public key it registered at enrollment (with `BOUND_PROOFS`: also a request digest `bind` from the network) | as C1, sealed to `pkF`, tagged `'factor'` | as C1 | A6, B6 | HIGH — see P4b for why the registered key, not the view's |
+| **P1/P2 Session proof** | P1 / P2 | the unlocked page; a challenge sealed to a key the page holds | answers `ans`; a device adds `sign(<'proof', did, chid>, dss)` | `ans`, the signature | A6, A7 | HIGH |
 | **P3 Factor proof** | the owner | the factor; a challenge sealed to `pkF` | answers `ans` | `ans` | A6, D25 | MEDIUM — the owner answers *any* factor challenge at any time (the code answers only within two minutes of a factor use, K1′). More willing than the code: whatever holds here holds there. With `BOUND_PROOFS` this step disappears: a factor challenge is answered only inside T2, and only when its digest is the digest of the request the page is about to send. |
-| **M1/M2 Open session** | Mail (verifier) | a live challenge and its answer; for a device, the signature and the device's public signing key read from the store | consumes the challenge; opens a session; publishes the bearer token | `tok` | B6 | HIGH |
+| **M1/M2 Open session** | Mail (verifier) | a live challenge and its answer; for a device, the signature and the device's public signing key read from the store | consumes the challenge; opens a session (the bearer token is public knowledge, so it is not named) | nothing new | B6 | HIGH |
 | **M3 Apply rotation** | Mail (verifier) | a live factor challenge and its answer, a session for the current active key, and a request `(pk_old, pk_new)` from the network | consumes the proof; if `pk_old` is the pointer, moves the pointer to `pk_new` | nothing new | B3, B7 step 1 | MEDIUM — Mail checks ids and lengths of the seals and tags in a rotation, never their content (it cannot: B7). So the request Mail accepts is just `(pk_old, pk_new)`. With `BOUND_PROOFS`, the challenge's digest must equal `h(request)`. |
 | **T1 Prepare rotation** | P1/P2 unlocked | a device id to remove, from the store | draws `K_new`; publishes `h(<'rotate', m, pk(K_old), pk(K_new)>)` | the digest | B7, K8 | MEDIUM — the digest is only used by the bound variant. |
 | **T2 Commit rotation** | P1/P2 with the factor | the prepared rotation; with `BOUND_PROOFS`: the factor challenge whose digest matches | publishes `pk(K_new)` and the successor seal; the page moves to `K_new`; a device's record moves to `pk(K_new)`; the page may now seal `K_new` (T3/T4); the removed device is `didrm` | `pk(K_new)`, the successor seal (with `BOUND_PROOFS` also `chid`, `ans`) | B7, M18, K8 | HIGH |
@@ -173,7 +202,7 @@ fail, the trace we expect is described in plain words.
 | `chain_agreement_stateless_no_compromise` / `chain_agreement_kept_no_compromise` | With no compromise, a key a browser accepts as active was made by an honest browser of this mailbox. | **hold** | A successor seal holds the old private key, which only its holders have; a seal of the "new" key alone never passes the walk (K2′). |
 | `chain_agreement_stateless_after_removed_compromise` | Even if every compromised device was removed (and compromised only after that), a key a stateless browser accepts was made honestly. | **fail** | Found while writing this IR: a leaked old key `K_i` lets the attacker **fork** the chain: it makes its own `K_att`, a successor seal `K_i → K_att` (it holds `K_i`), and a seal of `K_att` to the factor key. A recovery-key unlock is anchored at `K0` forever; the walk `K_att → K_i → … → K0` reaches it. The same fork takes any kept device whose `lastpk` is `K_i` or older. Devices already at `K_{i+1}` refuse it. In the system: a stolen device plus a hostile Mail reads mail that arrives on the fork; nothing stored under honest keys. |
 | `kept_device_no_rollback` | A kept device never accepts the predecessor of a key it accepted before (one step), with every compromised device removed first. | **hold** | The anchor moves forward; a walk from `K_old` can never reach `K_new`, and nobody can make "`K_new` sealed to `K_old`" without `K_new`. |
-| `stateless_rollback_possible` (exists-trace) | A stateless browser can accept `K_new` and later `K_old`, with no compromise. | **trace exists** (fails by design) | It has no memory (spec D31). The store shows an older ring to a fresh recovery-key unlock. |
+| `stateless_rollback_possible` (exists-trace) | A stateless browser can accept `K_new` and later `K_old`, with no compromise (the trace shape is pinned like the sanity lemmas'). | **trace exists** (fails by design) | It has no memory (spec D31). The store shows an older ring to a fresh recovery-key unlock. |
 
 ### (iii) Recipient integrity
 
@@ -194,9 +223,9 @@ fail, the trace we expect is described in plain words.
 
 | Lemma | Says | Expected | Why |
 |---|---|---|---|
-| `mailbox_key_secret` | If the attacker knows an honest mailbox private key, a compromised device held it. | **hold** | keys travel only inside seals to honest recipients |
+| `mailbox_key_secret` | If the attacker knows an honest mailbox private key, some device of that mailbox was compromised. (A leaked key yields every older key through the public successor seals, so the statement cannot name the device that held *that* key.) | **hold** | keys travel only inside seals to honest recipients |
 | `factor_secret` | Factor secrets and factor private keys are never known to the attacker. | **hold** | never sent |
-| `dek_secret_honest_key` | A message key sealed to an honest mailbox key is known to the attacker only if a compromised device held that key. The challenge-answering rules are live in the same model, so this is also **(v)**: answering challenges leaks no message key. | **hold** (base) / **fail** (`ORACLE_MUTANT`) | HPKE `info` keeps challenges and envelopes apart (K4). The mutant seals message keys under the challenge `info`; then a page answers an envelope as if it were a challenge and the attacker reads the key. |
+| `dek_secret_honest_key` | A message key sealed to an honest mailbox key is known to the attacker only if some device of the mailbox was compromised. The challenge-answering rules are live in the same model, so this is also **(v)**: answering challenges leaks no message key. | **hold** (base) / **fail** (`ORACLE_MUTANT`) | HPKE `info` keeps challenges and envelopes apart (K4). The mutant seals message keys under the challenge `info`; then a page answers an envelope as if it were a challenge and the attacker reads the key. |
 
 ### Sanity (the model can run the honest flows)
 

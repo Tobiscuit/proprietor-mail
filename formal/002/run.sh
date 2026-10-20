@@ -25,7 +25,9 @@ THREADS=${THREADS:-4}      # GHC RTS threads, matched to CORES
 HEAP=${HEAP:-5G}           # GHC RTS -M: the prover aborts instead of swapping
 MEMMAX=${MEMMAX:-6G}       # cgroup cap for the whole scope (prover + Maude)
 TIMEOUT=${TIMEOUT:-15m}    # per lemma
-EXTRA=${EXTRA:-}           # e.g. --auto-sources (not needed: the typed model has no partial deconstructions)
+ORACLE=${ORACLE:-$PWD/oracle.py}   # goal ordering (README: why); ORACLE= to use Tamarin's default heuristic
+EXTRA=${EXTRA:-}           # further flags, e.g. --bound=20
+if [ -n "$ORACLE" ]; then EXTRA="--heuristic=O --oraclename=$ORACLE $EXTRA"; fi
 
 variant=base
 flags=()
@@ -67,7 +69,7 @@ for lemma in $lemmas; do
   start=$(date +%s)
   # shellcheck disable=SC2086
   scoped "$unit" taskset -c "$CORES" nice -n "$NICE" timeout -k 10s "$TIMEOUT" \
-    "$TAMARIN" --prove="$lemma" "${flags[@]}" $EXTRA device.spthy +RTS -N"$THREADS" -M"$HEAP" -RTS \
+    "$TAMARIN" --prove="$lemma" --derivcheck-timeout=60 "${flags[@]}" $EXTRA device.spthy +RTS -N"$THREADS" -M"$HEAP" -RTS \
     > "$log" 2>&1
   rc=$?
   systemctl --user stop "$unit.scope" 2>/dev/null || true
