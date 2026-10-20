@@ -69,7 +69,7 @@ for lemma in $lemmas; do
   start=$(date +%s)
   # shellcheck disable=SC2086
   scoped "$unit" taskset -c "$CORES" nice -n "$NICE" timeout -k 10s "$TIMEOUT" \
-    "$TAMARIN" --prove="$lemma" --derivcheck-timeout=60 "${flags[@]}" $EXTRA device.spthy +RTS -N"$THREADS" -M"$HEAP" -RTS \
+    "$TAMARIN" --prove="$lemma" --derivcheck-timeout=0 "${flags[@]}" $EXTRA device.spthy +RTS -N"$THREADS" -M"$HEAP" -RTS \
     > "$log" 2>&1
   rc=$?
   systemctl --user stop "$unit.scope" 2>/dev/null || true

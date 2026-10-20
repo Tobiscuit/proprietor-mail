@@ -1,22 +1,33 @@
 #!/usr/bin/env python3
 """Goal-ranking oracle for device.spthy (tamarin-prover --heuristic=O).
 
-Tamarin hands the open goals of a constraint system on stdin, one per line as
-"<index>: <goal>", and reads back the indices it should try first, in order.
-Goals left out keep Tamarin's default order after the listed ones.
+Tamarin calls this with the lemma name as the first argument and hands the
+open goals of a constraint system on stdin, one per line as "<index>: <goal>".
+It reads back the indices to try first, in order; goals left out keep
+Tamarin's default order after the listed ones.
 
-Why it exists: the model types every key, id and secret as a fresh name, so a
-goal "the attacker knows some fresh name" (!KU( ~x )) has a precomputed case
-for every position in every honest output where a fresh name appears, about
-two hundred of them. Taken early, each case opens a deep subtree. Taken last,
-when every variable is bound by the protocol facts already solved, almost all
-of them close on a fresh-name clash at once and the honest source is found.
-So the order is: protocol facts and action facts, then knowledge of composed
-terms (ciphertexts, signatures, pairs, public keys), then everything else,
-then knowledge of fresh names.
+Two rankings, chosen by the lemma's name:
+
+- Existence searches (the sanity lemmas and `stateless_rollback_possible`):
+  protocol facts and action facts first, then knowledge of composed terms,
+  then everything else, then knowledge of fresh names. The model types every
+  key, id and secret as a fresh name, so a goal "the attacker knows some
+  fresh name" (!KU( ~x )) has a precomputed case for every position in every
+  honest output where a fresh name appears. Taken early, each case opens a
+  deep subtree; taken last, once the protocol facts have bound every
+  variable, almost all of them close on a fresh-name clash at once.
+
+- Proofs (every other lemma): knowledge of fresh names first. In a secrecy
+  or agreement proof that goal is the crux: its cases enumerate every way
+  the secret could have reached the attacker, and each either closes or
+  points at the compromise the lemma allows for. Protocol facts come next,
+  composed-term knowledge after them.
 """
 import re
 import sys
+
+lemma = sys.argv[1] if len(sys.argv) > 1 else ""
+existence = lemma.startswith("sanity_") or lemma == "stateless_rollback_possible"
 
 premises, composed, other, fresh = [], [], [], []
 for line in sys.stdin:
@@ -33,5 +44,10 @@ for line in sys.stdin:
     else:
         other.append(index)
 
-for index in premises + composed + other + fresh:
+if existence:
+    order = premises + composed + other + fresh
+else:
+    order = fresh + premises + composed + other
+
+for index in order:
     print(index)

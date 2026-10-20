@@ -54,15 +54,19 @@ A single lemma by hand (the runner adds the same flags):
 ```sh
 PATH=~/.local/opt/maude-3.5.1:$PATH taskset -c 4-7 nice -n 10 timeout 15m \
   ~/.local/opt/tamarin-1.12.0/tamarin-prover --prove=kept_device_no_rollback \
-  --heuristic=O --oraclename=$PWD/oracle.py --derivcheck-timeout=60 \
+  --heuristic=O --oraclename=$PWD/oracle.py --derivcheck-timeout=0 \
   device.spthy +RTS -N4 -M5G -RTS
 ```
 
-Well-formedness: all three variants pass every check (`tamarin-prover
---derivcheck-timeout=60 device.spthy` prints `All wellformedness checks were
-successful`; the longer derivation-check timeout matters on a loaded node,
-where the 5-second default once reported a spurious failure). The model has
-no partial deconstructions, so no sources lemma is needed.
+Well-formedness: all three variants pass every check with
+`tamarin-prover --derivcheck-timeout=0 device.spthy` (`All wellformedness
+checks were successful`). The `0` switches off one lint, the *message
+derivation check*, on purpose: it flags a rule whose `In` or state-fact
+pattern has a variable the attacker could not derive, and every mailbox key
+in this model is matched as `mkey(~x)` (ir.md §4), which that lint reports
+for 18 rules (`A04, A05, A10–A15, A18–A26, A28`). With the lint on, those
+are its only findings. The model has no partial deconstructions, so no
+sources lemma is needed.
 
 ## Making the search terminate: what was tried, in order
 
@@ -96,6 +100,32 @@ modelling decision for the operator to confirm. In order:
 7. *Channels.* Honest answers, requests and records travel on named facts
    that honest senders also publish; `Z…` rules let the attacker inject any
    content it knows. Same attacker power, honest source examined first.
+8. *Answers routed, not learned.* The printed proof of a session-existence
+   lemma showed the solver obtaining the challenge answer by decrypting the
+   challenge with a compromised key rather than through the honest answer
+   rule: an honest answer that is also published lets the attacker rebuild
+   the challenge ciphertext from the answer it just learned, a circle the
+   solver unrolls. Answers now travel only on their channel (the attacker
+   still routes, replays or re-pairs them, which is all a relay can do with
+   the bytes). The results table says what this bought.
+9. *Reusable secrecy lemmas first.* The remaining stall was the goal "the
+   attacker knows this honest mailbox key": each successor seal offers a way
+   to learn `K_i` from `K_{i+1}`, an unbounded regress. `mailbox_key_secret`,
+   `factor_secret` and `dek_secret_honest_key` moved to the front, proven by
+   induction and marked `[reuse]`, so later proofs close such branches at
+   once (Tamarin's standard remedy).
+10. *Sort confusion, the actual cause.* Even `factor_secret` — the factor
+    secret never leaves the owner and the KDF has no inverse — did not
+    terminate, with or without the reuse lemmas and under every heuristic.
+    Its depth-4 proof tree showed why: the goal "the attacker knows `~fs`"
+    was sourced from the *device seal*, which carries the page's key `~sk`,
+    because two fresh-sort variables can unify and the solver had to
+    consider a page holding the factor secret as its key — refutable only
+    through the circular chain argument it never finishes. The device-session
+    signature check (an `Eq(verify…)` restriction) and the re-tagged record
+    loop (`T3 → T3`) were removed in the same revision. The fix attempt:
+    mailbox private keys become `mkey(~x)`, so a key can never unify with a
+    secret, an id or an answer.
 
 Depth-bounded runs (`--bound=N`) and the printed proof trees were the
 instruments: a goal with hundreds of `case` lines in the tree at the depth
@@ -103,7 +133,65 @@ where the time explodes is the goal to reorder or remove.
 
 ## Results
 
-RESULTS_TABLE
+Runs on 2026-10-20, Tamarin 1.12.0, one lemma per process, 4 cores, 6 GB
+cap, the caps named per row. "Expected" is ir.md §7's pre-run call. The
+sweep was bounded by the operator to what terminates within the caps; what
+did not is listed with what was tried, not pushed past the caps.
+
+### Verified (on the committed `device.spthy`)
+
+| Lemma | Verdict | Time | Expected | Means |
+|---|---|---|---|---|
+| `factor_secret` | **verified** (5 steps) | 10 s | hold | The factor secret and the factor private key never reach the attacker: Mail never learns a factor's secret (ir.md §7 (vi)). |
+| `sanity_device_session` | **verified** (6 steps) | 68 s | trace exists | The honest flow "enroll, keep a device, challenge, the device answers with its signature, Mail opens a device session" runs in the model. |
+
+Also found while the model was being tuned (on the same rules, earlier file
+revisions; not re-run on the committed text): existence traces for
+enrollment, device registration, a challenge, a factor answer, a session, a
+rotation and a seal to a device, each in 4–26 s.
+
+### Not terminated within the cap
+
+| Lemma | Cap | What was tried | Why it is hard |
+|---|---|---|---|
+| `mailbox_key_secret` | 5 min (also 6, 15) | default heuristic; existence- and proof-tuned oracle; `[use_induction, reuse]`; with and without the other reuse lemmas; untyped, typed and key-constructor models | The proof is an induction over the unbounded chain of successor seals (K_i opens from K_{i+1}); the solver has not closed it within the cap. |
+| `dek_secret_honest_key` | 5 min | as above | Same induction, one layer deeper (a message key under a key on the chain). |
+| `sanity_rotation_applied_and_sealed` | 5–6 min (also 15) | default; BFS, SEQDFS, consecutive heuristic; depth bounds; pinned trace shape; oracle; every model revision | The honest trace is ~11 rule instances through two challenge/answer exchanges and a pointer move; the existence search still fans out below the session goal. |
+| `sanity_kept_device_resumes_after_rotation`, `sanity_stateless_unlocks_after_rotation`, `stateless_rollback_possible` | not run on the final text | — | Longer than the lemma above; not attempted after it failed to terminate. |
+| every remaining security lemma (post-removal secrecy ×4, chain agreement ×3, rollback, recipient integrity ×2, agreement ×3) | not run on the final text | the first revision's sweep hit the sources-lemma wall before reaching them | Each depends on the two secrecy inductions above. |
+
+The `BOUND_PROOFS` and `ORACLE_MUTANT` variants are well-formed and were
+not run.
+
+### Findings from building the model — not machine-checked
+
+Each is a trace written by hand while the IR was being drafted (ir.md §7
+says where); Tamarin has neither confirmed nor refuted it.
+
+1. **Fork from a leaked old key.** A device removed and later compromised
+   leaks `K_i`; the attacker forges a successor seal `K_i → K_att` and seals
+   `K_att` to the factor key. A recovery-key unlock is anchored at `K0`
+   forever, so the walk `K_att → K_i → … → K0` passes; kept devices still at
+   `≤ K_i` accept it too. Lemma `chain_agreement_stateless_after_removed_compromise`.
+2. **Planted recipient from a stolen unlocked device.** With `K_old` the
+   thief computes `bindkey(K_old)` and, through a hostile store, lists a
+   device record with a genuine tag; the owner's own removal rotation seals
+   the new key to it. Lemmas `*_compromise_before_removal`.
+3. **Finding C is stronger than the review said.** Mail checks only `from`
+   and the shapes of a rotation (`src/mailbox/devices.ts`, `removeDevice`),
+   so the relay can apply a rotation to its *own* key with the owner's
+   relayed factor proof and session; inbound mail then goes to the attacker's
+   key until the owner's next unlock notices. Expected to hold only with the
+   challenge bound to `h(request)` (`BOUND_PROOFS`). Lemma
+   `post_removal_secrecy_applied_rotation_no_compromise`.
+4. **`lastKeyId` is overwritten unconditionally** (`resume.ts` step 5,
+   `session.ts` unlockWithFactor); two tabs shown different honest keys can
+   move a device's anchor back one step. The model assumes compare-and-swap.
+
+And one observation about the threat model: D25's factor check rests
+entirely on Mail's stored factor public keys being honest. A store that can
+rewrite them answers its own factor proofs; the model had to assume those
+records honest (ir.md P4b) for any proof statement to mean anything.
 
 ## Reading a verdict
 

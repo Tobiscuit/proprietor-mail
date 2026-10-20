@@ -91,6 +91,16 @@ One thing the model keeps that the code does not: a kept device updates its
 they lose nothing you care about; README.md says what each one cost before
 it was made):
 
+- *A mailbox private key is the term `mkey(~x)`*, a fresh name under a free
+  constructor, never a bare fresh name. Tamarin cannot tell one fresh name
+  from another by sort, so with bare names it had to consider that a page
+  might hold the factor secret as its key, and could refute that only by a
+  chain argument it never finished (its depth-bounded proof tree for
+  `factor_secret` sourced "the attacker knows the factor secret" from a
+  device seal). The attacker can still build `mkey(y)` for any `y` it knows,
+  so attacker-made keys, the fork and the relay hijack stay expressible.
+  (Tamarin's "message derivation" lint reports every rule that matches
+  `mkey(~x)`; the runs switch that one lint off, README.md says where.)
 - *Received keys, answers and ids are matched as fresh names.* Where a rule
   reads a mailbox key out of a wrap, a seal or a successor seal, a challenge
   answer out of a challenge, or a factor or device id out of a record, the
@@ -119,6 +129,16 @@ it was made):
   the attacker put any content it can compute on the same channel. That is
   the Dolev-Yao power of a plain `In()`, arranged so that the honest source
   of a message is examined before the attacker's.
+- *An honest answer is routed, not learned.* A challenge answer (and a
+  device's signed answer) goes on its channel, which the attacker controls
+  completely: it can hold it back, replay it, or pair it with a request of
+  its own, which is everything the relay can do with the bytes in the
+  system. The model does not also add the bytes to the attacker's knowledge:
+  knowing them buys nothing beyond routing (an answer is tied to its
+  challenge), and modelling it let the prover re-derive the challenge from
+  the answer it had just learned, in an endless circle. The attacker still
+  learns an answer the honest way whenever it holds the key the challenge
+  was sealed to.
 - *Public-the-moment-they-exist and symbolically redundant values are not
   fresh names.* The challenge nonce (the challenge id is already fresh; the
   device signs the id), the session token (a bearer secret the attacker
@@ -127,6 +147,13 @@ it was made):
   recipient's key already binds them; the tags still cover them). Each fresh
   name in an honest output is one more case for every "the attacker knows
   some fresh name" goal; two hundred of them made every search stall.
+- *The secrecy lemmas come first and are reused.* `mailbox_key_secret`,
+  `factor_secret` and `dek_secret_honest_key` are proven first (by
+  induction) and marked for reuse, so every later proof may assume them. A
+  successor seal lets anyone who holds `K_{i+1}` open `K_i`; without the
+  reused lemma the prover chases "does the attacker know `K_i`?" through an
+  unbounded chain of rotations. The lemmas say what they said before; only
+  their place and annotation changed.
 - *Rules are named in the order Tamarin should try them as sources* (`A00`
   for enrollment through `A28` for compromise, `Z` for injection), because
   the prover tries the cases of a goal in alphabetical order of the rules
