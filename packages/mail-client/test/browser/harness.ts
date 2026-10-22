@@ -76,11 +76,13 @@ interface Violation {
   directive: string;
   blocked: string;
   sample: string;
+  /** Where the report was raised: the script, line and column of the call that triggered it. */
+  site: string;
 }
 
 const violations: Violation[] = [];
 document.addEventListener("securitypolicyviolation", (e) => {
-  violations.push({ directive: e.effectiveDirective, blocked: e.blockedURI, sample: e.sample });
+  violations.push({ directive: e.effectiveDirective, blocked: e.blockedURI, sample: e.sample, site: `${e.sourceFile}:${e.lineNumber}:${e.columnNumber}` });
 });
 
 let enrollment: Enrollment | null = null;
