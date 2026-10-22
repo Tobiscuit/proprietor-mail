@@ -327,6 +327,24 @@ export type { BindingKey, TagRecipient } from "./binding";
 export { bindingKey, bindingTag, verifyBindingTag } from "./binding";
 export { CHALLENGE_BYTES, openChallenge } from "./challenges";
 
+// ---- API: action descriptors and request digests (round 3) ---------------------
+// contracts/action-descriptor-v1.md and contracts/device-v1.md A10, for Mail,
+// the browser and the dashboard alike: one RFC 8785 serializer, one reader.
+
+export type { CanonicalValue } from "./canonical-json";
+export { canonicalJson, requestDigest } from "./canonical-json";
+export type { ActionDescriptor, ActionInput, ActionKind, ActionPurpose, ActionTarget } from "./action-descriptor";
+export {
+  ACTION_KINDS,
+  actionDescriptorFor,
+  actionDigest,
+  actionPurpose,
+  buildActionDescriptor,
+  isDeviceLabel,
+  MAX_ACTION_DESCRIPTOR_BYTES,
+  readActionDescriptor,
+} from "./action-descriptor";
+
 // ---- Internals ---------------------------------------------------------------
 
 function decodeBlock(encoded: string): Uint8Array<ArrayBuffer> {
