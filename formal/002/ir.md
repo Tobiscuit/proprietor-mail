@@ -282,3 +282,70 @@ fail, the trace we expect is described in plain words.
 5. P3: is "the owner answers any factor challenge" an over-approximation you accept (it only makes the attacker stronger)?
 6. §7 (i) and (ii), the two "found while writing": do the plain-words traces describe something you consider inside the promise of spec §4, or outside it? The verdict table in `README.md` reports what Tamarin found; your call is whether the spec's threat model should say it.
 7. §8 item 9: do you want the conditional write of `lastKeyId` in the code?
+
+## 10. Round 3 (2026-10-22): the design the model now checks
+
+**Status:** written before the round 3 model was generated or run. Spec 002
+round 3 (D34–D43) changes the protocol in exactly the places §7's expected
+failures pointed at, and adds an email-code path. This section is the IR
+for that design, in the same fields; `device.spthy` is regenerated from it.
+§1–§9 above stay as the record of round 2 (its findings are what round 3
+answers), and every round 2 mechanism round 3 removes is kept in the model
+as a **mutant variant**, so the model shows that each round 3 mechanism is
+what makes its property hold.
+
+### 10.1 What changes, item by item
+
+| # | Item | Round 3 | Contract | Confidence |
+|---|---|---|---|---|
+| R1 | Factor signing key | The factor also has `fsk(fs, 'f1')`, a signing key derived from its secret; its public half is registered at Mail with the factor key (`!MailFactorKey` now holds both). | A2b | HIGH |
+| R2 | Transition | A rotating page that holds the factor signs `<'transition', m, pk_old, pk_new>` with `fsk`. The action `FactorAuthorized(m, pk_old, pk_new)` marks it. | A11 | HIGH |
+| R3 | Walk step (W1) | A successor step is taken only with that transition, signed by the trusted factor. A stateless page trusts the factor it used; a kept device trusts the factor it was kept with (its record names it). | K2″ | HIGH — one factor, so "the trusted component" is that factor (P3 of §1 stands). |
+| R4 | Recipients (T3/T4) | A device record is sealed to only with an admission signed by the factor and an unlock-key statement signed by the device's own signing key; a factor record only with the factor's admission. Tags are not checked in the base model (they are a second check in the system, and §7's argument no longer rests on them). | A11, K3′ | MEDIUM — dropping tags from the base model is a simplification; they only remove attacker options, so a "hold" carries over. |
+| R5 | Bound factor proof | Every factor challenge carries `h(request)` and is answered only inside the honest rule that sends that request: rotation (`<'rotate', m, pk_old, pk_new>`), registration (`<'register', m, did, pkS>`), and a deviceless session (`<'open-session', chid>`). Mail applies a request only with a proof bound to it. The round 2 variant `BOUND_PROOFS` becomes the base. | A6, A10, D36 | HIGH |
+| R6 | Mail checks the transition | Mail applies a rotation only with the transition signed by the registered factor signing key. | B7 step 2, M23 | HIGH |
+| R7 | Mail's device registry | Mail's honest records gain the registered devices (`MailDevice`, a linear fact): created by a registration with a bound factor proof, consumed by a revocation. A device session needs the device in the registry. | B7, B7a | MEDIUM — round 2 read the device's key from the store (§8 item 10); round 3 needs the registry to say what revocation does. The registration does not also require a session in the model (more permissive, so a "hold" carries over). |
+| R8 | Deviceless session | A session without a device needs the key proof **and** a factor proof bound to that session challenge. | B6, D38 | HIGH |
+| R9 | Email-code revocation | The attacker may revoke any registered device at any time (the email-only actor is the attacker: whoever reads the owner's email). It consumes the device's registry entry and writes no key. | B7a, D35 | HIGH — the rule gives the attacker the whole email path; nothing in it can make a key. |
+
+Unchanged: lock timers, labels, expiry (§8 items 1, 5, 6); several factors
+(§8 item 4: still one); the account check (D37) is a browser-local read of
+the right record and is outside a one-account model; the compare-and-swap of
+`lastKeyId` (A2) is now what the code does too (D41, K11).
+
+### 10.2 Mutant variants (each removes one round 3 mechanism)
+
+| Variant | Removes | Its property should then fail with the attack of |
+|---|---|---|
+| `-D=NO_TRANSITION_SIG` | R3: the walk takes a successor step on the successor seal alone (round 2) | §7 (ii) finding 1, the fork |
+| `-D=NO_ADMISSION` | R4: recipients are sealed to on a tag under the old key (round 2) | §7 (iii) finding 2, the planted recipient |
+| `-D=MAIL_UNCHECKED` | R5 and R6 at Mail: a rotation is applied on an unbound factor proof, without the transition; the owner answers any factor challenge | §7 (i) finding 3, the relay's rotation |
+| `-D=EMAIL_ROTATES` | D35: Mail also applies a rotation confirmed by an email code (the attacker can produce one) | the email-only actor rotating to a key it knows |
+| `-D=KEY_ONLY_SESSION` | R8: a deviceless session opens on a key proof alone (round 2) | a revoked device that copied the key reopening a session |
+| `-D=ORACLE_MUTANT` | K4 (unchanged from round 2) | §7 (v) |
+
+### 10.3 Proof targets, with the verdict expected before running
+
+| Lemma | Says | Expected (base) | Expected (mutant) | Why |
+|---|---|---|---|---|
+| `factor_secret` | the factor secret and both factor private keys never reach the attacker | hold | — | never sent; now also `fsk` |
+| `successor_authored_by_factor` | every rotation Mail applies was signed, for exactly that pair of keys, by the factor holder, earlier — whatever devices are compromised, and with the email path open | hold | fail under `MAIL_UNCHECKED` and `EMAIL_ROTATES` | Mail needs the transition under `fsk` (R6) and a proof bound to the same pair (R5); only the factor holder makes either |
+| `accepted_step_authored_by_factor` | every successor step a browser takes was authorized by the factor holder — whatever devices are compromised | hold | fail under `NO_TRANSITION_SIG` | the walk needs the transition (R3) |
+| `accepted_key_is_honest_stateless`, `accepted_key_is_honest_kept` | a key a browser accepts was made by an honest page of the mailbox — **with no restriction on compromise** (round 2's `chain_agreement_*` needed "no compromise" or failed) | hold | fail under `NO_TRANSITION_SIG` | a step to an attacker's key needs a transition the attacker cannot sign; with no step, the key is the factor's own wrap or the device's last accepted key |
+| `sealed_only_to_admitted_recipients` | a rotating page seals the new key only to a recipient an honest party made, or to a device that is itself compromised (and never to the device being removed) — whatever devices are compromised | hold | fail under `NO_ADMISSION` | a record needs the factor's admission and the device's own unlock-key signature |
+| `factor_proof_bound` | a factor proof Mail accepts was given by the owner for exactly that request, once | hold | fail under `MAIL_UNCHECKED` | R5 |
+| `revoked_device_opens_no_session` | after a device is revoked by email, no device session opens for it | hold | — | the registry entry is consumed (R7, R9) |
+| `session_needs_owner` | every session Mail opens was opened by a registered device's signature or with the owner's factor answer bound to it | hold | fail under `KEY_ONLY_SESSION` (with a compromised device's key) | R8 |
+| round 2's `mailbox_key_secret`, `dek_secret_honest_key`, the post-removal secrecy lemmas, `kept_device_no_rollback` | as §7 | hold (each one §7 expected to fail now expected to hold) | — | the inductions §4 describes are unchanged in kind; README records whether they terminate |
+| sanity lemmas | the honest flows still run | trace exists | — | |
+
+### 10.4 What the operator should check in this section
+
+1. R4: is dropping tags from the base model acceptable (they stay in the
+   system as a second check)?
+2. R7: is "registration without a session" an acceptable over-approximation
+   of Mail's registry?
+3. R9: the attacker may revoke at any time; is "the email-only actor is the
+   whole network attacker" the question you want answered?
+4. 10.3: does each "hold" state what the spec promises in §4's rows
+   (round 3)?
