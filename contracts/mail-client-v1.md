@@ -472,3 +472,13 @@ new enrollment's wraps carry factor keys, so a new mailbox requires sessions.
 **Tests this amendment requires:** the D1 acceptance tests in
 `specs/002-device-sessions/tasks.md`, in Node and in Chromium, Firefox and
 WebKit under the dashboard's exact policy with Trusted Types enforced.
+
+## Amended 2026-10-22 (spec 002 round 3)
+
+`specs/002-device-sessions/plan.md` §10.4 lists what the API adds: the store
+keyed by mailbox and account, the factor graph (K2″, K3′), confirmations
+bound to their request (K4, K12), session proofs without a device that carry
+a factor proof, `removeDevices`, `revokeRequest`, `rotationDue`, and the
+compare-and-swap of `lastKeyId` (K11). The mail-client builder (slice R3-1b)
+writes the exact signatures here, and the architect reviews them before the
+dashboard's slice starts.
