@@ -1,7 +1,12 @@
 # Plan — unlock once per device, with revocation
 
 **Spec:** `spec.md` · **Domain model:** `domain-model.md` · **Tasks:** `tasks.md` ·
-**Contract:** `../../contracts/device-v1.md`
+**Contract:** `../../contracts/device-v1.md`, `../../contracts/action-descriptor-v1.md`
+
+**Round 3 (2026-10-22):** §10 is what changes for D34–D43: the migration's
+new columns, every flow that changes, and the two new flows (F13 revoke with
+an email code, F14 finish a rotation). A flow below that changes says so in
+its first line.
 
 ## 1. The shape
 
@@ -26,6 +31,8 @@ and that seal stays at Mail. Mail holds public keys, seals, tags, hashes of
 challenge answers and of session tokens. It holds nothing that opens a key.
 
 ## 2. Data model: Mailbox migration `0003_devices`
+
+*(Round 3 adds to 0003 before it has run anywhere: §10.1.)*
 
 ```sql
 ALTER TABLE policy    ADD COLUMN sessions TEXT NOT NULL DEFAULT 'optional' CHECK (sessions IN ('optional','required'));
@@ -76,11 +83,13 @@ of the active key, for one sealing or wrapping step.
 
 ### F1 — First unlock in a new browser, "this device is mine" (sessions required)
 
+*(Changed in round 3: §10.2.)*
+
 ```
 browser                                                       Mail
   mailbox() ─────────────────────────────────────────────────▶ view (keys+successors, wraps+factor keys,
                                                                 devices, seals)            [no session]
-  owner: "This device is mine" + security key / recovery key
+  owner: "This device is mine" + passkey / recovery key
   unlock with the factor → session (K2′ via the factor's wrap and the chain; K3 tags) + FF
   challenge({purpose:"session"}) ─────────────────────────────▶ sealed to the active key
   open it (K4) → openSession({challengeId, answer}) ──────────▶ T (no device yet)
@@ -93,6 +102,8 @@ browser                                                       Mail
 One prompt in all. With the recovery key only, the same steps run.
 
 ### F2 — A kept, unlocked device loads the inbox
+
+*(Changed in round 3: §10.2.)*
 
 ```
   mailbox() → view
@@ -120,6 +131,8 @@ No prompt. The session is renewed the same way before it expires, or on
 
 ### F4 — Unlock after a lock
 
+*(Changed in round 3: §10.2.)*
+
 Factor → session + FF → `challenge(session)` → `openSession` with the device's
 signature and the key proof → `T` → new unlock key, seal and tag →
 `updateDevice(…, {session: T})` → commit. `updateDevice` needs a device
@@ -128,21 +141,25 @@ that is locked cannot open a session (D27).
 
 ### F5 — The upgrade (an existing mailbox, sessions optional)
 
+*(Changed in round 3: §10.2.)*
+
 ```
-  unlock with the recovery key (and the security key, if it was the one just used) → session + FF(s)
+  unlock with the recovery key (and the passkey, if it was the one just used) → session + FF(s)
   challenge(session) → openSession → T                          (works while sessions are optional)
   upgradeRequest([FF recovery, FF passkey?]) → factor keys (A2) + tags under the active key
   upgrade({factors}, {session:T}) ─────────────────────────────▶ M20; sessions = required
   then F1 from "challenge({purpose:"factor"…})" to keep this browser
 ```
 
-If the owner unlocked with the security key, the screen asks for the recovery
+If the owner unlocked with the passkey, the screen asks for the recovery
 key once before the upgrade. "Not now" leaves the mailbox exactly as today.
 
 ### F6 — Remove a device (rotation)
 
+*(Changed in round 3: §10.2.)*
+
 ```
-  ReAuth: security key / passkey / recovery key → FF
+  ReAuth: passkey / recovery key → FF
   mailbox() → fresh view
   challenge({purpose:"factor", factorId: FF.factorId}) → factorProof
   removeDevice(view, deviceId, FF):
@@ -163,6 +180,8 @@ new ones. The removed device finds itself missing from the view, or gets
 
 ### F7 — Replace the recovery key
 
+*(Changed in round 3: §10.2.)*
+
 ReAuth → FF. The new recovery key, its envelope v1 wrap of the active key,
 its factor key (A2) and tag → `addWrap(…, {session, factorProof})`, with
 a second challenge answered by the same FF →
@@ -170,6 +189,8 @@ a second challenge answered by the same FF →
 is added before the old one goes.
 
 ### F8 — Add a passkey (a second authenticator)
+
+*(Changed in round 3: §10.2.)*
 
 ReAuth → FF → create the passkey with PRF (one more prompt, on the new
 authenticator) → its envelope v1 wrap of the active key, and its factor key
@@ -180,18 +201,24 @@ gets the current key by its wrap and every older key through the chain (R8).
 
 ### F10 — A removed device's next contact
 
+*(Changed in round 3: §10.2.)*
+
 `resume` finds the device missing from `mailbox()`, or a call answers
 `DeviceRevoked`. The browser deletes the record, drops every key and shows
-"This device was removed. Unlock with your security key or recovery key to
+"This device was removed. Unlock with your passkey or recovery key to
 use it again." Unlocking again makes it a new device.
 
 ### F11 — A shared computer
+
+*(Changed in round 3: §10.2.)*
 
 Factor → session → `challenge(session)` → `openSession` (key proof only) →
 `T`. Nothing is written to IndexedDB. The page locks after 15 minutes without
 use, and everything is gone with the page.
 
 ### F12 — Enrollment of a new mailbox
+
+*(Changed in round 3: §10.2.)*
 
 `startEnrollment` makes the key pair, the passkey wrap and its factor key and
 tag, the recovery wrap and its factor key and tag, and (for "this device is
@@ -273,7 +300,7 @@ Inside `app/(modules)/inbox/**` and `lib/strings/inbox.ts`, with its tests:
   an existing mailbox; the "removed" notice; "this browser can't keep your
   inbox unlocked" (D31).
 - **Settings:** This device (name, lock after, Lock now, Remove this device);
-  Your devices (list, last opened, Remove); Security keys and passkeys (list,
+  Your devices (list, last opened, Remove); Passkeys (list,
   Add, Remove); Recovery key (Replace). Every one of them except the lock
   setting asks for a factor first.
 - **Vendored packages:** `mail-client` and `mail-crypto` repacked from the
@@ -344,7 +371,7 @@ Mail Worker does not serve and an older dashboard cannot open. Nothing is
 lost: an older Mail Worker skips 0003 and seals arriving mail to the active
 key. The first removal is the point of no return for both.
 
-Step 3, the upgrade, in order: in Chrome, the security key first, then the
+Step 3, the upgrade, in order: in a browser where the passkey does PRF, the passkey first, then the
 recovery key (spec §7).
 
 ## 9. Who owns what
@@ -356,3 +383,188 @@ recovery key (spec §7).
 | `packages/mail-crypto/**` except `src/proofs.ts` and `test/proofs.test.ts`; `packages/mail-client/**`; `contracts/device-v1.vectors.json`; the mail-client amendment's final API | builder **D1** (crypto and client) |
 | `packages/mail-crypto/src/proofs.ts`, `test/proofs.test.ts`, and one line in `src/index.ts` (its re-export, directly under `export { x25519Supported } from "./keys";`); `src/**`, `test/**`, `wrangler.jsonc`, `vitest.config.ts`, the root `package.json` | builder **D2** (Mail Worker) |
 | the dashboard's `app/(modules)/inbox/**`, `lib/strings/inbox.ts`, `test/{unit,render,screens}/inbox*`, `test/render/fake-mail/**`, `test/render/mail-fixture.ts`, `vendor/**` and the lockfile entries for the two vendored packages | builder **D3** (dashboard inbox), after D1 and D2 |
+
+## 10. Round 3 (2026-10-22): what changes for D34–D43
+
+### 10.1 Migration `0003_devices`, added to before it ever ran
+
+No Mailbox outside the tests has run 0003 (spec 002 is not deployed), so it is
+edited in place rather than followed by a 0004. The Worker's builder writes
+the exact statements; what they must hold:
+
+```sql
+-- factors: the signing key and the admission (A2b, A11); removed ones move to removed_factors (M24)
+ALTER TABLE key_wraps ADD COLUMN signing_key        BLOB;   -- 65 bytes
+ALTER TABLE key_wraps ADD COLUMN admission_by       TEXT;
+ALTER TABLE key_wraps ADD COLUMN admission_sig      TEXT;
+ALTER TABLE key_wraps ADD COLUMN admission_self_sig TEXT;
+CREATE TABLE removed_factors (
+  id TEXT PRIMARY KEY, kind TEXT NOT NULL, credential_id TEXT, label TEXT NOT NULL,
+  factor_key BLOB NOT NULL, signing_key BLOB NOT NULL,
+  admission_by TEXT NOT NULL, admission_sig TEXT NOT NULL, admission_self_sig TEXT NOT NULL,
+  created_at TEXT NOT NULL, created_by TEXT NOT NULL, removed_at TEXT NOT NULL, removed_by TEXT NOT NULL);
+-- keys: the transition beside the successor seal
+ALTER TABLE keys ADD COLUMN successor_signed_by TEXT;
+ALTER TABLE keys ADD COLUMN successor_sig       TEXT;
+-- devices (in its CREATE TABLE): the admission and the unlock key's signature
+--   admission_by TEXT NOT NULL, admission_sig TEXT NOT NULL, unlock_sig TEXT  (NULL exactly when unlock_key is)
+-- challenges (in its CREATE TABLE): two more purposes, and the descriptor
+--   purpose CHECK (purpose IN ('session','factor','key','email')), answer_hash NULL for 'email',
+--   kind TEXT, descriptor TEXT, action_digest TEXT   (NULL for 'session')
+CREATE INDEX challenges_by_digest ON challenges(action_digest);
+-- the rotation that is due after an email-code revocation (M22, M23)
+CREATE TABLE rotation_due (one INTEGER PRIMARY KEY CHECK (one = 1),
+  since TEXT NOT NULL, by_account TEXT NOT NULL, devices TEXT NOT NULL);   -- devices: JSON array of ids
+```
+
+### 10.2 The flows, as they change
+
+**F1, first unlock and keep (sessions required).** One prompt; the
+FreshFactor answers both factor challenges.
+
+```
+  mailbox() → view
+  factor → unlock: K2″ from the factor (transitions signed by factors connected to it), K3′, K9 → FF
+  challenge({purpose:"session"}) → C_s, sealed to the active key
+  challenge({purpose:"factor", factorId, action:{kind:"open-session", request: digest({challengeId: C_s.id})}}) → C_f
+  K4/K12: build C_f's descriptor from our own request; equal bytes; open with its digest → factor answer
+  openSession({challengeId: C_s.id, answer, factorProof}) ────────────────▶ T (no device yet)
+  keepThisDevice(…, FF): two P-256 pairs; the active key sealed to the unlock key; tag;
+                         unlockSignature (the device); admission (the FF's factor signs it)
+  challenge({purpose:"factor", factorId, action:{kind:"register-device", device:{id, label}, request: digest({device, seal})}})
+  registerDevice({device, seal}, {session:T, factorProof}) ───────────────▶ M25 checks; T is now this device's
+  commit: record {mailboxId, accountId, …, lastKeyId, trustRoot: the factor's signing key}
+```
+
+**F2, a kept device loads.**
+
+```
+  resumeDevice(view, {store, accountId, signInId}):
+    the record for (mailbox, account); none → "none" (another account's is never read: K10)
+    K6: "sign-out" locks when signInId differs from the record's, a null after a non-null included (D34)
+    K7: not in view.devices → this account's record wiped → "removed"
+    the seal → the active key; K2″ from lastKeyId, each step signed by a factor connected to trustRoot; K3′
+    K11: lastKeyId written only if the record still holds the walk's start; else resume once more
+  challenge(session) → openSession({challengeId, answer, device:{id, signature}}) → T
+  view.rotationDue → the banner "Finish removing" (F14)
+```
+
+**F4, unlock after a lock.** As before, and the new unlock key carries its
+signature; `trustRoot` becomes the factor just used.
+
+**F5, the upgrade.** `upgradeRequest(FFs)` gives every factor its factor key,
+signing key, admission (A11's cycle) and tag. Then `challenge({purpose:"key",
+action:{kind:"upgrade", request: digest({factors})}})`, opened with the
+mailbox key and its own digest, and `upgrade(request, {session:T, keyProof})`.
+
+**F6, remove devices (with the rotation).**
+
+```
+  ReAuth → FF; mailbox() → a fresh view
+  ids = the devices chosen, plus every flagged device (D40)
+  removeDevices(view, ids, FF): K3′ for every remaining recipient; new key; successor seal;
+                                seals; tags; the transition, signed by FF's factor (K12); K8
+  challenge({purpose:"factor", factorId: FF's, action:{kind:"remove-devices", deviceIds: ids, request: digest({deviceIds, rotation})}})
+  removeDevices({deviceIds: ids, rotation}, {session:T, factorProof}) ───▶ M18′ in one transaction
+```
+
+**F7 and F8, a new recovery key or another passkey.** The new factor's
+admission is signed by the FreshFactor's factor and by the new factor itself
+(its own signing key, from the new secret). Descriptors of kind `add-factor`
+and `remove-factor`. The removed factor's record moves to `removed_factors`.
+
+**F10, a removed device.** Only the signed-in account's record is wiped. On
+`Forbidden` (another account's device) nothing is wiped (K10).
+
+**F11, a shared computer.** Factor → unlock → `openSession` with a key proof
+and a factor proof of kind `open-session` → `T`. After 60 minutes the session
+cannot be renewed without a factor, so the page asks again (D38).
+
+**F12, enrollment.** The factors' admissions follow A11's cycle; the device
+is admitted by one of them and signs its unlock key.
+
+### F13 — Revoke a device with an email code (new, D35)
+
+```
+  any browser where the owner is signed in: unlocked, locked or new (no session needed)
+  mailbox() → view → "Lost a device?" → the owner picks kept devices
+  challenge({purpose:"email", action:{kind:"revoke-device", deviceIds}}) → {id, descriptor, expiresAt}
+  page → dashboard: requestActionCodeAction(descriptor)
+           → {ok:true, codeId, sentTo}    "We sent a code to …"
+           → {ok:false, reason}           "not-allowed": offer the passkey way (F6); "too-many", "not-sent": say so
+  the owner types the code → the inbox's server action, in ONE action:
+           confirmActionCodeHere(codeId, code) → {attestation} | {refused}
+           mint the capability with confirmation = attestation, unchanged
+           MailService.revokeDevices(cap, {deviceIds}) ──────────────────────▶ B7a: the devices go; rotationDue
+         (the attestation never reaches the browser)
+  the page: "Removed. To finish, confirm with your passkey" → F14 now, or later on any device
+```
+
+### F14 — Finish a rotation that is due (new, D35)
+
+```
+  any browser that holds a FreshFactor while view.rotationDue is set (K13):
+  after an unlock with a factor, or "Finish removing" → ReAuth
+  removeDevices(view, flagged devices (often none), FF) → as F6, deviceIds may be empty
+  Mail: the new key; rotationDue cleared; every other session ends
+```
+
+### 10.3 `MailService` and the Worker
+
+- `SESSION_NEEDS` gains `revokeDevices: "email-confirmation"` (no session,
+  `owner`, the capability's `confirmation`), and `removeDevices` replaces
+  `removeDevice`. The fitness test still walks every method.
+- One module holds the confirmations: issuing a descriptor with
+  `challenge`, checking a factor or key proof against the digest of the
+  call's own request, and checking an email attestation (B7a). Request
+  digests and descriptors come from `@proprietor/mail-crypto` (one RFC 8785
+  serializer, one reader), never from a second implementation in the Worker.
+- The capability verifier reads the `confirmation` claim strictly, and hands
+  it to `revokeDevices` only.
+- Signatures (A11) are checked with mail-crypto's verifiers before the
+  transaction writes anything.
+
+### 10.4 `mail-client`
+
+What the API must add (the builder fixes the exact signatures in
+`contracts/mail-client-v1.md`, and the architect reviews them before the
+dashboard's slice):
+
+- the store keyed by mailbox and account (database version 2; the version 1
+  store is dropped, since no record exists outside tests); `accountId` in
+  `resumeDevice`, in the unlock options, and in enrollment's `keep`;
+  `trustRoot` in the record;
+- the factor graph and K2″ and K3′, everywhere K2′ and K3 ran;
+- `FreshFactor.answer` taking the request it confirms, so it answers only
+  that action (K4, K12); helpers that build each kind's action and request
+  digest, from mail-crypto;
+- session proofs without a device that carry a factor proof (D38);
+- `removeDevices(view, ids, freshFactor)` (several, and none while a rotation
+  is due), with the transition signed; `revokeRequest(view, ids)` (the
+  `email` challenge's action); `rotationDue` on the unlocked mailbox;
+- the compare-and-swap of `lastKeyId` (K11);
+- `Forbidden` wiping nothing; `DeviceRevoked` wiping only this account's
+  record.
+
+### 10.5 The dashboard's inbox
+
+Stacked on the dashboard's spec 008 (its pull request with Better Auth):
+
+- the layout reads `currentSignInId()` into `InboxShell.signInId` and
+  `currentSession().accountId` into `InboxShell.accountId`;
+- the new server actions; `revokeWithCode` checks the code and mints the
+  capability with the attestation in one action, using the dashboard's
+  `confirmActionCodeHere` (its `lib/action-codes.ts`) and
+  `requestActionCodeAction` (its `app/actions/action-codes.ts`);
+- the screens: "Lost a device?", the "Finish removing" banner, devices
+  grouped by account, "passkey" in every word;
+- the shell's Mail types (`lib/mail.ts`, the dashboard's pull request #14)
+  follow B3's table.
+
+### 10.6 Rollout, as it changes
+
+The dashboard's spec 008 (Better Auth) goes live first, by its own runbook.
+Then §8's order: the Mail Worker, the dashboard, the upgrade. Before 008's
+cutover, on a sign-in through Access, the inbox's "when I sign out" reads
+"Until I lock it" (D34), and where the dashboard cannot send a code the inbox
+offers the passkey way; everything else works.
