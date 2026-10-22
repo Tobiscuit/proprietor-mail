@@ -11,11 +11,15 @@ import { fileURLToPath } from "node:url";
 import { Aes256Gcm, CipherSuite, DhkemX25519HkdfSha256, HkdfSha256 } from "@hpke/core";
 import { expect, test } from "vitest";
 import {
+  actionDescriptorFor,
+  actionDigest,
   bindingKey,
   bindingTag,
+  buildActionDescriptor,
   deriveFactorKey,
   factorPublicKey,
   newId,
+  requestDigest,
   sealKey,
   sealMessage,
   signDeviceProof,
@@ -165,7 +169,7 @@ test("write contracts/device-v1.vectors.json", async () => {
     kind: "factor",
     factorId: passkeyId,
     factorKind: "passkey-prf",
-    label: "Security key",
+    label: "Phone",
     factorKey: factorPublicKey(passkey),
     credentialId: b64urlEncode((await sha256(utf8("proprietor-mail/device-v1 test vectors: credential id"))).subarray(0, 16)), // pragma: allowlist secret (a public test value)
   };
@@ -180,19 +184,53 @@ test("write contracts/device-v1.vectors.json", async () => {
     {
       name: "factor",
       keyId: m1.keyId,
-      recipient: { kind: "factor", factorId: passkeyId, factorKind: "passkey-prf", label: "Security key", factorKey: b64urlEncode(factorPublicKey(passkey)), credentialId: factorRecipient.credentialId }, // pragma: allowlist secret (a public test key)
-      message: `proprietor-mail/v1/recipient|${mailboxId}|${m1.keyId}|factor|${passkeyId}|passkey-prf|${b64urlEncode(utf8("Security key"))}|${b64urlEncode(factorPublicKey(passkey))}|${factorRecipient.credentialId}`,
+      recipient: { kind: "factor", factorId: passkeyId, factorKind: "passkey-prf", label: "Phone", factorKey: b64urlEncode(factorPublicKey(passkey)), credentialId: factorRecipient.credentialId }, // pragma: allowlist secret (a public test key)
+      message: `proprietor-mail/v1/recipient|${mailboxId}|${m1.keyId}|factor|${passkeyId}|passkey-prf|${b64urlEncode(utf8("Phone"))}|${b64urlEncode(factorPublicKey(passkey))}|${factorRecipient.credentialId}`,
       tag: await bindingTag(bk, factorRecipient),
     },
   ];
 
-  // Challenges (A6): a key proof sealed to K1, a factor proof sealed to the passkey's factor key.
+  // Challenges (A6): a key proof sealed to K1 (purpose session); round 3 (D36): a factor proof
+  // sealed to the passkey's factor key for the action open-session, and a key proof sealed to K1 for
+  // the action upgrade, each with its descriptor (A10, issued as Mail issues it), the request whose
+  // digest the descriptor holds, and the descriptor's digest, which their associated data ends with.
   const sessionId = newId("chl");
   const factorChallengeId = newId("chl");
+  const keyChallengeId = newId("chl");
+  const issuedAt = 1792627200; // 2026-10-22T00:00:00Z
+  async function described(action: { kind: "open-session" | "upgrade"; request: Record<string, unknown> }) {
+    const descriptor = buildActionDescriptor(
+      actionDescriptorFor({ kind: action.kind, request: await requestDigest(action.request) }, { mailboxId, nonce: b64urlEncode(crypto.getRandomValues(new Uint8Array(32))), issuedAt }),
+    );
+    return { request: action.request, requestDigest: await requestDigest(action.request), descriptor: b64urlEncode(descriptor), actionDigest: await actionDigest(descriptor) };
+  }
+  const openSession = await described({ kind: "open-session", request: { challengeId: sessionId } });
+  const upgrade = await described({
+    kind: "upgrade",
+    request: { factors: [{ id: passkeyId, factorKey: b64urlEncode(factorPublicKey(passkey)), tagKeyId: m1.keyId }] },
+  });
   const challenges = [
     { name: "session", purpose: "session", challengeId: sessionId, targetId: m1.keyId, ...(await sealChallengeForVectors(m1.publicKey, `proprietor-mail/v1/challenge|${mailboxId}|${sessionId}|session|${m1.keyId}`)) },
-    { name: "factor", purpose: "factor", challengeId: factorChallengeId, targetId: passkeyId, ...(await sealChallengeForVectors(factorPublicKey(passkey), `proprietor-mail/v1/challenge|${mailboxId}|${factorChallengeId}|factor|${passkeyId}`)) },
+    {
+      name: "factor",
+      purpose: "factor",
+      challengeId: factorChallengeId,
+      targetId: passkeyId,
+      ...openSession,
+      ...(await sealChallengeForVectors(factorPublicKey(passkey), `proprietor-mail/v1/challenge|${mailboxId}|${factorChallengeId}|factor|${passkeyId}|${openSession.actionDigest}`)),
+    },
+    {
+      name: "key",
+      purpose: "key",
+      challengeId: keyChallengeId,
+      targetId: m1.keyId,
+      ...upgrade,
+      ...(await sealChallengeForVectors(m1.publicKey, `proprietor-mail/v1/challenge|${mailboxId}|${keyChallengeId}|key|${m1.keyId}|${upgrade.actionDigest}`)),
+    },
   ];
+  // Another action's digest: the same kinds, another request.
+  const otherOpenSession = await described({ kind: "open-session", request: { challengeId: newId("chl") } });
+  const otherUpgrade = await described({ kind: "upgrade", request: { factors: [] } });
 
   // A device proof (A7) over the session challenge's id and a nonce.
   const nonce = crypto.getRandomValues(new Uint8Array(32));
@@ -221,6 +259,9 @@ test("write contracts/device-v1.vectors.json", async () => {
     { name: "a message key envelope (envelope v1) presented as a challenge", open: "challenge", sealed: message.keyEnvelope, purpose: "session", challengeId: messageId, targetId: m1.keyId, recipient: "mailboxKey", expect: "DecryptionFailed" },
     { name: "a wrap (envelope v1) presented as a challenge", open: "challenge", sealed: wrap.wrapped, purpose: "session", challengeId: sessionId, targetId: m1.keyId, recipient: "mailboxKey", expect: "DecryptionFailed" },
     { name: "a factor challenge presented as a session challenge", open: "challenge", sealed: challenges[1]!.sealed, purpose: "session", challengeId: factorChallengeId, targetId: m1.keyId, recipient: "mailboxKey", expect: "DecryptionFailed" },
+    { name: "a factor challenge opened with another action's digest", open: "challenge", sealed: challenges[1]!.sealed, purpose: "factor", challengeId: factorChallengeId, targetId: passkeyId, actionDigest: otherOpenSession.actionDigest, recipient: "factors.passkey", expect: "DecryptionFailed" },
+    { name: "a key challenge opened with another action's digest", open: "challenge", sealed: challenges[2]!.sealed, purpose: "key", challengeId: keyChallengeId, targetId: m1.keyId, actionDigest: otherUpgrade.actionDigest, recipient: "mailboxKey", expect: "DecryptionFailed" },
+    { name: "a key challenge opened as a session challenge", open: "challenge", sealed: challenges[2]!.sealed, purpose: "session", challengeId: keyChallengeId, targetId: m1.keyId, recipient: "mailboxKey", expect: "DecryptionFailed" },
     { name: "a tag over a changed label", open: "tag", of: "device", label: "Kitchen laptop (2)", tag: tags[0]!.tag, expect: "invalid" },
     { name: "a device proof over another nonce", open: "deviceProof", nonce: b64urlEncode(otherNonce), signature: deviceProof.signature, expect: "invalid" },
   ];
@@ -232,8 +273,10 @@ test("write contracts/device-v1.vectors.json", async () => {
       "and checked by its test/device-vectors.test.ts. Every key and secret is SHA-256 of the public label next to it: test values " +
       "only, never used for real mail. Mailbox keys are clamped X25519 scalars; P-256 scalars d are SHA-256 of their label read as " +
       "a big-endian integer. Byte strings are lowercase hex, except the stored forms (sealed, tag, signature, nonce, keyEnvelope, " +
-      "wrapped) and the recipients' keys in tags, which are base64url without padding (RFC 4648 §5). The challenges and the device " +
-      "proof were made by a sealer and a signer written from the contract; Mail's are src/proofs.ts.",
+      "wrapped, descriptor) and the recipients' keys in tags, which are base64url without padding (RFC 4648 §5). The challenges and " +
+      "the device proof were made by a sealer and a signer written from the contract; Mail's are src/proofs.ts. Round 3: the factor " +
+      "and key challenges carry their action descriptor (contracts/action-descriptor-v1.md, as Mail issues it), the request it " +
+      "digests and its digest, and their associated data ends with that digest (A6).",
     mailboxId,
     mailboxKey: { label: LABELS.mailboxKey, sk: hex(skK1), pk: hex(m1.publicKey), keyId: m1.keyId },
     successorKey: { label: LABELS.successorKey, sk: hex(skK2), pk: hex(m2.publicKey), keyId: m2.keyId },

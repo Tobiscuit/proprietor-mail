@@ -2,20 +2,23 @@
 // or verifies with the package AND a second time straight from the contract's text (OpenSSL through
 // node:crypto, @hpke/core and raw Web Crypto, none of src/), so the vectors cannot merely agree with
 // the code; every negative case is refused by both.
-import { createECDH, createPrivateKey, createPublicKey, diffieHellman } from "node:crypto";
+import { createECDH, createHash, createPrivateKey, createPublicKey, diffieHellman } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Aes256Gcm, CipherSuite, DhkemP256HkdfSha256, DhkemX25519HkdfSha256, ExportOnly, HkdfSha256 } from "@hpke/core";
 import { describe, expect, test } from "vitest";
 import {
+  actionPurpose,
   bindingKey,
+  canonicalJson,
   DecryptionFailed,
   deriveFactorKey,
   factorPublicKey,
   openChallenge,
   openKeySeal,
   parseRecoveryKey,
+  readActionDescriptor,
   signDeviceProof,
   verifyBindingTag,
   type FactorPrivateKey,
@@ -36,10 +39,22 @@ interface FactorVector { name: string; kind: "passkey-prf" | "recovery"; factorI
 interface P256Vector { label: string; d: string; publicKey: string }
 interface SealVector { name: string; toKind: "device" | "factor" | "successor"; toId: string; sealedKeyId: string; recipient: string; sealed: string }
 interface TagVector { name: string; keyId: string; recipient: Record<string, string | null>; message: string; tag: string }
-interface ChallengeVector { name: string; purpose: "session" | "factor"; challengeId: string; targetId: string; sealed: string; answer: string }
+interface ChallengeVector {
+  name: string;
+  purpose: "session" | "factor" | "key";
+  challengeId: string;
+  targetId: string;
+  sealed: string;
+  answer: string;
+  /** Round 3, purposes factor and key: the descriptor's bytes (base64url), the request it digests, and the descriptor's digest. */
+  descriptor?: string;
+  request?: Record<string, unknown>;
+  requestDigest?: string;
+  actionDigest?: string;
+}
 type NegativeVector =
   | { name: string; open: "seal"; sealed: string; toKind: string; toId: string; sealedKeyId: string; recipient: string; expect: "DecryptionFailed" }
-  | { name: string; open: "challenge"; sealed: string; purpose: string; challengeId: string; targetId: string; recipient: string; expect: "DecryptionFailed" }
+  | { name: string; open: "challenge"; sealed: string; purpose: string; challengeId: string; targetId: string; actionDigest?: string; recipient: string; expect: "DecryptionFailed" }
   | { name: string; open: "tag"; of: "device"; label: string; tag: string; expect: "invalid" }
   | { name: string; open: "deviceProof"; nonce: string; signature: string; expect: "invalid" };
 interface Vectors {
@@ -161,7 +176,7 @@ describe("D1b vectors: the file has every case A9 lists", () => {
     expect(vectors.factors.map((f) => f.kind)).toEqual(["passkey-prf", "recovery"]);
     expect(vectors.seals.map((s) => s.toKind)).toEqual(["device", "factor", "successor"]);
     expect(vectors.tags.map((t) => t.recipient.kind)).toEqual(["device", "factor"]);
-    expect(vectors.challenges.map((c) => c.purpose)).toEqual(["session", "factor"]);
+    expect(vectors.challenges.map((c) => c.purpose)).toEqual(["session", "factor", "key"]);
     expect(vectors.deviceProof.signature).toMatch(/^[A-Za-z0-9_-]{86}$/);
     const names = vectors.negative.map((n) => n.name);
     for (const required of [
@@ -172,6 +187,8 @@ describe("D1b vectors: the file has every case A9 lists", () => {
       "a challenge opened as a key seal",
       "a key seal opened as a challenge",
       "a message key envelope (envelope v1) presented as a challenge",
+      "a factor challenge opened with another action's digest",
+      "a key challenge opened with another action's digest",
       "a tag over a changed label",
       "a device proof over another nonce",
     ]) {
@@ -243,11 +260,31 @@ describe("D1b vectors: every positive vector opens or verifies", () => {
   });
 
   test.each(vectors.challenges.map((c) => [c.name, c] as const))("challenge %s: the package and @hpke/core both open it to its answer", async (_, c) => {
-    const aad = `proprietor-mail/v1/challenge|${mailboxId}|${c.challengeId}|${c.purpose}|${c.targetId}`;
-    const key = c.purpose === "session" ? k1 : factorKeys.get("passkey")!;
-    expect(c.targetId).toBe(c.purpose === "session" ? vectors.mailboxKey.keyId : factorByName("passkey").factorId);
-    expect(hex(await openChallenge(key, { mailboxId, challengeId: c.challengeId }, c.sealed))).toBe(c.answer);
-    const pair = c.purpose === "session" ? await x25519Pair(vectors.mailboxKey.sk) : factorMaterialOf(factorKeys.get("passkey")!).keyPair;
+    const sha = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("base64url");
+    let digestPart = "";
+    if (c.purpose === "session") {
+      expect(c.descriptor ?? c.actionDigest).toBeUndefined();
+    } else {
+      // Round 3 (A6, A10): the descriptor reads strictly, its kind belongs to the purpose, it holds the
+      // request's digest (RFC 8785, checked against this file's request), and its digest is the AAD's.
+      const bytes = b64urlDecode(c.descriptor!);
+      const descriptor = readActionDescriptor(bytes)!;
+      expect(descriptor).not.toBeNull();
+      expect(descriptor.mailboxId).toBe(mailboxId);
+      expect(actionPurpose(descriptor.kind)).toBe(c.purpose);
+      expect(descriptor.kind).toBe(c.purpose === "factor" ? "open-session" : "upgrade");
+      expect(descriptor.request).toBe(c.requestDigest);
+      expect(sha(utf8(canonicalJson(c.request)))).toBe(c.requestDigest);
+      expect(sha(bytes)).toBe(c.actionDigest);
+      if (c.purpose === "factor") expect(c.request).toEqual({ challengeId: vectors.challenges[0]!.challengeId });
+      digestPart = `|${c.actionDigest}`;
+    }
+    const aad = `proprietor-mail/v1/challenge|${mailboxId}|${c.challengeId}|${c.purpose}|${c.targetId}${digestPart}`;
+    const key = c.purpose === "factor" ? factorKeys.get("passkey")! : k1;
+    expect(c.targetId).toBe(c.purpose === "factor" ? factorByName("passkey").factorId : vectors.mailboxKey.keyId);
+    const ids = { mailboxId, challengeId: c.challengeId, ...(c.actionDigest === undefined ? {} : { actionDigest: c.actionDigest }) };
+    expect(hex(await openChallenge(key, ids, c.sealed))).toBe(c.answer);
+    const pair = c.purpose === "factor" ? factorMaterialOf(factorKeys.get("passkey")!).keyPair : await x25519Pair(vectors.mailboxKey.sk);
     expect(await contractOpenChallenge(pair, aad, c.sealed)).toBe(c.answer);
   });
 
@@ -276,11 +313,19 @@ describe("D1b vectors: every negative case is refused", () => {
       return;
     }
     if (n.open === "challenge") {
-      const key = n.recipient === "mailboxKey" ? k1 : k2;
-      expect(n.targetId).toBe(materialOf(key).keyId);
-      await expect(openChallenge(key, { mailboxId, challengeId: n.challengeId }, n.sealed)).rejects.toBeInstanceOf(DecryptionFailed);
+      const ids = { mailboxId, challengeId: n.challengeId, ...(n.actionDigest === undefined ? {} : { actionDigest: n.actionDigest }) };
+      if (n.recipient.startsWith("factors.")) {
+        const key = factorKeys.get(n.recipient.slice(8))!;
+        expect(n.targetId).toBe(key.factorId);
+        await expect(openChallenge(key, ids, n.sealed)).rejects.toBeInstanceOf(DecryptionFailed);
+      } else {
+        const key = n.recipient === "mailboxKey" ? k1 : k2;
+        expect(n.targetId).toBe(materialOf(key).keyId);
+        await expect(openChallenge(key, ids, n.sealed)).rejects.toBeInstanceOf(DecryptionFailed);
+      }
       const { pair } = await recipientPair(n.recipient);
-      await expect(contractOpenChallenge(pair, `proprietor-mail/v1/challenge|${mailboxId}|${n.challengeId}|${n.purpose}|${n.targetId}`, n.sealed)).rejects.toThrow();
+      const digestPart = n.actionDigest === undefined ? "" : `|${n.actionDigest}`;
+      await expect(contractOpenChallenge(pair, `proprietor-mail/v1/challenge|${mailboxId}|${n.challengeId}|${n.purpose}|${n.targetId}${digestPart}`, n.sealed)).rejects.toThrow();
       return;
     }
     if (n.open === "tag") {
@@ -315,6 +360,16 @@ describe("D1b vectors: every negative case is refused", () => {
     expect(n5.sealed).toBe(vectors.challenges[0]!.sealed);
     const n6 = byName("a key seal opened as a challenge") as Extract<NegativeVector, { open: "challenge" }>;
     expect(n6.sealed).toBe(successorSeal!.sealed);
+    for (const [name, i, purpose] of [
+      ["a factor challenge opened with another action's digest", 1, "factor"],
+      ["a key challenge opened with another action's digest", 2, "key"],
+    ] as const) {
+      const n = byName(name) as Extract<NegativeVector, { open: "challenge" }>;
+      const c = vectors.challenges[i]!;
+      expect([n.sealed, n.challengeId, n.targetId, n.purpose]).toEqual([c.sealed, c.challengeId, c.targetId, purpose]);
+      expect(n.actionDigest).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(n.actionDigest).not.toBe(c.actionDigest);
+    }
     const envelope = byName("a message key envelope (envelope v1) presented as a challenge") as Extract<NegativeVector, { open: "challenge" }>;
     expect(b64urlDecode(envelope.sealed).length).toBe(80);
     expect(envelope.targetId).toBe(vectors.mailboxKey.keyId);
