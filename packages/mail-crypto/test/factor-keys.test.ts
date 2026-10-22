@@ -68,12 +68,12 @@ describe("A2 DeriveKeyPair (RFC 9180 §7.1.3) for DHKEM(X25519, HKDF-SHA256)", (
 
     const callerSecret = new Uint8Array(secret);
     await deriveFactorKey({ mailboxId, factorId, kind: "recovery", secret: callerSecret }); // pragma: allowlist secret (a test variable)
-    expect(imported.length).toBe(1);
-    expect(imported[0]!.length).toBe(48);
-    expect(imported[0]!.every((b) => b === 0)).toBe(true);
-    expect(derived.length).toBe(2); // ikm, then sk
+    // skF's PKCS #8 (48 bytes); round 3's signing key adds its own (test/factor-signing-keys.test.ts).
+    expect(imported.filter((p) => p.length === 48).length).toBe(1);
+    for (const p of imported) expect(p.every((b) => b === 0)).toBe(true);
+    expect(derived.length).toBeGreaterThanOrEqual(2); // ikm, then sk (and A2b's ikmS and candidate)
     for (const bits of derived) expect(new Uint8Array(bits).every((b) => b === 0)).toBe(true);
-    expect(hkdfInputs.length).toBe(2); // a copy of the secret, then the labeled ikm (which contains ikm)
+    expect(hkdfInputs.length).toBeGreaterThanOrEqual(2); // a copy of the secret, then the labeled ikm (which contains ikm)
     for (const input of hkdfInputs) expect(input.every((b) => b === 0)).toBe(true);
     // The caller's own buffer is the caller's: it is not changed.
     expect(hex(callerSecret)).toBe(hex(secret));

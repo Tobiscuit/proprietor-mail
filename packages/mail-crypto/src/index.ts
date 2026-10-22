@@ -318,7 +318,7 @@ export function parseRecoveryKey(display: string): Uint8Array {
 // (sealChallenge, verifyDeviceProof) is src/proofs.ts.
 
 export type { FactorPrivateKey } from "./factor-keys";
-export { deriveFactorKey, factorPublicKey } from "./factor-keys";
+export { deriveFactorKey, factorPublicKey, factorSigningKey } from "./factor-keys";
 export type { DeviceKeyPair } from "./device-keys";
 export { generateSigningKey, generateUnlockKey, isDeviceSigningKey, isDeviceUnlockKey, signDeviceProof } from "./device-keys";
 export type { SealOpener, SealRecipient } from "./seals";
