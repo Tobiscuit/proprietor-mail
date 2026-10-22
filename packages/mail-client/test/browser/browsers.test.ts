@@ -259,8 +259,14 @@ describe.each(chosen)("%s under the dashboard's policy", (name) => {
     // The harness's two deliberate controls (an innerHTML probe, the plain-string srcdoc above) are
     // reported as refused sinks: that is enforcement working. The message's <base> is reported by
     // the detached parse too, before the sanitiser removes it.
-    const expected = (v: { directive: string; blocked: string; sample: string }) =>
+    // Since Chromium 156 (Playwright 1.64) the detached parse also reports the message's inline event
+    // handlers (script-src-attr); they never run there either. Each must come from a call site that
+    // also reported the message's inline styles, i.e. the parse itself: a handler reported from
+    // anywhere else (the page, the frame) still fails this test.
+    const parseSites = new Set(violations.filter((v) => /^style-src(?:-elem|-attr)?$/.test(v.directive)).map((v) => v.site));
+    const expected = (v: { directive: string; blocked: string; sample: string; site: string }) =>
       (/^style-src(?:-elem|-attr)?$/.test(v.directive) && v.blocked === "inline") ||
+      (v.directive === "script-src-attr" && v.blocked === "inline" && parseSites.has(v.site)) ||
       (v.directive === "require-trusted-types-for" && /^(?:Element innerHTML\|<b>probe<\/b>|HTMLIFrameElement srcdoc\|<p>plain string<\/p>)/.test(v.sample)) ||
       v.directive === "base-uri";
     expect(violations.filter((v) => !expected(v))).toEqual([]);
