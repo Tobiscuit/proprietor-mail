@@ -41,6 +41,15 @@ const functions = [
   "openChallenge",
   // round 3: factor signing keys (device-v1.md A2b)
   "factorSigningKey",
+  // round 3: signed statements and the factor graph (device-v1.md A11)
+  "statementMessage",
+  "signStatement",
+  "verifyStatement",
+  "trustedFactors",
+  "isFactorRecipient",
+  "isTrustedDevice",
+  "isTrustedTransition",
+  "bootstrapAdmitters",
   // round 3: action descriptors and request digests (contracts/action-descriptor-v1.md, device-v1.md A10)
   "canonicalJson",
   "requestDigest",
