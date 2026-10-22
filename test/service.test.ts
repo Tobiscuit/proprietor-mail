@@ -327,6 +327,37 @@ describe("reading", () => {
     expect(refusalOf(await mail().update(await capFor(mb), b!.id, { folder: "drafts" }))).toMatchObject({ name: "InvalidRequest" });
   });
 
+  it("counts as unread only what the owner can open: a message sealed to a key the mailbox never held is listed, never counted", async () => {
+    const mb = await provisionMailbox();
+    await arrive(mb);
+    const seal = mb.ports.sealer.seal.bind(mb.ports.sealer);
+    // Sealed to a key this mailbox never held: no device can open it, so it can never be marked seen.
+    const stranger = await newKeyPair();
+    mb.ports.sealer.seal = async (pub, ids, header, raw) => ({ ...(await seal(pub, ids, header, raw)), keyId: stranger.keyId });
+    await arrive(mb);
+    // Sealed to a retired key of the mailbox: old mail stays readable (domain-model, KeyRing), so it counts.
+    const retired = await newKeyPair();
+    await runInDurableObject(mb.stub, (_i, state) =>
+      state.storage.sql.exec(
+        "INSERT INTO keys (key_id, public_key, created_at, created_by, retired_at) VALUES (?, ?, ?, ?, ?)",
+        retired.keyId,
+        retired.publicKey,
+        "2026-09-01T00:00:00.000Z",
+        "acc_owner",
+        "2026-09-02T00:00:00.000Z",
+      ),
+    );
+    mb.ports.sealer.seal = async (pub, ids, header, raw) => ({ ...(await seal(pub, ids, header, raw)), keyId: retired.keyId });
+    await arrive(mb);
+
+    // All three rows stay listed, each with its keyId, so the owner sees that something arrived.
+    const items = valueOf(await mail().list(await capFor(mb), { folder: "inbox" })).items;
+    expect(items.map((m) => m.keyId).sort()).toEqual([mb.key!.keyId, retired.keyId, stranger.keyId].sort());
+    expect(await mail().unread(await capFor(mb))).toEqual({ ok: true, value: { inbox: 2 } });
+    // The count sent to the dashboard on each arrival follows the same rule.
+    expect(mb.ports.signal.events.map((e) => e.unread)).toEqual([1, 1, 2]);
+  });
+
   it("purges a message (owner): the row and the R2 object", async () => {
     const mb = await provisionMailbox();
     await arrive(mb);

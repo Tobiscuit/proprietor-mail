@@ -17,8 +17,8 @@ One `vitest run`, three kinds of project (`vitest.config.ts`):
 | Project | Runs in | What |
 |---|---|---|
 | `worker` | workerd (`@cloudflare/vitest-pool-workers` 0.22.0) | everything under `test/` except `test/node/`: a real D1 with `migrations/` applied, real SQLite-backed Durable Objects, a real R2 simulation |
-| `packages/*` | Node, with each package's **own** `vitest.config.ts` | S1's and S3's tests (none while they are stubs) |
-| `node` | Node | `test/node/`: the provisioning script, the `wrangler.jsonc` fitness checks, the escape guard's own judgement, and the names check (`names.test.ts`: no old name outside `specs/`) |
+| `packages/*` | Node, with each package's **own** `vitest.config.ts` | the packages' tests: `mail-crypto`, `mail-outbound` and `mail-client` (its browser suite runs on request and in CI, `ci.yml`) |
+| `node` | Node | `test/node/`: the provisioning script, the `wrangler.jsonc` fitness checks, the SQS client's requests, the operator's `MailAdmin` tool (`mail-admin-cli.test.ts`), the escape guard's own judgement, and the names check (`names.test.ts`: no old name outside `specs/`) |
 
 `npm run typecheck` runs TypeScript 7 over `src/` and `test/` (and each
 package's own typecheck).

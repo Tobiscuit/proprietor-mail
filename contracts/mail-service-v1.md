@@ -83,3 +83,14 @@ by name.
 - Nine error names become ten. A caller that meets a name it does not know
   treats it as `InternalError`.
 
+## Amended 2026-10-16: `unread` counts only what can be opened
+
+`unread(cap)` answers `{ inbox }`: the Inbox messages not yet marked seen
+whose `keyId` is one of the mailbox's keys, live or retired (the `keys` of
+`mailbox()`). A message sealed to any other key can never be opened on the
+owner's devices, so it could never be marked seen, and it would hold the
+count at 1 for good. `list` still returns it, with its `keyId`, so the owner
+sees that something arrived; `unread` does not count it. The count Mail
+sends the dashboard on each arrival (the `NewMailSignal`, `plan.md` §1,
+seam 4) follows the same rule.
+
