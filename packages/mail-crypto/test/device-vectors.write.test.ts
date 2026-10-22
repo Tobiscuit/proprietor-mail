@@ -15,15 +15,21 @@ import {
   actionDigest,
   bindingKey,
   bindingTag,
+  bootstrapAdmitters,
   buildActionDescriptor,
   deriveFactorKey,
   factorPublicKey,
+  factorSigningKey,
   newId,
   requestDigest,
   sealKey,
   sealMessage,
   signDeviceProof,
+  signStatement,
+  statementMessage,
   wrapPrivateKey,
+  type FactorPrivateKey,
+  type Statement,
   type TagRecipient,
 } from "../src/index";
 import { clamp, importPrivateScalar, materialOf } from "../src/keys";
@@ -40,6 +46,7 @@ const LABELS = {
   recoverySecret: "proprietor-mail/device-v1 test vectors: recovery secret (never use for real mail)",
   signingKey: "proprietor-mail/device-v1 test vectors: device signing key (never use for real mail)",
   unlockKey: "proprietor-mail/device-v1 test vectors: device unlock key (never use for real mail)",
+  outsiderSecret: "proprietor-mail/device-v1 test vectors: a factor outside the graph (never use for real mail)",
 };
 
 /** The P-256 group order n: a scalar d must be in [1, n - 1]. */
@@ -66,6 +73,27 @@ async function factorScalars(secret: Uint8Array<ArrayBuffer>, mailboxId: string,
   const dkp = await crypto.subtle.importKey("raw", labeledIkm, "HKDF", false, ["deriveBits"]);
   const skF = new Uint8Array(await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: labeledInfo }, dkp, 256)); // pragma: allowlist secret (HKDF parameter names)
   return { ikm: hex(ikm), skF: hex(skF) };
+}
+
+/** ikmS and sS of a factor (A2b), from the contract's text with raw Web Crypto and BigInt: RFC 9180 §7.1.3 for P-256. */
+async function signingScalars(secret: Uint8Array<ArrayBuffer>, mailboxId: string, factorId: string, kind: string) { // pragma: allowlist secret (a parameter type)
+  const base = await crypto.subtle.importKey("raw", secret, "HKDF", false, ["deriveBits"]);
+  const info = utf8(`proprietor-mail/v1/factor-signing-key|${mailboxId}|${factorId}|${kind}`);
+  const ikmS = new Uint8Array(await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: utf8(factorId), info }, base, 256)); // pragma: allowlist secret (HKDF parameter names)
+  const suiteId = new Uint8Array([0x4b, 0x45, 0x4d, 0x00, 0x10]);
+  const labeledIkm = new Uint8Array([...utf8("HPKE-v1"), ...suiteId, ...utf8("dkp_prk"), ...ikmS]);
+  const dkp = await crypto.subtle.importKey("raw", labeledIkm, "HKDF", false, ["deriveBits"]);
+  for (let counter = 0; counter < 256; counter++) {
+    const labeledInfo = new Uint8Array([0, 32, ...utf8("HPKE-v1"), ...suiteId, ...utf8("candidate"), counter]);
+    const sk = new Uint8Array(await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: labeledInfo }, dkp, 256)); // pragma: allowlist secret (HKDF parameter names)
+    const n = BigInt("0x" + hex(sk));
+    if (n > 0n && n < P256_N) {
+      const ecdh = createECDH("prime256v1");
+      ecdh.setPrivateKey(Buffer.from(sk));
+      return { ikmS: hex(ikmS), counter, sS: hex(sk), vS: hex(new Uint8Array(ecdh.getPublicKey())) };
+    }
+  }
+  throw new Error("no P-256 scalar in 256 candidates");
 }
 
 async function p256Key(label: string) {
@@ -100,6 +128,10 @@ test("write contracts/device-v1.vectors.json", async () => {
   const recoverySecret = await sha256(utf8(LABELS.recoverySecret));
   const passkey = await deriveFactorKey({ mailboxId, factorId: passkeyId, kind: "passkey-prf", secret: prfOutput }); // pragma: allowlist secret (a test vector)
   const recovery = await deriveFactorKey({ mailboxId, factorId: recoveryId, kind: "recovery", secret: recoverySecret }); // pragma: allowlist secret (a test vector)
+  // Round 3: a third factor, outside the graph (it admits itself, and nothing joins it to the other two).
+  const outsiderId = newId("wrp");
+  const outsiderSecret = await sha256(utf8(LABELS.outsiderSecret));
+  const outsider = await deriveFactorKey({ mailboxId, factorId: outsiderId, kind: "recovery", secret: outsiderSecret }); // pragma: allowlist secret (a test vector)
   const factors = [
     {
       name: "passkey",
@@ -109,6 +141,7 @@ test("write contracts/device-v1.vectors.json", async () => {
       secret: hex(prfOutput), // pragma: allowlist secret (a test vector)
       ...(await factorScalars(prfOutput, mailboxId, passkeyId, "passkey-prf")),
       pkF: hex(factorPublicKey(passkey)),
+      signing: await signingScalars(prfOutput, mailboxId, passkeyId, "passkey-prf"),
     },
     {
       name: "recovery",
@@ -119,8 +152,21 @@ test("write contracts/device-v1.vectors.json", async () => {
       recoveryDisplay: recoveryDisplay(recoverySecret),
       ...(await factorScalars(recoverySecret, mailboxId, recoveryId, "recovery")),
       pkF: hex(factorPublicKey(recovery)),
+      signing: await signingScalars(recoverySecret, mailboxId, recoveryId, "recovery"),
+    },
+    {
+      name: "outsider",
+      kind: "recovery",
+      factorId: outsiderId,
+      secretLabel: LABELS.outsiderSecret, // pragma: allowlist secret (a public label)
+      secret: hex(outsiderSecret), // pragma: allowlist secret (a test vector)
+      recoveryDisplay: recoveryDisplay(outsiderSecret),
+      ...(await factorScalars(outsiderSecret, mailboxId, outsiderId, "recovery")),
+      pkF: hex(factorPublicKey(outsider)),
+      signing: await signingScalars(outsiderSecret, mailboxId, outsiderId, "recovery"),
     },
   ];
+  for (const [f, handle] of [[factors[0]!, passkey], [factors[1]!, recovery], [factors[2]!, outsider]] as const) expect(hex(factorSigningKey(handle))).toBe(f.signing.vS);
 
   // A kept device (A3): fixed signing and unlock keys.
   const deviceId = newId("dev");
@@ -266,6 +312,124 @@ test("write contracts/device-v1.vectors.json", async () => {
     { name: "a device proof over another nonce", open: "deviceProof", nonce: b64urlEncode(otherNonce), signature: deviceProof.signature, expect: "invalid" },
   ];
 
+  // Round 3 (A11): one of each signed statement, with the fields whose change refuses it, the factor
+  // graph they make, and a transition signed by a factor outside that graph.
+  const b64 = (bytes: Uint8Array) => b64urlEncode(bytes);
+  const signingKeyBytes = Buffer.from(signing.publicKey, "hex"); // pragma: allowlist secret (public test keys and ids)
+  const unlockKeyBytes = Buffer.from(unlock.publicKey, "hex");
+  const credentialId = factorRecipient.credentialId; // pragma: allowlist secret (a public test value)
+  const factorFields = { passkey: { handle: passkey, label: "Phone", credentialId }, recovery: { handle: recovery, label: "Recovery key", credentialId: null }, outsider: { handle: outsider, label: "Recovery key", credentialId: null } };
+  type FactorName = keyof typeof factorFields;
+  const factorStatement = (name: FactorName, admitter: FactorName): Statement => {
+    const f = factorFields[name];
+    return {
+      kind: "admit-factor",
+      mailboxId,
+      factorId: f.handle.factorId,
+      factorKind: f.handle.kind,
+      label: f.label,
+      factorKey: factorPublicKey(f.handle),
+      signingKey: factorSigningKey(f.handle), // pragma: allowlist secret (a public key)
+      credentialId: f.credentialId, // pragma: allowlist secret (public test keys and ids)
+      admitterId: factorFields[admitter].handle.factorId,
+      admitterSigningKey: factorSigningKey(factorFields[admitter].handle), // pragma: allowlist secret (public test keys and ids)
+    };
+  };
+  const nameOf = (id: string) => (Object.keys(factorFields) as FactorName[]).find((n) => factorFields[n].handle.factorId === id)!;
+  const cycle = bootstrapAdmitters([passkeyId, recoveryId]);
+  const admissions = new Map<FactorName, { statement: Statement; admitter: FactorName }>();
+  for (const { factorId, admitterId } of cycle) admissions.set(nameOf(factorId), { statement: factorStatement(nameOf(factorId), nameOf(admitterId)), admitter: nameOf(admitterId) });
+  admissions.set("outsider", { statement: factorStatement("outsider", "outsider"), admitter: "outsider" });
+  const signed = new Map<FactorName, { by: string; signature: string; selfSignature: string }>();
+  for (const [name, a] of admissions) {
+    signed.set(name, { by: factorFields[a.admitter].handle.factorId, signature: await signStatement(factorFields[a.admitter].handle, a.statement), selfSignature: await signStatement(factorFields[name].handle, a.statement) });
+  }
+  const graphFactor = (name: FactorName) => {
+    const f = factorFields[name];
+    return { id: f.handle.factorId, kind: f.handle.kind, label: f.label, credentialId: f.credentialId, factorKey: b64(factorPublicKey(f.handle)), signingKey: b64(factorSigningKey(f.handle)), admission: signed.get(name)! }; // pragma: allowlist secret (public keys)
+  };
+  /** A statement as JSON: keys base64url, as a view or a request holds them. */
+  const asJson = (s: Statement): Record<string, unknown> =>
+    Object.fromEntries(Object.entries(s).map(([k, v]) => [k, v instanceof Uint8Array ? b64(v) : v]));
+  const statementVector = async (name: string, s: Statement, signers: { ref: string; handle: FactorPrivateKey | CryptoKey; publicKey: Uint8Array; role: string }[], changed: [string, unknown][]) => ({
+    name,
+    statement: asJson(s),
+    message: new TextDecoder().decode(statementMessage(s)),
+    signatures: await Promise.all(signers.map(async (x) => ({ role: x.role, signer: x.ref, publicKey: hex(x.publicKey), signature: await signStatement(x.handle, s) }))),
+    changed: changed.map(([field, value]) => ({ field, value: value instanceof Uint8Array ? b64(value) : value })),
+  });
+  const deviceSigner = await importP256(signing.d, signing.publicKey, "ECDSA");
+  const otherPoint = Buffer.from((await p256Key("proprietor-mail/device-v1 test vectors: another point (never use for real mail)")).publicKey, "hex");
+  const recoveryAdmission = admissions.get("recovery")!;
+  const statements = [
+    await statementVector(
+      "admit-device",
+      { kind: "admit-device", mailboxId, deviceId, label: device.label, signingKey: signingKeyBytes, admitterId: passkeyId }, // pragma: allowlist secret (public test keys and ids)
+      [{ ref: "factors.passkey", handle: passkey, publicKey: factorSigningKey(passkey), role: "signature" }],
+      [["mailboxId", newId("mbx")], ["deviceId", newId("dev")], ["label", "Kitchen laptop (2)"], ["signingKey", otherPoint], ["admitterId", recoveryId]],
+    ),
+    await statementVector(
+      "unlock-key",
+      { kind: "unlock-key", mailboxId, deviceId, unlockKey: unlockKeyBytes },
+      [{ ref: "device.signing", handle: deviceSigner, publicKey: signingKeyBytes, role: "unlockSignature" }],
+      [["mailboxId", newId("mbx")], ["deviceId", newId("dev")], ["unlockKey", otherPoint]],
+    ),
+    await statementVector(
+      "admit-factor",
+      recoveryAdmission.statement,
+      [
+        { ref: `factors.${recoveryAdmission.admitter}`, handle: factorFields[recoveryAdmission.admitter].handle, publicKey: factorSigningKey(factorFields[recoveryAdmission.admitter].handle), role: "signature" },
+        { ref: "factors.recovery", handle: recovery, publicKey: factorSigningKey(recovery), role: "selfSignature" },
+      ],
+      [
+        ["mailboxId", newId("mbx")],
+        ["factorId", newId("wrp")],
+        ["factorKind", "passkey-prf"],
+        ["label", "Recovery key (2)"],
+        ["factorKey", factorPublicKey(outsider)],
+        ["signingKey", factorSigningKey(outsider)], // pragma: allowlist secret (a public key)
+        ["credentialId", credentialId],
+        ["admitterId", outsiderId],
+        ["admitterSigningKey", factorSigningKey(outsider)],
+      ],
+    ),
+    await statementVector(
+      "transition",
+      { kind: "transition", mailboxId, fromKeyId: m1.keyId, toKeyId: m2.keyId, toPublicKey: m2.publicKey, signerId: passkeyId },
+      [{ ref: "factors.passkey", handle: passkey, publicKey: factorSigningKey(passkey), role: "signature" }],
+      [["mailboxId", newId("mbx")], ["fromKeyId", m2.keyId], ["toKeyId", m1.keyId], ["toPublicKey", m1.publicKey], ["signerId", recoveryId]],
+    ),
+  ];
+  const graph = {
+    note:
+      "The factor graph of A11 for this mailbox: the passkey and the recovery key enrolled together (sorted by id, each " +
+      "admitted by the next, the last by the first), and the outsider, which admits itself and is joined to nothing. From the " +
+      "passkey's signing key the trusted factors are the passkey and the recovery key. The device is admitted by the passkey and " +
+      "signed its own unlock key. The transition is the one in statements; transitionOutsideGraph is the same step signed by the " +
+      "outsider: its signature is genuine, and it is refused because the outsider is not in the trusted component.",
+    view: { id: mailboxId, wraps: [graphFactor("passkey"), graphFactor("recovery"), graphFactor("outsider")], removedFactors: [] },
+    start: "factors.passkey",
+    trusted: [passkeyId, recoveryId].sort(),
+    device: {
+      id: deviceId,
+      label: device.label,
+      signingKey: b64(signingKeyBytes), // pragma: allowlist secret (a public test key)
+      unlockKey: b64(unlockKeyBytes),
+      unlockSignature: statements[1]!.signatures[0]!.signature,
+      admission: { by: passkeyId, signature: statements[0]!.signatures[0]!.signature },
+    },
+    transitionOutsideGraph: {
+      fromKeyId: m1.keyId,
+      toKeyId: m2.keyId,
+      toPublicKey: b64(m2.publicKey),
+      signedBy: outsiderId,
+      signer: "factors.outsider",
+      message: `proprietor-mail/v1/transition|${mailboxId}|${m1.keyId}|${m2.keyId}|${b64(m2.publicKey)}|${outsiderId}`,
+      signature: await signStatement(outsider, { kind: "transition", mailboxId, fromKeyId: m1.keyId, toKeyId: m2.keyId, toPublicKey: m2.publicKey, signerId: outsiderId }),
+      expect: "untrusted",
+    },
+  };
+
   const vectors = {
     contract: "contracts/device-v1.md",
     about:
@@ -276,7 +440,10 @@ test("write contracts/device-v1.vectors.json", async () => {
       "wrapped, descriptor) and the recipients' keys in tags, which are base64url without padding (RFC 4648 §5). The challenges and " +
       "the device proof were made by a sealer and a signer written from the contract; Mail's are src/proofs.ts. Round 3: the factor " +
       "and key challenges carry their action descriptor (contracts/action-descriptor-v1.md, as Mail issues it), the request it " +
-      "digests and its digest, and their associated data ends with that digest (A6).",
+      "digests and its digest, and their associated data ends with that digest (A6). Each factor's `signing` holds ikmS, the " +
+      "candidate counter, sS and vS (A2b). `statements` holds one of each A11 statement (keys base64url) with its message, its " +
+      "signatures (the signer's public point in hex) and, under `changed`, values that each refuse every signature when they " +
+      "replace that one field. `graph` is the factor graph those statements make.",
     mailboxId,
     mailboxKey: { label: LABELS.mailboxKey, sk: hex(skK1), pk: hex(m1.publicKey), keyId: m1.keyId },
     successorKey: { label: LABELS.successorKey, sk: hex(skK2), pk: hex(m2.publicKey), keyId: m2.keyId },
@@ -287,6 +454,8 @@ test("write contracts/device-v1.vectors.json", async () => {
     challenges,
     deviceProof,
     negative,
+    statements,
+    graph,
   };
   writeFileSync(vectorsPath, JSON.stringify(vectors, null, 2) + "\n");
   expect(seals.map((s) => Buffer.from(s.sealed, "base64url").length)).toEqual([142, 109, 109]);
