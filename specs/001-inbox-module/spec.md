@@ -389,7 +389,7 @@ for this spec and are listed as future work, not as a plan.
 | X25519 in Web Crypto: Chrome 133, Firefox 130, Safari 17; importing a private scalar as `raw` silently yields a PUBLIC key; `unwrapKey("pkcs8", …, AES-GCM)` yields a non-extractable private key; `@hpke/core` 1.9.0 opens with a non-extractable `CryptoKey` and has no fallback without native X25519 | MDN; reproduced in Chromium 153 and Firefox 155; its source |
 | An `about:srcdoc` document inherits the embedder's policy container, sandboxed or not: `<style>` needs the nonce, remote images are blocked, `frame-ancestors` does not block it, `frame-src` does not apply | HTML and CSP3 specifications; web-platform-tests results |
 | `srcdoc` is a Trusted Types sink; React 19.3 passes the value through unchanged; Trusted Types ship in Chrome 83, Firefox 148, Safari 26 | Trusted Types specification; React source |
-| DOMPurify 3.4.16 is the minimum version without a 2026 advisory; postal-mime 3.0.1 has the linear-time parsing fixes (4.0.0 is a rewrite without security fixes) | their advisories and changelogs |
+| DOMPurify 3.4.16 is the minimum version without a 2026 advisory; postal-mime 3.0.1 has the linear-time parsing fixes (4.0.0 is a rewrite without security fixes). **Amended 2026-10-22:** 4.0.1–4.1.3 (2026-09-30 to 10-21) then added the address-parser fixes, linear-time html-to-text, bounded part and forwarded-address counts and error codes, so all three packages are on 4.1.3, with the Worker's own tighter limits (`src/mail/header.ts`) | their advisories and changelogs |
 | The dashboard's framework caps a server action's body at 1 MB by default | its source (vinext 1.0.0-beta.12) |
 
 **Not verified**, and where it gets checked:

@@ -14,17 +14,24 @@ export const SNIPPET_CHARS = 200;
 const KEEP_REFERENCES = 20;
 
 /**
- * postal-mime 3.0.1 would read up to 2 MiB of header lines. A quarter of a
- * MiB is far beyond any real message and bounds the work an arriving message
- * can ask for. Past it, the parser throws, and the message is still stored
- * (with an empty header) by the caller.
+ * The parser's limits, tighter than postal-mime's defaults (2 MiB of header
+ * lines, 10,000 parts, nesting 256 deep, 10,000 forwarded addresses; checked
+ * on 4.1.3). Each is far beyond any real message and bounds the work an
+ * arriving message can ask of the Worker's CPU budget. Past any of them the
+ * parser throws, and the caller still stores the message, with an empty
+ * header: a message built to exhaust the parser is kept, not retried forever.
  */
-const MAX_HEADERS_SIZE = 256 * 1024;
+const PARSE_LIMITS = {
+  maxHeadersSize: 256 * 1024,
+  maxPartCount: 1000,
+  maxNestingDepth: 32,
+  maxForwardedAddresses: 1000,
+} as const;
 
 /** The parsed message, or null when the parser gives up (the message is then stored with an empty header). */
 export async function parseMessage(raw: Uint8Array): Promise<Email | null> {
   try {
-    return await PostalMime.parse(raw, { maxHeadersSize: MAX_HEADERS_SIZE, attachmentEncoding: "arraybuffer" });
+    return await PostalMime.parse(raw, { ...PARSE_LIMITS, attachmentEncoding: "arraybuffer" });
   } catch {
     return null;
   }
@@ -103,7 +110,7 @@ export function inboundHeader(parsed: Email | null, envelope: Envelope): Message
     messageId: messageIds(parsed?.messageId)[0] ?? null,
     inReplyTo: messageIds(parsed?.inReplyTo)[0] ?? null,
     references: messageIds(parsed?.references),
-    // postal-mime 3.0.1 leaves `text` unset for an HTML-only message.
+    // postal-mime leaves `text` unset for an HTML-only message (still so in 4.1.3).
     snippet: snippetOf(parsed?.text ?? (parsed?.html === undefined ? undefined : stripHtmlToText(parsed.html))),
     attachments: (parsed?.attachments ?? []).map(
       (a): AttachmentSummary => ({

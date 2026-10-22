@@ -11,24 +11,6 @@ import { ALTERNATIVE, MIXED, NOW, TEXT_ONLY, counterRandom, utf8 } from "./fixtu
 const nl = (s: string | undefined) => (s ?? "").replace(/\r\n?/g, "\n");
 const mailbox = (a: Address) => ({ name: a.name ?? "", address: a.address });
 
-/**
- * A known postal-mime 3.0.1 quirk, not a builder bug: its quoted-printable
- * decoder ends every line that is not soft-broken with "\n", including the
- * last line before a multipart delimiter, so it keeps the CRLF that RFC 2046
- * §5.1.1 attaches to the delimiter ("the CRLF preceding the boundary delimiter
- * line is conceptually attached to the boundary"). A quoted-printable text part
- * inside a multipart therefore reads back with exactly one extra "\n".
- * Single-part messages and base64 parts read back exactly.
- */
-function withoutDelimiterNewline(msg: ComposedMessage, built: BuiltMessage, subtype: "plain" | "html", parsed: string): string {
-  const multipart = msg.html !== undefined || (msg.attachments?.length ?? 0) > 0;
-  const raw = new TextDecoder().decode(built.raw);
-  const encoding = new RegExp(`Content-Type: text/${subtype}; charset=utf-8\\r\\nContent-Transfer-Encoding: (\\S+)`).exec(raw)?.[1];
-  if (!multipart || encoding !== "quoted-printable") return parsed;
-  expect(parsed.endsWith("\n")).toBe(true);
-  return parsed.slice(0, -1);
-}
-
 function expectRoundTrip(msg: ComposedMessage, built: BuiltMessage, parsed: Email, now: Date) {
   expect(parsed.from).toEqual(mailbox(msg.from));
   if (msg.to.length) {
@@ -45,8 +27,10 @@ function expectRoundTrip(msg: ComposedMessage, built: BuiltMessage, parsed: Emai
   expect(parsed.inReplyTo).toBe(msg.inReplyTo === undefined ? undefined : `<${msg.inReplyTo}>`);
   expect(parsed.references).toBe(msg.references?.length ? msg.references.map((r) => `<${r}>`).join(" ") : undefined);
   expect(parsed.date).toBe(new Date(Math.floor(now.getTime() / 1000) * 1000).toISOString());
-  expect(withoutDelimiterNewline(msg, built, "plain", nl(parsed.text))).toBe(nl(msg.text));
-  if (msg.html !== undefined) expect(withoutDelimiterNewline(msg, built, "html", nl(parsed.html))).toBe(nl(msg.html));
+  // Exact, multipart or not: postal-mime 4.0.4 stopped reading the CRLF before a
+  // multipart delimiter as part content (RFC 2046 §5.1.1 attaches it to the delimiter).
+  expect(nl(parsed.text)).toBe(nl(msg.text));
+  if (msg.html !== undefined) expect(nl(parsed.html)).toBe(nl(msg.html));
 
   const key = (filename: string | null, cid: string | undefined) => `${filename}\u0000${cid ?? ""}`;
   const want = (msg.attachments ?? [])
