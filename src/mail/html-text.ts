@@ -5,7 +5,7 @@
 // Modified by Juan Ramirez (Proprietor Systems), 2026-09: `stripHtmlToText` taken from agentic-inbox's
 // workers/lib/email-helpers.ts, alone; it now also decodes the common HTML
 // entities, and is used only to make the snippet that is sealed inside a
-// MessageHeader (postal-mime 3.0.1 gives no text for an HTML-only message).
+// MessageHeader (postal-mime gives no text for an HTML-only message; checked on 4.1.3).
 
 const NAMED: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
 

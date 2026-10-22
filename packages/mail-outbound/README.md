@@ -144,11 +144,11 @@ address.
   sent message to thread replies. Not verified: the domain SES puts after the
   `@` outside us-east-1 (the docs' us-east-1 example is
   `<{MessageId}@email.amazonses.com>`).
-- postal-mime 3.0.1 reads a quoted-printable text part inside a multipart
-  with one extra trailing `"\n"`: it keeps the CRLF that RFC 2046 §5.1.1
-  attaches to the next delimiter. Python's `email` parser reads the same
-  bytes exactly. Harmless when displaying; worth knowing before comparing
-  text.
+- Every text part reads back exactly, multipart or not. postal-mime 3.0.1
+  read a quoted-printable text part inside a multipart with one extra
+  trailing `"\n"` (it kept the CRLF that RFC 2046 §5.1.1 attaches to the next
+  delimiter); 4.0.4 fixed that, and since 2026-10-22 the round-trip test
+  compares exactly.
 
 ## Tests
 

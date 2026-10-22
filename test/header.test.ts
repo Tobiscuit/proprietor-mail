@@ -128,9 +128,33 @@ describe("MessageHeader for an arriving message (contracts/envelope-v1.md)", () 
   });
 
   it("returns null, rather than throwing, when postal-mime refuses a message", async () => {
-    // postal-mime 3.0.1 throws past maxHeadersSize; the Worker's parse sets 256 KiB.
+    // postal-mime throws past maxHeadersSize; the Worker's parse sets 256 KiB.
     const hugeHeader = crlf([`X-Filler: ${"a".repeat(300 * 1024)}`, "Subject: s", "", "body"]);
     expect(await parseMessage(hugeHeader)).toBeNull();
+  });
+
+  it("returns null past the Worker's part and nesting limits, and parses just inside them", async () => {
+    const multipart = (parts: number) =>
+      crlf([
+        "Subject: many parts",
+        'Content-Type: multipart/mixed; boundary="b"',
+        "",
+        ...Array.from({ length: parts }, (_, i) => ["--b", "Content-Type: text/plain", "", `part ${i}`]).flat(),
+        "--b--",
+      ]);
+    // The multipart itself counts as a part, so 999 children make 1000.
+    expect(await parseMessage(multipart(999))).not.toBeNull();
+    expect(await parseMessage(multipart(1000))).toBeNull();
+
+    const nested = (depth: number) => {
+      const lines = ["Subject: deep"];
+      for (let i = 0; i < depth; i++) lines.push(`Content-Type: multipart/mixed; boundary="n${i}"`, "", `--n${i}`);
+      lines.push("Content-Type: text/plain", "", "core");
+      for (let i = depth - 1; i >= 0; i--) lines.push(`--n${i}--`);
+      return crlf(lines);
+    };
+    expect(await parseMessage(nested(20))).not.toBeNull();
+    expect(await parseMessage(nested(40))).toBeNull();
   });
 
   it("makes the snippet from the text body: at most 200 characters, whitespace collapsed", async () => {
