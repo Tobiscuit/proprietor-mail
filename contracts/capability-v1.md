@@ -38,6 +38,7 @@ Claims:
 | `iat` | NumericDate | when it was minted |
 | `exp` | NumericDate | `exp - iat` must be between 1 and 60 inclusive |
 | `jti` | string, **required** | random, at least 16 bytes of entropy; both Workers log it with the method and the outcome, so one request can be traced across them |
+| `confirmation` | object, optional | an email code the dashboard checked moments ago, attested for one action (amended 2026-10-22, below) |
 
 ## Verification rules (Mail)
 
@@ -62,6 +63,33 @@ A refused capability raises `CapabilityRejected` with a reason of `invalid` or
 
 Mail logs one line per call: the method, the `jti`, and the outcome (accepted,
 or rejected and why). Never an address, a subject or any other content.
+
+## The `confirmation` claim (amended 2026-10-22, spec 002 D35)
+
+The dashboard sends an email code for one action that Mail described (an
+**action descriptor**, `action-descriptor-v1.md`), checks the code the person
+types, and states the result in the capability of the one call that acts on
+it:
+
+```json
+"confirmation": { "method": "email-code", "accountId": "<sub>", "actionKind": "revoke-device",
+                  "actionDigest": "<43 characters>", "at": 1792627350, "codeId": "<the code's id>" }
+```
+
+- The dashboard checks the code and mints the capability **in the same server
+  action**, and copies the attestation in unchanged. It never hands the
+  attestation to the browser to send back.
+- Mail reads it only in the method that takes one (`revokeDevices`,
+  `device-v1.md` B7a) and checks it by `action-descriptor-v1.md`'s table: the
+  method, `accountId` = `sub`, a kind an email code may confirm (only
+  `revoke-device`), the digest of Mail's own pending challenge (spent once),
+  and `at` within 300 seconds. Anywhere else it is ignored.
+- A capability without the claim verifies exactly as before, so tokens minted
+  before this amendment, and the vectors, still hold. A malformed claim on a
+  method that reads it is `CapabilityRejected` (`invalid`).
+
+What it grants is narrow on purpose: Mail lets an email code revoke devices
+and nothing else, because revoking gives nobody a key.
 
 ## Serialization
 
@@ -100,6 +128,8 @@ accepts, and Mail proves it refuses what it must.
 
 ## What it deliberately does not carry
 
-No email address, no session id, no Access token and no Better Auth token.
+No email address, no session id, no Access token and no Better Auth token
+(the `confirmation` claim carries an account id, a digest and a code id, never
+the code).
 Mail needs to know which account acts (for its audit log) and whether that
 account may, and nothing else.
