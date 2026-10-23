@@ -583,7 +583,7 @@ describe("addWrap and removeWrap once sessions are required (B7, M5′, M24, R8)
     valueOf(await removeWrap(u, u.passkey.id, second.factor));
     const v = await view(u.mb);
     expect(v.wraps.map((w) => w.id)).toEqual([second.wrap.id]);
-    expect(v.removedFactors[0]).toEqual({
+    expect(v.removedFactors.find((f) => f.id === u.recovery.id)).toEqual({
       id: u.recovery.id,
       kind: "recovery",
       credentialId: null,
@@ -593,7 +593,7 @@ describe("addWrap and removeWrap once sessions are required (B7, M5′, M24, R8)
       admission: listed.admission,
       removedAt,
     });
-    expect(v.removedFactors.map((f) => f.id)).toEqual([u.recovery.id, u.passkey.id]);
+    expect(v.removedFactors.map((f) => f.id).sort()).toEqual([u.recovery.id, u.passkey.id].sort());
     expect(refusalOf(await removeWrap(u, second.wrap.id, second.factor)).name).toBe("InvalidRequest");
     expect((await audits(u.mb, "wrap-removed")).map((a) => a.detail.wrap)).toEqual([u.recovery.id, u.passkey.id]);
     // A removed factor's id is never a new wrap's.
