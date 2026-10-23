@@ -65,25 +65,33 @@ after the import. The KEK of envelope v1 and the factor key come from one
 PRF evaluation through different HKDF info strings, so neither reveals the
 other.
 
-### A2b. Factor signing keys (round 3, D39)
+### A2b. Factor signing keys (round 3, D39; Ed25519 by D44)
 
-From the same secret, every factor also has an ECDSA P-256 key pair, with
-which it signs what it authorizes (A11):
+From the same secret, every factor also has an Ed25519 key pair, with which
+it signs what it authorizes (A11):
 
 ```
-ikmS       = HKDF-SHA256 over the secret, with the factor id (as UTF-8) for salt,
+seedS      = HKDF-SHA256 over the secret, with the factor id (as UTF-8) for salt,
              info = ctx("factor-signing-key", mailboxId, factorId, kind), and L = 32
-(sS, vS)   = DeriveKeyPair(ikmS) for DHKEM(P-256, HKDF-SHA256)   (RFC 9180 §7.1.3: the
-             candidate loop with its counter, bitmask 0xFF, until 0 < sk < n)
+(sS, vS)   = the Ed25519 key pair whose private key is seedS (RFC 8032 §5.1.5: any 32 bytes
+             are a private key; the public key is computed from them)
 ```
 
-`sS` is imported for ECDSA P-256 as a non-extractable key with usage `sign`;
-every byte string that held the secret, `ikmS` or the scalar is zeroed after
-the import. `vS` is its public key, a raw uncompressed point (65 bytes); Mail
-stores it as the factor's `signingKey`. Like `skF`, `sS` exists only in the
-browser in the moments after the person used the factor (a FreshFactor). The
-`info` strings keep the KEK, the factor key and the signing key apart, so none
-of them reveals another.
+`sS` is imported as PKCS #8 (RFC 8410: the 32 bytes as its `CurvePrivateKey`)
+for Ed25519, non-extractable, with usage `sign`. `vS`, the 32-byte public
+key, is read from the engine itself: the same PKCS #8 bytes imported once
+extractable and exported as JWK (`x`), then dropped. Every byte string that
+held the secret, `seedS` or the PKCS #8 encoding is zeroed after the imports.
+Mail stores `vS` as the factor's `signingKey`. Like `skF`, `sS` exists only in
+the browser in the moments after the person used the factor (a
+FreshFactor). The `info` strings keep the KEK, the factor key and the signing
+key apart, so none of them reveals another.
+
+*Why Ed25519 and not P-256 (D44):* WebKit imports a P-256 private key only
+with its public point (WebKit bug 233705), which only arithmetic on the
+secret scalar in JavaScript could supply; an Ed25519 key imports from its 32
+bytes alone in every engine that supports it (Chrome 137, Firefox 129,
+Safari 17, Workers), as the X25519 factor key already does.
 
 ### A3. Device keys
 
@@ -252,8 +260,11 @@ records, draws the nonce, and issues the bytes.
 
 ### A11. Signed statements (round 3, D39)
 
-ECDSA P-256 with SHA-256, IEEE P1363 form (`r ‖ s`, 64 bytes), base64url, as
-A7. A factor signs with `sS` (A2b), a device with its signing key (A3).
+A factor signs with `sS` (A2b): Ed25519 (RFC 8032), 64 bytes. Safari's
+Ed25519 signatures are randomized, so a verifier never compares signature
+bytes, only verifies them. A device signs with its signing key (A3): ECDSA
+P-256 with SHA-256, IEEE P1363 form (`r ‖ s`, 64 bytes), as A7. All
+base64url.
 
 ```
 admission of a device  = ctx("admit-device", mailboxId, deviceId, b64u(UTF-8(label)), b64u(signingKey), admitterId)
@@ -272,15 +283,18 @@ transition             = ctx("transition", mailboxId, fromKeyId, toKeyId, b64u(t
   every factor is present, the factors are sorted by id (UTF-16 code units)
   and each is admitted by the next one, the last by the first; a single
   factor admits itself.
-- **The factor graph** (what a browser trusts, K2″ and K3′). Its nodes are
-  every factor record in the view, removed ones included (B4). An edge joins a
-  factor and its admitter when the admission's `signature` verifies with the
-  admitter's listed signing key, its `selfSignature` with the factor's own,
-  and the admitter key inside the statement is the admitter's listed one. The
-  **trusted factors** are the connected component of the browser's start:
-  the factor just used, once K9 confirms the factor key and signing key it
-  derives are the listed ones; or, on a kept device, the factor whose signing
-  key the record holds as `trustRoot`.
+- **The factor graph** (what a browser trusts, K2″ and K3′). A factor record
+  in the view (removed ones included, B4) is a **node** only when its own
+  admission verifies: its `signature` with the admitter's listed signing key,
+  its `selfSignature` with the factor's own, the admitter key inside the
+  statement being the admitter's listed one, and its id listed once. An edge
+  joins each node and its admitter. The **trusted factors** are the connected
+  component of the start nodes: the nodes whose signing key is the start key,
+  that is, the factor just used (once K9 confirms the factor key and signing
+  key it derives are the listed ones), or, on a kept device, the signing key
+  the record holds as `trustRoot`. (Clarified 2026-10-22 with the builder:
+  under the looser reading a factor reachable only through other records'
+  admissions would be trusted with a factor key nobody signed for.)
 - **Trusted recipients.** A device is trusted when its admission verifies
   with a trusted factor's signing key and, while it has an unlock key, its
   unlock-key signature verifies with its own signing key. A factor is a
@@ -288,6 +302,12 @@ transition             = ctx("transition", mailboxId, fromKeyId, toKeyId, b64u(t
   binding tag (A5).
 - **Trusted transitions.** A successor step is accepted only when its
   transition verifies with a trusted factor's signing key, removed or not.
+- **What a removal does not do.** A removal is not signed, and a browser
+  learns of it only from the view. A hostile server can list a removed
+  factor as present again; its admission still verifies, so a browser would
+  seal new keys to it. Against Mail, removing a factor ends it at once (M24);
+  against whoever controls the servers, a removed factor someone else holds is
+  as dangerous as a present one, like a leaked recovery key (spec §4).
 
 ### A9. Vectors
 
