@@ -19,6 +19,13 @@ const functions = [
   "parseAddressList",
   "encodeSendForm",
   "decodeSendForm",
+  // spec 002, kept devices (slice D1)
+  "canKeepDevices",
+  "indexedDbDeviceStore",
+  "memoryDeviceStore",
+  "resumeDevice",
+  // round 3 (spec 002 D35, F13)
+  "revokeRequest",
 ] as const;
 
 const errors = [
@@ -33,6 +40,21 @@ const errors = [
   "WrongRecoveryKey",
   "MailboxLocked",
   "UndecryptableBody",
+  // spec 002 (slice D1)
+  "DeviceRemoved",
+  "StorageUnavailable",
+  "FactorExpired",
+  "MailboxChanged",
+  "StaleFactor",
+  "NoRecoveryFactor",
+  "InvalidDeviceLabel",
+  "InvalidChallenge",
+  // D1's round 2 (contracts/device-v1.md Part C as amended on 2026-10-19)
+  "FlaggedRecipient",
+  "RotationUnproven",
+  "MissingFactors",
+  // round 3 (K13)
+  "RotationDue",
 ] as const;
 
 describe("@proprietor/mail-client exports the contract's API", () => {
@@ -48,6 +70,21 @@ describe("@proprietor/mail-client exports the contract's API", () => {
 
   test("PROTECTION and IMPLEMENTED exist", () => {
     expect(typeof api.PROTECTION.optionA).toBe("function");
+    expect(typeof api.PROTECTION.devices).toBe("function");
     expect(typeof api.IMPLEMENTED).toBe("boolean");
+  });
+
+  test("the spec 002 constants: K5's fields (round 3: the account and the trust root), the lock settings, the FreshFactor's 2 minutes, the one database (version 2, by mailbox and account)", () => {
+    expect(api.KEPT_DEVICE_FIELDS.length).toBe(13);
+    expect(api.LOCK_AFTER_MS).toEqual({ "right-away": 0, "15-minutes": 900_000, "1-hour": 3_600_000, "sign-out": Infinity });
+    expect(api.FRESH_FACTOR_MS).toBe(120_000);
+    expect(api.DEVICE_DATABASE).toEqual({ name: "proprietor-mail", version: 2, store: "kept-devices", keyPath: ["mailboxId", "accountId"] });
+  });
+
+  test("round 3: every confirmed change carries the Confirmation its proof is bound to; removeDevice is removeDevices", async () => {
+    const methods = ["sessionConfirmation", "sessionProof", "keyProof", "keepThisDevice", "removeDevices", "upgradeRequest", "addPasskey", "replaceRecoveryKey", "removeFactor"];
+    const { Session } = await import("../src/session");
+    for (const m of methods) expect(typeof (Session.prototype as unknown as Record<string, unknown>)[m], m).toBe("function");
+    expect((Session.prototype as unknown as Record<string, unknown>).removeDevice).toBeUndefined();
   });
 });

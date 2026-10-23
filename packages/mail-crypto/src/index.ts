@@ -313,6 +313,48 @@ export function parseRecoveryKey(display: string): Uint8Array {
   return parseRecovery(display);
 }
 
+// ---- API: kept devices, factor keys, key seals, binding tags, challenges -------
+// contracts/device-v1.md Part A, the browser's half. The Worker's half
+// (sealChallenge, verifyDeviceProof) is src/proofs.ts.
+
+export type { FactorPrivateKey } from "./factor-keys";
+export { deriveFactorKey, factorPublicKey, factorSigningKey } from "./factor-keys";
+export type { DeviceKeyPair } from "./device-keys";
+export { generateSigningKey, generateUnlockKey, isDeviceSigningKey, isDeviceUnlockKey, signDeviceProof } from "./device-keys";
+export type { SealOpener, SealRecipient } from "./seals";
+export { KEY_SEAL_BYTES, openKeySeal, sealKey } from "./seals";
+export type { BindingKey, TagRecipient } from "./binding";
+export { bindingKey, bindingTag, verifyBindingTag } from "./binding";
+export { CHALLENGE_BYTES, openChallenge } from "./challenges";
+
+// ---- API: signed statements and the factor graph (round 3) ---------------------
+// contracts/device-v1.md A11: factors sign transitions and admit recipients,
+// devices sign their unlock keys; a browser trusts what a factor connected to
+// its start signed, and Mail checks the same signatures.
+
+export type { Statement, StatementKind } from "./statements";
+export { signStatement, statementMessage, verifyStatement } from "./statements";
+export type { FactorAdmission, FactorGraphView, GraphDevice, GraphFactor, TransitionStep, TrustedFactors } from "./factor-graph";
+export { bootstrapAdmitters, isFactorRecipient, isTrustedDevice, isTrustedTransition, trustedFactors } from "./factor-graph";
+
+// ---- API: action descriptors and request digests (round 3) ---------------------
+// contracts/action-descriptor-v1.md and contracts/device-v1.md A10, for Mail,
+// the browser and the dashboard alike: one RFC 8785 serializer, one reader.
+
+export type { CanonicalValue } from "./canonical-json";
+export { canonicalJson, requestDigest } from "./canonical-json";
+export type { ActionDescriptor, ActionInput, ActionKind, ActionPurpose, ActionTarget } from "./action-descriptor";
+export {
+  ACTION_KINDS,
+  actionDescriptorFor,
+  actionDigest,
+  actionPurpose,
+  buildActionDescriptor,
+  isDeviceLabel,
+  MAX_ACTION_DESCRIPTOR_BYTES,
+  readActionDescriptor,
+} from "./action-descriptor";
+
 // ---- Internals ---------------------------------------------------------------
 
 function decodeBlock(encoded: string): Uint8Array<ArrayBuffer> {

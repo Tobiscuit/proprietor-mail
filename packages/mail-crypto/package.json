@@ -19,7 +19,8 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.workers.json && tsc -p tsconfig.test.json",
-    "write-vectors": "WRITE_VECTORS=1 vitest run test/vectors.write.test.ts"
+    "write-vectors": "WRITE_VECTORS=1 vitest run test/vectors.write.test.ts",
+    "write-device-vectors": "WRITE_VECTORS=1 vitest run test/device-vectors.write.test.ts"
   },
   "dependencies": {
     "@hpke/common": "1.10.1",

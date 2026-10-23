@@ -3,21 +3,49 @@
 // exposes `window.harness`, which the Playwright-driven tests call through page.evaluate(); every
 // answer is plain JSON. It never uses a DOM sink itself: text goes through textContent, the frame is
 // built with createElement/setAttribute, and only showInFrame assigns srcdoc.
-import { keyIdOf, type MessageHeader } from "@proprietor/mail-crypto";
 import {
+  actionDigest,
+  buildActionDescriptor,
+  deriveFactorKey,
+  factorPublicKey,
+  factorSigningKey,
+  isTrustedDevice,
+  isTrustedTransition,
+  keyIdOf,
+  readActionDescriptor,
+  requestDigest,
+  signStatement,
+  trustedFactors,
+  verifyStatement,
+  type MessageHeader,
+} from "@proprietor/mail-crypto";
+import {
+  canKeepDevices,
+  DEVICE_DATABASE,
+  encodeSendForm,
+  indexedDbDeviceStore,
   pageNonce,
   renderBody,
+  resumeDevice,
   showInFrame,
   startEnrollment,
   unlockWithPasskey,
   unlockWithRecoveryKey,
   type BodyAttachment,
+  type ChallengeView,
+  type Confirmation,
+  type ConfirmedChange,
+  type DeviceStore,
+  type FactorProof,
   type EnrollRequest,
   type Enrollment,
+  type LockAfter,
   type MailboxView,
   type MessageItem,
   type OpenedMessage,
   type PasskeyOptions,
+  type PendingChange,
+  type RegisterDeviceRequest,
   type RenderedBody,
   type UnlockedMailbox,
 } from "@proprietor/mail-client";
@@ -83,6 +111,161 @@ document.addEventListener("securitypolicyviolation", (e) => {
   violations.push({ directive: e.effectiveDirective, blocked: e.blockedURI, sample: e.sample });
 });
 
+// Every WebAuthn prompt this page makes is counted: a kept device must open the inbox with none.
+const prompts = { get: 0, create: 0 };
+const realCredentials = navigator.credentials; // pragma: allowlist secret (the WebAuthn container, not a credential)
+if (realCredentials && typeof realCredentials.get === "function") {
+  const get = realCredentials.get.bind(realCredentials);
+  const create = realCredentials.create.bind(realCredentials);
+  realCredentials.get = (options?: CredentialRequestOptions) => { // pragma: allowlist secret (the WebAuthn container, not a credential)
+    prompts.get += 1;
+    return get(options);
+  };
+  realCredentials.create = (options?: CredentialCreationOptions) => { // pragma: allowlist secret (the WebAuthn container, not a credential)
+    prompts.create += 1;
+    return create(options);
+  };
+}
+
+/** A stored value, described in plain JSON: what kind it is and, for a CryptoKey, everything Web Crypto says about it. */
+type Described =
+  | { kind: "CryptoKey"; type: string; extractable: boolean; algorithm: Record<string, unknown>; usages: string[] }
+  | { kind: "string"; value: string }
+  | { kind: "number" | "boolean" | "null" | "undefined"; value: unknown }
+  | { kind: "object"; fields: Record<string, Described> }
+  | { kind: "other"; tag: string };
+
+function describe(value: unknown): Described {
+  if (value instanceof CryptoKey) {
+    const algorithm = { ...(value.algorithm as unknown as Record<string, unknown>) };
+    return { kind: "CryptoKey", type: value.type, extractable: value.extractable, algorithm, usages: [...value.usages] };
+  }
+  if (typeof value === "string") return { kind: "string", value };
+  if (value === null) return { kind: "null", value: null };
+  if (typeof value === "number" || typeof value === "boolean" || value === undefined) return { kind: typeof value as "number" | "boolean" | "undefined", value };
+  if (typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+    return { kind: "object", fields: Object.fromEntries(Object.entries(value as object).map(([k, v]) => [k, describe(v)])) };
+  }
+  return { kind: "other", tag: Object.prototype.toString.call(value) };
+}
+
+/**
+ * Everything this origin keeps in IndexedDB, read with the raw API (not through the package):
+ * every database's name, and every record of the package's database, described. The database is
+ * never created here: it is opened only when it is listed, or when the caller knows it exists.
+ */
+async function dumpIndexedDb(): Promise<{ databases: string[] | null; records: Described[] }> {
+  const listed = typeof indexedDB.databases === "function" ? (await indexedDB.databases()).map((d) => d.name ?? "") : null;
+  if (listed !== null && !listed.includes(DEVICE_DATABASE.name)) return { databases: listed, records: [] };
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const req = indexedDB.open(DEVICE_DATABASE.name);
+    req.onupgradeneeded = () => {
+      req.transaction?.abort(); // it did not exist: create nothing
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  }).catch(() => null);
+  if (db === null) return { databases: listed, records: [] };
+  try {
+    if (!db.objectStoreNames.contains(DEVICE_DATABASE.store)) return { databases: listed, records: [] };
+    const all = await new Promise<unknown[]>((resolve, reject) => {
+      const req = db.transaction(DEVICE_DATABASE.store, "readonly").objectStore(DEVICE_DATABASE.store).getAll();
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    return { databases: listed, records: all.map(describe) };
+  } finally {
+    db.close();
+  }
+}
+
+let deviceSession: UnlockedMailbox | null = null;
+let gated: { release: () => void; atSwap: Promise<void>; result: Promise<unknown> } | null = null;
+
+async function resumeWith(store: DeviceStore, view: MailboxView, signInId: string | null, accountId: string) {
+  try {
+    const r = await resumeDevice(view, { store, accountId, signInId });
+    if (r.state === "unlocked") deviceSession = r.mailbox;
+    return { ok: true as const, state: r.state, ...(r.state === "locked" ? { reason: r.reason, device: r.device } : {}), ...(r.state === "unlocked" ? { keyIds: r.mailbox.keyIds, device: r.mailbox.device } : {}) };
+  } catch (e) {
+    return { ok: false as const, error: errorOf(e) };
+  }
+}
+
+// ---- mail-crypto's round 3 in this engine: the device-v1 and action-descriptor-v1 vectors ----
+
+const fromHex = (s: string) => new Uint8Array((s.match(/../g) ?? []).map((h) => parseInt(h, 16)));
+const toHex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+const KEY_FIELDS = new Set(["signingKey", "unlockKey", "factorKey", "admitterSigningKey", "toPublicKey"]);
+const statementOf = (json: Record<string, unknown>) =>
+  Object.fromEntries(Object.entries(json).map(([k, v]) => [k, KEY_FIELDS.has(k) && typeof v === "string" ? fromBase64(v) : v])) as unknown as Parameters<typeof verifyStatement>[1];
+
+/** Every round 3 vector, checked by this engine's Web Crypto: plain JSON in, plain JSON out. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- plain JSON of the two vector files
+async function cryptoVectors(device: any, descriptors: any) {
+  const out: Record<string, unknown> = {};
+  // A2b (Ed25519, D44): each factor's signing key derives here, from its secret, to the vector's vS; and it signs.
+  const derived: string[] = [];
+  let signsHere = false;
+  for (const f of device.factors) {
+    try {
+      const key = await deriveFactorKey({ mailboxId: device.mailboxId, factorId: f.factorId, kind: f.kind, secret: fromHex(f.secret) }); // pragma: allowlist secret (a test vector's public secret)
+      derived.push(toHex(factorSigningKey(key)) === f.signing.vS && toHex(factorPublicKey(key)) === f.pkF ? "ok" : "mismatch");
+      if (f.name === "passkey") {
+        const t = device.statements.find((s: any) => s.name === "transition");
+        const fresh = await signStatement(key, statementOf(t.statement));
+        signsHere = await verifyStatement(factorSigningKey(key), statementOf(t.statement), fresh);
+      }
+    } catch (e) {
+      derived.push(`${(e as Error).name}: ${(e as Error).message}`);
+    }
+  }
+  out.derived = derived;
+  out.signsHere = signsHere;
+  // A11: every signature verifies, and every changed field refuses it.
+  let verified = 0, refusedChanges = 0, failures = 0;
+  for (const s of device.statements) {
+    for (const sig of s.signatures) {
+      if (await verifyStatement(fromHex(sig.publicKey), statementOf(s.statement), sig.signature)) verified++;
+      else failures++;
+      for (const c of s.changed) {
+        if (await verifyStatement(fromHex(sig.publicKey), statementOf({ ...s.statement, [c.field]: c.value }), sig.signature)) failures++;
+        else refusedChanges++;
+      }
+    }
+  }
+  out.statements = { verified, refusedChanges, failures };
+  // The factor graph: trusted from the passkey; the device admitted; the outsider's transition refused.
+  const g = device.graph;
+  const passkey = device.factors.find((f: any) => f.name === "passkey");
+  const trusted = await trustedFactors(g.view, fromHex(passkey.signing.vS));
+  out.graph = { trusted: JSON.stringify([...trusted.ids]) === JSON.stringify(g.trusted), device: await isTrustedDevice(trusted, g.device), outsider: await isTrustedTransition(trusted, g.transitionOutsideGraph) };
+  // action-descriptor-v1: every valid vector builds, reads and digests; every invalid one is refused.
+  let valid = 0;
+  for (const v of descriptors.valid) {
+    const bytes = fromHex(v.hex);
+    if (toHex(buildActionDescriptor(v.object)) === v.hex && readActionDescriptor(bytes) !== null && (await actionDigest(bytes)) === v.sha256) valid++;
+  }
+  out.descriptors = { valid, invalidRefused: descriptors.invalid.filter((v: any) => readActionDescriptor(fromHex(v.hex)) === null).length };
+  out.requestDigest = (await requestDigest({ example: "the request's own canonical bytes" })) === descriptors.valid[6].object.request;
+  return out;
+}
+let pendingKeep: ConfirmedChange<RegisterDeviceRequest> | null = null;
+
+async function canKeepWithPatch(patch: () => () => void): Promise<boolean> {
+  const restore = patch();
+  try {
+    return await canKeepDevices(indexedDbDeviceStore());
+  } finally {
+    restore();
+  }
+}
+
+/** Contains a CryptoKey anywhere: what Safari's private windows refuse to store (spec 002 §9). */
+function holdsKey(value: unknown): boolean {
+  return value instanceof CryptoKey || (typeof value === "object" && value !== null && Object.values(value).some(holdsKey));
+}
+
 let enrollment: Enrollment | null = null;
 let unlocked: UnlockedMailbox | null = null;
 let rendered: RenderedBody | null = null;
@@ -124,6 +307,7 @@ function passkeyOptions(rpId: string, useDouble: boolean, label = "Test passkey"
 
 const harness = {
   violations: () => violations,
+  cryptoVectors,
   trustedTypesPresent: () => typeof (globalThis as { trustedTypes?: unknown }).trustedTypes === "object",
   /** True when a string assigned to a sink throws: Trusted Types are enforced on this page. */
   enforced(): boolean {
@@ -234,15 +418,108 @@ const harness = {
   },
   async addPasskeyWithRecovery(rpId: string, useDouble: boolean, recoveryKey: string) {
     try {
-      const wrap = await unlocked!.addPasskey(passkeyOptions(rpId, useDouble, "Second passkey"), { recoveryKey });
+      const wrap = (await unlocked!.addPasskey(passkeyOptions(rpId, useDouble, "Second passkey"), await unlocked!.reauthenticate({ recoveryKey }))).request;
       return { ok: true as const, wrap, wrapBytes: fromBase64(wrap.wrapped).length };
     } catch (e) {
       return { ok: false as const, error: errorOf(e) };
     }
   },
   lock() {
-    unlocked?.lock();
+    void unlocked?.lock();
     return unlocked?.locked ?? null;
+  },
+
+  // ---- kept devices (spec 002, contracts/device-v1.md Part C) ----
+  device: {
+    prompts: () => ({ ...prompts }),
+    canKeep: () => canKeepDevices(indexedDbDeviceStore()),
+    /** As Safari's private windows: IndexedDB refuses any value that holds a CryptoKey. */
+    canKeepWhenStorageRefusesKeys: () =>
+      canKeepWithPatch(() => {
+        const put = IDBObjectStore.prototype.put;
+        IDBObjectStore.prototype.put = function (this: IDBObjectStore, value: unknown, key?: IDBValidKey) {
+          if (holdsKey(value)) throw new DOMException("a CryptoKey cannot be stored here", "DataCloneError");
+          return put.call(this, value, key);
+        };
+        return () => {
+          IDBObjectStore.prototype.put = put;
+        };
+      }),
+    /** A browser with no IndexedDB at all. */
+    canKeepWithoutIndexedDb: () =>
+      canKeepWithPatch(() => {
+        const descriptor = Object.getOwnPropertyDescriptor(globalThis, "indexedDB");
+        Object.defineProperty(globalThis, "indexedDB", { value: undefined, configurable: true });
+        return () => {
+          if (descriptor) Object.defineProperty(globalThis, "indexedDB", descriptor);
+          else delete (globalThis as { indexedDB?: unknown }).indexedDB;
+        };
+      }),
+    async unlockRecovery(view: MailboxView, recoveryKey: string, signInId: string | null, keep: boolean, accountId = "acc_owner") {
+      try {
+        deviceSession = await unlockWithRecoveryKey(view, recoveryKey, keep ? { store: indexedDbDeviceStore(), accountId, signInId } : { signInId });
+        return { ok: true as const, keyIds: deviceSession.keyIds, device: deviceSession.device };
+      } catch (e) {
+        return { ok: false as const, error: errorOf(e) };
+      }
+    },
+    sessionConfirmation: (challenge: ChallengeView) => deviceSession!.sessionConfirmation(challenge),
+    sessionProof: (challenge: ChallengeView, factorProof?: FactorProof) => deviceSession!.sessionProof(challenge, factorProof),
+    answerFactor: (challenge: ChallengeView, confirmation: Confirmation) => deviceSession!.freshFactor!.answer(challenge, confirmation),
+    async keep(label: string, lockAfter: LockAfter) {
+      pendingKeep = await deviceSession!.keepThisDevice({ label, lockAfter }, deviceSession!.freshFactor!);
+      return { request: pendingKeep.request, confirmation: pendingKeep.confirmation };
+    },
+    async commitKeep() {
+      try {
+        await pendingKeep!.commit();
+        return { ok: true as const, device: deviceSession!.device };
+      } catch (e) {
+        return { ok: false as const, error: errorOf(e) };
+      }
+    },
+    async resume(view: MailboxView, signInId: string | null, accountId = "acc_owner") {
+      return resumeWith(indexedDbDeviceStore(), view, signInId, accountId);
+    },
+    /**
+     * K11 in this browser: a resume whose lastKeyId swap waits until release(), so that another page's
+     * resume can move the anchor between this page's read and its write. atSwap() resolves once it waits.
+     */
+    resumeGated(view: MailboxView, signInId: string | null) {
+      const inner = indexedDbDeviceStore();
+      let release: () => void = () => undefined;
+      const gate = new Promise<void>((ok) => (release = ok));
+      let reached: () => void = () => undefined;
+      const atSwap = new Promise<void>((ok) => (reached = ok));
+      const store: DeviceStore = {
+        ...inner,
+        swapLastKeyId: async (...args) => {
+          reached();
+          await gate;
+          return inner.swapLastKeyId(...args);
+        },
+      };
+      gated = { release, atSwap, result: resumeWith(store, view, signInId, "acc_owner") };
+      return true;
+    },
+    gatedAtSwap: async () => {
+      await gated!.atSwap;
+      return true;
+    },
+    gatedRelease: async () => {
+      gated!.release();
+      return gated!.result;
+    },
+    openMessages: (items: MessageItem[]) => deviceSession!.openMessages(items),
+    async lock() {
+      return deviceSession!.lock();
+    },
+    /** What the dashboard does with the mail session: it rides in the send form (D29). */
+    sendForm(token: string) {
+      const form = encodeSendForm({ to: [{ name: "", address: "ana@example.com" }], cc: [], bcc: [], subject: "x", text: "x", inReplyTo: null, references: [], attachments: [] }, { idempotencyKey: "k-1", session: token });
+      return JSON.parse(form.get("request") as string).session as string;
+    },
+    dumpIndexedDb,
   },
 };
 
