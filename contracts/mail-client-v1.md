@@ -479,6 +479,186 @@ WebKit under the dashboard's exact policy with Trusted Types enforced.
 keyed by mailbox and account, the factor graph (K2″, K3′), confirmations
 bound to their request (K4, K12), session proofs without a device that carry
 a factor proof, `removeDevices`, `revokeRequest`, `rotationDue`, and the
-compare-and-swap of `lastKeyId` (K11). The mail-client builder (slice R3-1b)
-writes the exact signatures here, and the architect reviews them before the
-dashboard's slice starts.
+compare-and-swap of `lastKeyId` (K11). **The signatures below were fixed by
+the mail-client builder (slice R3-1b, 2026-10-23)**; `src/index.ts` and
+`src/types.ts` are authoritative, and the architect reviews them before the
+dashboard's slice starts. Everything round 2 said still holds unless it is
+changed here.
+
+**The kept-device store (K5, K10, K11).**
+
+```ts
+const KEPT_DEVICE_FIELDS: readonly ["mailboxId", "accountId", "deviceId", "label", "signingKey", "unlockKey",
+  "signingPublic", "unlockPublic", "lastKeyId", "trustRoot", "lockAfter", "lastActiveAt", "signInId"]
+const DEVICE_DATABASE: { name: "proprietor-mail"; version: 2; store: "kept-devices"; keyPath: ["mailboxId", "accountId"] }
+interface DeviceStore {
+  get(mailboxId: string, accountId: string): Promise<KeptDevice | null>;
+  put(record: KeptDevice): Promise<void>;
+  update(mailboxId: string, accountId: string, deviceId: string, change: KeptDeviceChange): Promise<KeptDevice | null>;
+  swapLastKeyId(mailboxId: string, accountId: string, deviceId: string, expectedLastKeyId: string,
+    change: KeptDeviceChange & { lastKeyId: string }): Promise<{ swapped: boolean; record: KeptDevice | null }>;
+  delete(mailboxId: string, accountId: string, deviceId?: string): Promise<void>;
+}
+// KeptDevice gains accountId (the capability's sub) and trustRoot (base64url of the 32-byte signing key
+// of the factor last used on this device); KeptDeviceChange may change trustRoot.
+```
+
+- One record per mailbox **and account**. Every call names both; another
+  account's record is never read, written or deleted (K10). The account id is
+  1 to 255 characters on one line; anything else is a `TypeError`.
+- Version 2 of the database drops version 1's store (keyed by mailbox alone):
+  no record of it exists outside tests.
+- `swapLastKeyId` reads, compares and writes in **one** readwrite transaction
+  (IndexedDB runs writing transactions with overlapping scope one after
+  another): it writes only while the record still holds `expectedLastKeyId`,
+  and answers `swapped: false` with the record as it now is otherwise (K11).
+  The last accepted key moves only this way.
+
+**Coming back, and unlocking (K10, K11, K2″, K3′, D34).**
+
+```ts
+resumeDevice(view: MailboxView, options: { store: DeviceStore; accountId: string; signInId: string | null;
+  now?: () => number; idleLockMs?: number }): Promise<ResumeResult>
+interface UnlockOptions { idleLockMs?: number; store?: DeviceStore; accountId?: string; signInId?: string | null; now?: () => number }
+startEnrollment(mailbox, passkey, options?: { keep?: { store: DeviceStore; accountId: string; label: string;
+  lockAfter?: LockAfter; signInId?: string | null }; now?: () => number }): Promise<Enrollment>
+```
+
+- `accountId` is the dashboard's account id, the capability's `sub`
+  (`InboxShell.accountId`). With a `store` it is required (a `TypeError`
+  without it). For another account the browser is one with no device:
+  `resumeDevice` answers `none`, an unlock binds no device, and nothing of the
+  owner's record is read or touched.
+- `resumeDevice` checks, in order: K6 (D34: "when I sign out" locks when the
+  sign-in id differs from the record's, a null after a non-null included; two
+  nulls never lock), K7 (this account's record only), the listed device (its
+  signing key, and `createdBy` must be this account: else
+  `KeySubstitutionDetected`), the seal, K2″ from `lastKeyId` with trust
+  starting at the record's `trustRoot`, K3′, and finally K11: the record
+  accepts the active key only by `swapLastKeyId` from the `lastKeyId` the walk
+  started at. On a miss (another page moved it meanwhile) it resumes again
+  from the record as it now is, at most three times; when its view cannot
+  reach the newer key it answers **`MailboxChanged`** (fetch the view again;
+  without a race, a view older than the record is still
+  `KeySubstitutionDetected`).
+- A factor unlock walks K2″ from the factor's own wrap (and, on a kept device,
+  the record's `lastKeyId`), with trust starting at the factor just used once
+  K9 confirms its factor key **and signing key**; a factor whose listed keys
+  are not its own is flagged and trusts nothing (every recipient is flagged
+  until a factor whose keys match is used: `reauthenticate` with one gives
+  the session its start). On a kept device it moves `lastKeyId` and sets
+  `trustRoot` to the factor just used, by `swapLastKeyId` as above (F4).
+- K2″: every successor step needs `successor.signedBy` and `signature`
+  verifying with the signing key of a factor in the trusted component, removed
+  or not; else `KeySubstitutionDetected`. K3′: a device is trusted when its
+  tag verifies, a trusted factor's admission of it verifies and, while it has
+  an unlock key, its own unlock-key signature verifies; a factor when its tag
+  verifies and it is trusted, keyed and not removed. Anything else is
+  flagged.
+
+**Confirmations (K4, K12, A10).**
+
+```ts
+interface Confirmation {
+  readonly action: ActionInput;                          // what MailService.challenge takes
+  readonly labels: Readonly<Record<string, string>>;     // the named devices' labels, as the view lists them
+}
+interface ConfirmedChange<T> extends PendingChange<T> { readonly confirmation: Confirmation }
+interface FreshFactor { /* as before */ answer(challenge: ChallengeView, confirmation: Confirmation): Promise<FactorProof> }
+revokeRequest(view: MailboxView, deviceIds: readonly string[]): RevokeRequest   // { action, request: { deviceIds } }
+```
+
+- Every change Mail takes only with a proof is a `ConfirmedChange`: challenge
+  with `confirmation.action` (purpose `factor`, or `key` for the upgrade),
+  answer with `freshFactor.answer(challenge, confirmation)` (or
+  `unlocked.keyProof`), and send the proof with exactly `request`.
+- `answer` and `keyProof` build the descriptor they expect from the
+  confirmation (`actionDescriptorFor` with Mail's nonce and `issuedAt` only),
+  compare it byte for byte with the challenge's `descriptor`, and open the
+  challenge with their own digest. A challenge for another action, another
+  request, another kind or mailbox, or with no readable descriptor is
+  `InvalidChallenge`, and nothing is answered. A confirmation of the wrong
+  purpose is a `TypeError`.
+- `revokeRequest` (F13) needs no unlock: 1 to 20 devices the view lists, each
+  once, sorted. Its `action` goes to `challenge({ purpose: "email", action })`;
+  its `request` to `revokeDevices` after the dashboard attested the code.
+
+**The unlocked mailbox, round 3.**
+
+```ts
+interface UnlockedMailbox {
+  // as before, and:
+  readonly rotationDue: RotationDueView | null;     // B7a, K13
+  sessionConfirmation(challenge: ChallengeView): Promise<Confirmation>;            // D38: kind open-session
+  sessionProof(challenge: ChallengeView, factorProof?: FactorProof): Promise<OpenSessionRequest>;
+  keyProof(challenge: ChallengeView, confirmation: Confirmation): Promise<KeyProof>; // the upgrade's
+  keepThisDevice(options: { label: string; lockAfter?: LockAfter }, freshFactor: FreshFactor): Promise<ConfirmedChange<RegisterDeviceRequest>>;
+  removeDevices(view: MailboxView, deviceIds: readonly string[], freshFactor: FreshFactor): Promise<ConfirmedChange<RemoveDevicesRequest>>;
+  upgradeRequest(factors: readonly FreshFactor[]): Promise<ConfirmedChange<UpgradeRequest>>;
+  addPasskey(passkey: PasskeyOptions, freshFactor: FreshFactor): Promise<ConfirmedChange<WrapInput>>;
+  replaceRecoveryKey(freshFactor: FreshFactor): Promise<NewRecoveryKey>;            // ConfirmedChange<WrapInput> & { recoveryKey }
+  removeFactor(factorId: string): Promise<ConfirmedChange<RemoveWrapRequest>>;      // { wrapId }
+  // removeDevice is gone (removeDevices replaces it).
+}
+```
+
+- `sessionProof`: on a kept device, the device's signature and never a factor
+  proof; without one, while sessions are required, `factorProof` is required
+  (a FreshFactor's answer for `sessionConfirmation(challenge)`); while they are
+  optional, the key proof alone (a factor proof is a `TypeError`).
+- K12, what the FreshFactor's factor signs (Ed25519, A2b, A11): a kept
+  device's admission (`keepThisDevice`; the device signs its own unlock key,
+  as `rekeyThisDevice` does), a rotation's transition (`removeDevices`), a new
+  factor's admission with the new factor's own signature (`addPasskey`,
+  `replaceRecoveryKey`), and at the upgrade every factor's admission by A11's
+  cycle (sorted by id, each by the next). A FreshFactor whose factor is
+  flagged (K9) or not in the trusted component signs nothing:
+  `FlaggedRecipient` naming it. Enrollment admits the factors by the same
+  cycle and the kept device by the recovery factor, which is its
+  `trustRoot`.
+- `removeDevices` (D40) removes the devices named **and every flagged
+  device**, at most 20, sorted; none only while a rotation is due (else a
+  `TypeError`). A flagged factor is in the way (`FlaggedRecipient`); no keyed
+  recovery factor is `NoRecoveryFactor` (checked first). K8 also verifies the
+  transition before the request is answered. `commit()` clears `rotationDue`,
+  and moves this device's `lastKeyId` by `swapLastKeyId`.
+- K13: while `rotationDue` is set, `keepThisDevice`, `rekeyThisDevice`,
+  `addPasskey`, `replaceRecoveryKey` and `removeFactor` answer **`RotationDue`**;
+  `removeDevices` (often with no device) finishes it.
+- `removeFactor` refuses a removal that would leave the active key unreachable
+  by a recovery factor (`NoRecoveryFactor`, M5′); `commit()` keeps a keyed
+  factor's record among `removedFactors` (M24).
+- `forget()` (after `DeviceRevoked`) deletes this account's record only. On
+  `Forbidden` (Mail: another account's device) the screen wipes nothing.
+
+**Errors added:** `RotationDue` (K13: finish removing the revoked devices
+first).
+
+**Shapes.** `MailboxView` gains `removedFactors` and `rotationDue`; `KeyView`'s
+`successor` gains `signedBy` and `signature`; `WrapView` and `WrapInput` gain
+`signingKey` and `admission`; `DeviceView` gains `unlockSignature` and
+`admission`; `DeviceInput` and `UpdateDeviceRequest` gain `unlockSignature`;
+`Rotation` gains `transition`; `RemoveDevicesRequest`, `RevokeDevicesRequest`
+and `RemoveWrapRequest` are new, `RemoveDeviceRequest` is gone;
+`UpgradeRequest`'s factors gain `signingKey` and `admission`; `Auth` gains
+`keyProof`; `ChallengeRequest` takes an `action` for every purpose but
+session, and `ChallengeView` gains `descriptor` (`sealed` is null for
+purpose email); `OpenSessionRequest` gains `factorProof`. Each mirrors
+device-v1 Part B as round 3 amends it. New exported types: `ActionInput`,
+`Confirmation`, `ConfirmedChange`, `FactorAdmission`, `KeyProof`,
+`NewRecoveryKey`, `RemovedFactorView`, `RevokeRequest`, `RotationDueView`.
+
+**Breaking changes** to round 2's exports: the store's methods take the
+account (and `swapLastKeyId` is new); `resumeDevice` and a store-backed unlock
+need `accountId`; `FreshFactor.answer` takes a `Confirmation`; `sessionProof`
+needs a factor proof where no device is kept and sessions are required;
+`keepThisDevice` and `upgradeRequest` answer `ConfirmedChange`s, `addPasskey`
+a `ConfirmedChange<WrapInput>` (it no longer adds the wrap to the session
+before `commit()`), `replaceRecoveryKey` a `NewRecoveryKey` (its wrap is
+`request`); `removeDevice` is `removeDevices`.
+
+**Tests this amendment requires:** the R3-1b acceptance tests and mutation
+checks in `specs/002-device-sessions/tasks.md`, in Node, and in Chromium,
+Firefox and WebKit under the dashboard's exact policy with Trusted Types
+enforced (the browser job also runs every round 3 vector of mail-crypto in
+each engine, and races two pages on real IndexedDB).
