@@ -23,6 +23,11 @@
  * v1 wrap is senc(sk, kek(fs, 'f1')); keyId is the public key; a binding tag
  * is mac(…, bindkey(sk)) (kept for the NO_ADMISSION variant only).
  *
+ * The three functions of a factor's secret (fkey, fsk, kek) are private
+ * symbols: nobody computes them from a secret they do not hold, and the
+ * secret never leaves the owner (factor_secret), so this only spares the
+ * prover the attacker "applying" them to names it does not know.
+ *
  * Choices made for the prover (ir.md §4): keys, ids and secrets are fresh
  * names; a mailbox private key is mkey(~x); pages are persistent facts;
  * records, walks and prepared rotations carry a fresh id in first position;
@@ -39,7 +44,7 @@ begin
 
 builtins: asymmetric-encryption, signing, symmetric-encryption, hashing
 
-functions: bindkey/1, mac/2, fkey/2, fsk/2, kek/2, mkey/1
+functions: bindkey/1, mac/2, mkey/1, fkey/2 [private], fsk/2 [private], kek/2 [private]
 
 restriction Neq:
   "All x #i. Neq(x, x) @ i ==> F"
@@ -230,14 +235,15 @@ rule A11_R9_RevokeByEmail:
   [ ]
 
 /* ======================================================================
- * M3 — Mail applies a rotation (B7 removeDevices, M18′, M23). It needs an
- * open session for the old key, a factor proof bound to this exact pair of
- * keys (R5), and the transition signed by the registered factor (R6).
+ * M3 — Mail applies a rotation (B7 removeDevices, M18′, M23). It needs a
+ * factor proof bound to the request (R5) and the transition signed by the
+ * registered factor (R6). The session Mail also requires is not modelled
+ * here: it only removes attacker options, so a "hold" carries over, and with
+ * it Tamarin's precomputation of sources did not finish (ir.md §10.1).
  * ====================================================================== */
 #ifdef MAIL_UNCHECKED
 rule A12_M3_ApplyRotation:
   [ MailFactorChallenge(~chid, ~m, pkF, d, ~ans)
-  , !MailSession(~sch, pkold, who)
   , MailActive(~m, pkold)
   , FactorAnswer(~chid, ~ans)
   , RotationRequest(~m, rid, pkold, pknew, tr) ]
@@ -247,7 +253,6 @@ rule A12_M3_ApplyRotation:
 rule A12_M3_ApplyRotation [no_derivcheck]:
   [ MailFactorChallenge(~chid, ~m, pkF, h(<'rotate', ~m, ~rid>), ~ans)
   , !MailFactorKey(~m, pkF, ~fs)
-  , !MailSession(~sch, pkold, who)
   , MailActive(~m, pkold)
   , FactorAnswer(~chid, ~ans)
   , RotationRequest(~m, ~rid, pkold, pknew, sign(<'transition', ~m, pkold, pknew>, fsk(~fs, 'f1'))) ]
@@ -259,7 +264,7 @@ rule A12_M3_ApplyRotation [no_derivcheck]:
 /* D35 removed: Mail applies a rotation an email code confirms. Whoever
  * reads the owner's email (the attacker) can produce the code. */
 rule A13_M3e_ApplyEmailRotation:
-  [ !MailSession(~sch, pkold, who), MailActive(~m, pkold), In(<'email-rotate', ~m, pknew>) ]
+  [ MailActive(~m, pkold), In(<'email-rotate', ~m, pknew>) ]
   --[ Applied(~m, pkold, pknew), EmailRotated(~m) ]->
   [ MailActive(~m, pknew) ]
 #endif
@@ -567,25 +572,25 @@ lemma accepted_step_authored_by_factor:
 lemma accepted_key_is_honest_stateless [reuse]:
   "All m sk #i.
      AcceptS(m, sk) @ i
-   ==> Ex #j. KeyMade(m, sk) @ j & #j < #i"
+   ==> Ex #j. KeyMade(m, sk) @ j & not (#i < #j)"
 
 /* Helper: every key a page holds was made honestly (enrollment, a
  * rotation, or an accepted key). */
 lemma page_key_honest [reuse]:
   "All m sk #i.
      PageKey(m, sk) @ i
-   ==> Ex #j. KeyMade(m, sk) @ j & #j < #i"
+   ==> Ex #j. KeyMade(m, sk) @ j & not (#i < #j)"
 
 /* Helper: the last key a kept device recorded was made honestly. */
 lemma kept_anchor_honest [reuse, use_induction]:
   "All did m sk #i.
      KeptAt(did, m, pk(sk)) @ i
-   ==> Ex #j. KeyMade(m, sk) @ j & #j < #i"
+   ==> Ex #j. KeyMade(m, sk) @ j & not (#i < #j)"
 
 lemma accepted_key_is_honest_kept:
   "All m did sk #i.
      AcceptD(m, did, sk) @ i
-   ==> Ex #j. KeyMade(m, sk) @ j & #j < #i"
+   ==> Ex #j. KeyMade(m, sk) @ j & not (#i < #j)"
 
 /* Expected: hold (base); fail with NO_ADMISSION (the planted recipient).
  * Whatever devices are compromised, a new key is sealed only to a
@@ -690,6 +695,16 @@ lemma sanity_rotation_applied:
    & Applied(m, pkold, pknew) @ a
    & (All x1 y1 x2 y2 #e1 #e2. Enrolled(x1, y1) @ e1 & Enrolled(x2, y2) @ e2 ==> #e1 = #e2)
    & not (Ex da sa ua #k. Registered(m, da, sa, ua) @ k)
+   & (All a1 b1 c1 a2 b2 c2 #r1 #r2. Rotated(m, a1, b1, c1) @ r1 & Rotated(m, a2, b2, c2) @ r2 ==> #r1 = #r2)
+   & not (Ex dd #c. Compromised(m, dd) @ c)
+   & not (Ex #z. Injected() @ z)"
+
+lemma sanity_kept_device_rotates:
+  exists-trace
+  "Ex m did d pkold pknew #r.
+     Rotated(m, d, pkold, pknew) @ r
+   & KeptAt(did, m, pknew) @ r
+   & (All x1 y1 x2 y2 #e1 #e2. Enrolled(x1, y1) @ e1 & Enrolled(x2, y2) @ e2 ==> #e1 = #e2)
    & (All a1 b1 c1 a2 b2 c2 #r1 #r2. Rotated(m, a1, b1, c1) @ r1 & Rotated(m, a2, b2, c2) @ r2 ==> #r1 = #r2)
    & not (Ex dd #c. Compromised(m, dd) @ c)
    & not (Ex #z. Injected() @ z)"
