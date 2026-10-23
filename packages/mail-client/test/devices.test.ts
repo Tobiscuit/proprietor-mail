@@ -551,6 +551,23 @@ describe("K11: the last accepted key only moves forward, across two pages", () =
     expect((await resumeDevice(newer, { store, accountId: OWNER, signInId: "signin-1" })).state).toBe("unlocked");
   });
 
+  test("the same at a factor unlock on a kept device (F4): its write misses, and it never moves the anchor back", async () => {
+    const e = await enrolledMailbox();
+    const store = memoryDeviceStore();
+    await keepDevice(e, store);
+    const older = e.fake.mailbox();
+    await rotateByHand(e.fake, e.recoveryKey);
+    const newer = e.fake.mailbox();
+    const k2 = e.fake.activeKey.keyId;
+    const slow = gatedStore(store);
+    const pageB = unlockWithRecoveryKey(older, e.recoveryKey, { store: slow.store, accountId: OWNER, signInId: "signin-1" });
+    await slow.atSwap;
+    expect((await resumeDevice(newer, { store, accountId: OWNER, signInId: "signin-1" })).state).toBe("unlocked");
+    slow.release();
+    await expect(pageB).rejects.toBeInstanceOf(MailboxChanged);
+    expect((await store.get(e.mailboxId, OWNER))!.lastKeyId).toBe(k2);
+  });
+
   test("a miss whose newer value the page's own view reaches: it resumes again and opens", async () => {
     const e = await enrolledMailbox();
     const store = memoryDeviceStore();
