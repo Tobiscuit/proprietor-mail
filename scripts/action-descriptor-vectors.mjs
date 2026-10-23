@@ -157,25 +157,31 @@ bad("an array at the top", jcs([revoke(one)]), "a descriptor is an object");
 
 
 // The dashboard's attestation (capability-v1 `confirmation`), as Mail checks it.
+// Each case carries its own clock (`now`), so each refused case breaks exactly
+// one rule: a case that broke two would pass a reader that checks only one.
 const SUB = "acct_example_owner";
 const first = vectors.valid[0];
 const attestation = { method: "email-code", accountId: SUB, actionKind: "revoke-device", actionDigest: first.sha256, at: ISSUED + 150, codeId: "code_example_1" };
+const NOW = ISSUED + 200;
 vectors.attestations = {
-  note: "Mail's checks, with the capability's sub and Mail's clock as given. `descriptor` names the valid vector whose digest Mail holds for its pending challenge.",
+  note: "Mail's checks, with the capability's sub and Mail's clock (`now`, per case) as given. `descriptor` names the valid vector whose digest Mail holds for its pending challenge (issued at its issuedAt). Each refused case breaks exactly one rule.",
   sub: SUB,
-  now: ISSUED + 200,
   descriptor: first.name,
-  accepted: [{ name: "the code was confirmed 50 seconds ago", attestation }],
+  accepted: [
+    { name: "the code was confirmed 50 seconds ago", now: NOW, attestation },
+    { name: "confirmed exactly 300 seconds ago", now: ISSUED + 450, attestation },
+    { name: "confirmed 5 seconds ahead of Mail's clock", now: ISSUED + 145, attestation },
+  ],
   refused: [
-    { name: "another account", attestation: { ...attestation, accountId: "acct_example_other" }, why: "accountId must equal the capability's sub" },
-    { name: "another method", attestation: { ...attestation, method: "passkey" }, why: "method is exactly email-code" },
-    { name: "a kind an email code may not confirm", attestation: { ...attestation, actionKind: "remove-devices" }, why: "an email code confirms only revoke-device" },
-    { name: "another digest", attestation: { ...attestation, actionDigest: vectors.valid[1].sha256 }, why: "actionDigest must be the digest of the descriptor of Mail's pending challenge" },
-    { name: "confirmed 301 seconds ago", attestation: { ...attestation, at: ISSUED + 200 - 301 }, why: "at is at most 300 seconds old" },
-    { name: "confirmed in the future", attestation: { ...attestation, at: ISSUED + 200 + 6 }, why: "at is at most 5 seconds ahead of Mail's clock" },
-    { name: "confirmed before the descriptor was issued", attestation: { ...attestation, at: ISSUED - 1 }, why: "at is not before the descriptor's issuedAt" },
-    { name: "an extra member", attestation: { ...attestation, extra: true }, why: "exactly six members" },
-    { name: "at as a string", attestation: { ...attestation, at: String(ISSUED + 150) }, why: "at is a whole number of seconds" },
+    { name: "another account", now: NOW, attestation: { ...attestation, accountId: "acct_example_other" }, why: "accountId must equal the capability's sub" },
+    { name: "another method", now: NOW, attestation: { ...attestation, method: "passkey" }, why: "method is exactly email-code" },
+    { name: "a kind an email code may not confirm", now: NOW, attestation: { ...attestation, actionKind: "remove-devices" }, why: "an email code confirms only revoke-device" },
+    { name: "another digest", now: NOW, attestation: { ...attestation, actionDigest: vectors.valid[1].sha256 }, why: "actionDigest must be the digest of the descriptor of Mail's pending challenge" },
+    { name: "confirmed 301 seconds ago, after the descriptor was issued", now: ISSUED + 451, attestation, why: "at is at most 300 seconds old" },
+    { name: "confirmed 6 seconds ahead of Mail's clock", now: ISSUED + 144, attestation, why: "at is at most 5 seconds ahead of Mail's clock" },
+    { name: "confirmed before the descriptor was issued", now: NOW, attestation: { ...attestation, at: ISSUED - 1 }, why: "at is not before the descriptor's issuedAt" },
+    { name: "an extra member", now: NOW, attestation: { ...attestation, extra: true }, why: "exactly six members" },
+    { name: "at as a string", now: NOW, attestation: { ...attestation, at: String(ISSUED + 150) }, why: "at is a whole number of seconds" },
   ],
 };
 

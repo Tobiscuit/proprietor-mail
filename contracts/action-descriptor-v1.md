@@ -137,7 +137,10 @@ with the action, so one confirmation can be traced across both applications.
 hex, digest), from one device to the longest possible, labels outside ASCII
 and with `"` and `\`, and `remove-devices` with and without targets; 33
 refused ones, each with the rule it breaks; and the attestation rules above
-as nine cases with a fixed `sub` and clock. Every valid vector was produced
+as twelve cases (three accepted at the edges, nine refused), each with its own
+clock and each refused case breaking exactly one rule (amended 2026-10-23:
+the first set shared one clock, so "301 seconds ago" also broke the
+issued-at rule and could not catch a reader that skipped the age check). Every valid vector was produced
 by two RFC 8785 implementations that agree byte for byte (this repository's
 generator, `scripts/action-descriptor-vectors.mjs`, and the `canonicalize`
 package, version 5.1.0). Every reader runs all of them.

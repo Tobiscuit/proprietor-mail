@@ -534,13 +534,37 @@
     }
   ],
   "attestations": {
-    "note": "Mail's checks, with the capability's sub and Mail's clock as given. `descriptor` names the valid vector whose digest Mail holds for its pending challenge.",
+    "note": "Mail's checks, with the capability's sub and Mail's clock (`now`, per case) as given. `descriptor` names the valid vector whose digest Mail holds for its pending challenge (issued at its issuedAt). Each refused case breaks exactly one rule.",
     "sub": "acct_example_owner",
-    "now": 1792627400,
     "descriptor": "revoke one device",
     "accepted": [
       {
         "name": "the code was confirmed 50 seconds ago",
+        "now": 1792627400,
+        "attestation": {
+          "method": "email-code",
+          "accountId": "acct_example_owner",
+          "actionKind": "revoke-device",
+          "actionDigest": "yAsD42pLJ_e5mdhzbDegZcxtfzRenTDKMggl_cvNopA",
+          "at": 1792627350,
+          "codeId": "code_example_1"
+        }
+      },
+      {
+        "name": "confirmed exactly 300 seconds ago",
+        "now": 1792627650,
+        "attestation": {
+          "method": "email-code",
+          "accountId": "acct_example_owner",
+          "actionKind": "revoke-device",
+          "actionDigest": "yAsD42pLJ_e5mdhzbDegZcxtfzRenTDKMggl_cvNopA",
+          "at": 1792627350,
+          "codeId": "code_example_1"
+        }
+      },
+      {
+        "name": "confirmed 5 seconds ahead of Mail's clock",
+        "now": 1792627345,
         "attestation": {
           "method": "email-code",
           "accountId": "acct_example_owner",
@@ -554,6 +578,7 @@
     "refused": [
       {
         "name": "another account",
+        "now": 1792627400,
         "attestation": {
           "method": "email-code",
           "accountId": "acct_example_other",
@@ -566,6 +591,7 @@
       },
       {
         "name": "another method",
+        "now": 1792627400,
         "attestation": {
           "method": "passkey",
           "accountId": "acct_example_owner",
@@ -578,6 +604,7 @@
       },
       {
         "name": "a kind an email code may not confirm",
+        "now": 1792627400,
         "attestation": {
           "method": "email-code",
           "accountId": "acct_example_owner",
@@ -590,6 +617,7 @@
       },
       {
         "name": "another digest",
+        "now": 1792627400,
         "attestation": {
           "method": "email-code",
           "accountId": "acct_example_owner",
@@ -601,31 +629,34 @@
         "why": "actionDigest must be the digest of the descriptor of Mail's pending challenge"
       },
       {
-        "name": "confirmed 301 seconds ago",
+        "name": "confirmed 301 seconds ago, after the descriptor was issued",
+        "now": 1792627651,
         "attestation": {
           "method": "email-code",
           "accountId": "acct_example_owner",
           "actionKind": "revoke-device",
           "actionDigest": "yAsD42pLJ_e5mdhzbDegZcxtfzRenTDKMggl_cvNopA",
-          "at": 1792627099,
+          "at": 1792627350,
           "codeId": "code_example_1"
         },
         "why": "at is at most 300 seconds old"
       },
       {
-        "name": "confirmed in the future",
+        "name": "confirmed 6 seconds ahead of Mail's clock",
+        "now": 1792627344,
         "attestation": {
           "method": "email-code",
           "accountId": "acct_example_owner",
           "actionKind": "revoke-device",
           "actionDigest": "yAsD42pLJ_e5mdhzbDegZcxtfzRenTDKMggl_cvNopA",
-          "at": 1792627406,
+          "at": 1792627350,
           "codeId": "code_example_1"
         },
         "why": "at is at most 5 seconds ahead of Mail's clock"
       },
       {
         "name": "confirmed before the descriptor was issued",
+        "now": 1792627400,
         "attestation": {
           "method": "email-code",
           "accountId": "acct_example_owner",
@@ -638,6 +669,7 @@
       },
       {
         "name": "an extra member",
+        "now": 1792627400,
         "attestation": {
           "method": "email-code",
           "accountId": "acct_example_owner",
@@ -651,6 +683,7 @@
       },
       {
         "name": "at as a string",
+        "now": 1792627400,
         "attestation": {
           "method": "email-code",
           "accountId": "acct_example_owner",
