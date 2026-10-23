@@ -113,4 +113,24 @@ describe("encodeSendForm → decodeSendForm", () => {
     badDraft.form.set("request", JSON.stringify(badDraft.request));
     await expect(decodeSendForm(badDraft.form)).rejects.toBeInstanceOf(InvalidSendForm);
   });
+
+  test("the mail session rides inside the request (device-v1 B1, D29): encodeSendForm takes it, decodeSendForm returns it", async () => {
+    const session = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
+    const request = await decodeSendForm(encodeSendForm(compose, { idempotencyKey: "idem-s", session }));
+    expect(request.session).toBe(session);
+    expect(JSON.parse(encodeSendForm(compose, { idempotencyKey: "idem-s", session }).get("request") as string).session).toBe(session);
+  });
+
+  test("no session: no field; a session that is not 32 bytes of base64url is refused, on both sides", async () => {
+    const without = await decodeSendForm(encodeSendForm(compose, { idempotencyKey: "idem-n" }));
+    expect("session" in without).toBe(false);
+    for (const bad of ["", "short", "A".repeat(43) + "=", Buffer.from(new Uint8Array(31)).toString("base64url"), "x".repeat(44)]) {
+      expect(() => encodeSendForm(compose, { idempotencyKey: "k", session: bad }), bad).toThrow(InvalidSendForm);
+      const form = encodeSendForm(compose, { idempotencyKey: "k" });
+      const r = JSON.parse(form.get("request") as string) as Record<string, unknown>;
+      r.session = bad;
+      form.set("request", JSON.stringify(r));
+      await expect(decodeSendForm(form), bad).rejects.toBeInstanceOf(InvalidSendForm);
+    }
+  });
 });
