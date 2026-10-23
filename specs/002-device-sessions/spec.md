@@ -177,9 +177,12 @@ And by design:
   stored mail. The first unlock with a passkey or the recovery key ends the
   window, and every device's inbox asks for it until then.
 - **A factor that was removed** stays able to sign for browsers that a
-  hostile server shows an old key ring (D39). Mail refuses it at once, so
-  this matters only together with whoever controls the servers, as a leaked
-  recovery key already does (001 D6).
+  hostile server shows an old key ring (D39), and such a server can list it
+  as present again, so new keys would be sealed to it. Mail refuses it at
+  once, so this matters only together with whoever controls the servers, as
+  a leaked recovery key already does (001 D6). *Later options:* kept devices
+  remember the factors they saw removed; a signed removal; a transparency log
+  of the key ring.
 
 ## 5. The promise, amended
 
@@ -251,6 +254,7 @@ reversible until the first device removal (§7); none is deployed.
 | **D40** | **Several devices in one rotation** (§7a's first limit). `removeDevices` takes 0 to 20 devices; 0 only to finish a rotation that is due. A browser that sees flagged devices removes all of them in the same step. | Two flagged devices were a dead end: each removal sealed the new key to the other, so the browser refused both. |
 | **D41** | **A device's last accepted key only moves forward** (model finding 4). The record's `lastKeyId` changes only while it still holds the key the walk started from, read and written in one IndexedDB transaction. Otherwise that page resumes again from the newer value. | Two tabs shown different keys at the same moment could move the device's anchor back one step. |
 | **D42** | **Repairing a factor whose listed keys are wrong** (§7a's second limit): specified here, built only if it is ever needed. On the owner's request the operator opens a 24-hour repair window for one factor (`MailAdmin`, audited). In it, a session with a key proof bound to `rekey-factor` may set that factor's factor key, signing key and admission once; the window then closes. The repairing browser unlocked through that factor's wrap cannot check the chain's signatures from that factor (its listed key is the wrong one), so during a repair it accepts the chain by its successor seals alone, and the screen says so. | It can arise only from a bug that derives a factor's keys differently from when they were registered: Mail now checks every factor's own signature when it is registered, and the vectors pin the derivation. A hostile server holding an old key could mislead the one repairing browser during the window, which is why it needs the operator, the owner's request and an audit row. |
+| **D44** | **Factor signing keys are Ed25519** (amends D39, A2b; decided 2026-10-22 while building). The 32 bytes HKDF derives from the factor's secret are the Ed25519 private key; the engine computes the public key. | WebKit imports a P-256 private key only together with its public point (WebKit bug 233705, open; reported again on Safari 26), and that point could only come from arithmetic on the secret scalar in JavaScript (not constant-time, not zeroable) or from a key stored wrapped at Mail. An Ed25519 key imports from its 32 bytes alone in Chrome 137+, Firefox 129+, Safari 17+ and Workers, as the X25519 factor key already does. Device keys stay P-256 (they must survive IndexedDB in WebKit, D24). |
 | **D43** | **"Passkey" means the phone's or laptop's own** (O5 is reworded by it; D33's words are replaced). A mailbox's factors are the person's passkey (iCloud Keychain, Google Password Manager or Windows Hello, through the PRF extension) and the recovery key. Every confirmation works with the passkey. Screens and texts call the factors "passkey" and "recovery key" and nothing else, and mention no hardware. | That is what owners have. The design never depended on a hardware key; only the words and the example did. |
 
 ## 7. The existing mailbox (migration)
@@ -358,7 +362,8 @@ client's:
 |---|---|
 | Better Auth renews a session by updating `expiresAt` and `updatedAt` on the same session row (looked up by its token), so the session's id does not change while it is renewed; signing out deletes the row | Better Auth's `getSession` refresh path and `internalAdapter.deleteSession`, through context7; the dashboard's spec 008 pins 1.7.11 |
 | RFC 8785 fixes one serialization per JSON value: members sorted by UTF-16 code units, no whitespace, strings and numbers as ECMAScript writes them, and it refuses duplicate names and lone surrogates | RFC 8785 §3, read from the RFC Editor |
-| `@hpke/common` 1.10.1 derives a P-256 key pair per RFC 9180 §7.1.3 (rejection sampling with a counter) and imports the scalar as PKCS #8, then derives the public key through JWK (with a fallback for Firefox): the same steps give a factor's P-256 signing key, imported for ECDSA (D39, A2) | its installed source, `kems/dhkemPrimitives/ec.js` |
+| `@hpke/common` 1.10.1 imports a derived P-256 scalar as PKCS #8 without its public key, which works in Chromium, Firefox, Node and workerd but **not in WebKit**: WebKit's `CryptoKeyECCocoa.cpp` requires the `publicKey` field (bug 233705), so CI's macOS WebKit job refused it (`DataError`). Hence D44 | its installed source, `kems/dhkemPrimitives/ec.js`; WebKit's source and bug tracker, read by the R3-1a builder; CI runs 39731532745 and 39732195642 |
+| Ed25519 in Web Crypto: Chrome 137, Firefox 129, Safari 17 (Safari's signatures are randomized); Workers support Ed25519 sign, verify and import (Secure Curves) | MDN browser-compat-data (`SubtleCrypto` sign/verify/importKey `ed25519`); Cloudflare's Web Crypto docs, through context7 |
 
 **Reported, not verified** (both on the operator's own devices first; until
 then a passkey that does not open its wrap fails as "that didn't work", and
