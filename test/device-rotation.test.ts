@@ -3,30 +3,41 @@ import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import worker from "../src/index";
 import {
+  actionInput,
+  addFactorAction,
   challenge,
   factorProof,
   fakeSeal,
   fakeTag,
   keepDevice,
+  keyedWrap,
   legacyMailbox,
   mailboxKeyPair,
   newDevice,
-  newFactorKey,
   openChallenge,
   openSession,
+  openSessionAction,
+  plainSession,
+  removeDevices,
+  removeDevicesAction,
+  removeFactorAction,
   rotationFor,
   signProof,
+  type TestFactor,
   type Upgraded,
   upgradedMailbox,
 } from "./support/browser";
 import { base64urlFromBytes, bytesFromBase64url } from "./support/capability-tokens";
 import { incomingEmail, sampleMessage } from "./support/email";
 import { testId } from "./support/ids";
-import { capFor, newKeyPair, recoveryWrap, type TestMailbox } from "./support/mailbox";
+import { capFor, newKeyPair, type TestMailbox } from "./support/mailbox";
 import { refusalOf, valueOf } from "./support/results";
 
-// contracts/device-v1.md B7 (removeDevice), domain-model M18, M19 and M5′,
-// plan.md F6: removing a device rotates the mailbox key in one transaction.
+// contracts/device-v1.md B7 (removeDevices, round 3: replaces removeDevice),
+// domain-model M18′, M19 and M5′, plan.md F6: removing devices rotates the
+// mailbox key in one transaction. Round 3 adds several devices at once, the
+// transition signed by the proof's factor, and the rotation that is due:
+// test/device-revoke.test.ts and test/device-signatures.test.ts.
 
 const mail = () => exports.MailService;
 
@@ -67,23 +78,24 @@ async function keyRingState(mb: TestMailbox) {
 async function threeDevices() {
   const u = await upgradedMailbox();
   const phone = await keepDevice(u);
-  const laptop = await keepDevice(u, { session: (await openSession(u.mb, u.mailboxKey)).session });
-  const desk = await keepDevice(u, { device: await newDevice({ label: "Front desk", keepsNothing: true }), session: (await openSession(u.mb, u.mailboxKey)).session });
+  const laptop = await keepDevice(u, { session: await plainSession(u) });
+  const desk = await keepDevice(u, { device: await newDevice({ label: "Front desk", keepsNothing: true }), session: await plainSession(u) });
   const laptopSession = (await openSession(u.mb, u.mailboxKey, { device: laptop })).session;
-  const remover = (await openSession(u.mb, u.mailboxKey)).session;
+  const remover = await plainSession(u);
   return { u, phone, laptop, desk, laptopSession, remover };
 }
 
-async function remove(u: Upgraded, deviceId: string, rotation: unknown, session: string) {
-  return mail().removeDevice(await capFor(u.mb), { deviceId, rotation }, { session, factorProof: await factorProof(u.mb, u.recovery) });
+/** removeDevices of one device, with the recovery key's proof bound to exactly this request. */
+async function remove(u: Upgraded, deviceId: string, rotation: unknown, session: string, factor: TestFactor = u.recovery) {
+  return removeDevices(u, { deviceIds: [deviceId], rotation }, session, factor);
 }
 
-describe("removeDevice: the device goes and the key rotates, in one transaction (B7, M18)", () => {
+describe("removeDevices: the device goes and the key rotates, in one transaction (B7, M18′)", () => {
   it("leaves exactly M18's state: device, seals and sessions gone, the new key active, the old one retired with its successor seal, new seals and tags", async () => {
     const { u, phone, laptop, desk, laptopSession, remover } = await threeDevices();
     const before = await view(u.mb);
     const old = before.keys[0]!;
-    const { next, rotation } = await rotationFor(u.mb, phone.id);
+    const { next, rotation } = await rotationFor(u.mb, phone.id, u.recovery);
     u.mb.ports.clock.advance(60 * 1000);
     const at = u.mb.ports.clock.now().toISOString();
 
@@ -92,7 +104,7 @@ describe("removeDevice: the device goes and the key rotates, in one transaction 
     const after = await view(u.mb);
     expect(after.devices.map((d) => d.id).sort()).toEqual([laptop.id, desk.id].sort());
     expect(after.keys).toEqual([
-      { ...old, retiredAt: at, successor: { keyId: next.keyId, sealed: rotation.successorSeal } },
+      { ...old, retiredAt: at, successor: { keyId: next.keyId, sealed: rotation.successorSeal, signedBy: u.recovery.id, signature: rotation.transition.signature } },
       { keyId: next.keyId, publicKey: base64urlFromBytes(next.publicKey), createdAt: at, createdBy: "acc_owner", retiredAt: null, successor: null },
     ]);
     // Exactly the rotation's seals, every one of the new key (M19): the laptop and both factors; not the desk (it keeps nothing), never the phone.
@@ -112,14 +124,14 @@ describe("removeDevice: the device goes and the key rotates, in one transaction 
     const audit = await sql<{ action: string; detail: string }>(u.mb, "SELECT action, detail FROM audit WHERE action IN ('device-removed', 'key-rotated') ORDER BY id");
     expect(audit.map((a) => [a.action, JSON.parse(a.detail)])).toEqual([
       ["device-removed", { device: phone.id, label: phone.label, sessions: 1 }],
-      ["key-rotated", { from: old.keyId, to: next.keyId, seals: 3, sessions: 3 }],
+      ["key-rotated", { from: old.keyId, to: next.keyId, seals: 3, sessions: 3, factor: u.recovery.id, due: false }],
     ]);
   });
 
   it("seals the next arrival to the new key, and earlier mail keeps the key it was sealed to", async () => {
     const { u, phone, remover } = await threeDevices();
     await arrive(u.mb);
-    const { next, rotation } = await rotationFor(u.mb, phone.id);
+    const { next, rotation } = await rotationFor(u.mb, phone.id, u.recovery);
     valueOf(await remove(u, phone.id, rotation, remover));
     await arrive(u.mb);
     expect(u.mb.ports.sealer.sealed.map((s) => s.pub.keyId)).toEqual([u.mb.key!.keyId, next.keyId]);
@@ -131,12 +143,13 @@ describe("removeDevice: the device goes and the key rotates, in one transaction 
     const { u, phone, remover } = await threeDevices();
     const early = await challenge(u.mb, { purpose: "session" });
     const earlyAnswer = await openChallenge(u.mb.id, early, u.mailboxKey);
-    const { next, rotation } = await rotationFor(u.mb, phone.id);
+    const { next, rotation } = await rotationFor(u.mb, phone.id, u.recovery);
     valueOf(await remove(u, phone.id, rotation, remover));
     // The phone's session ended with it.
     expect(refusalOf(await mail().list(await capFor(u.mb), { folder: "inbox" }, { session: u.session }))).toEqual(SESSION_REQUIRED);
-    // A key proof of the old key, made before the rotation, opens no session after it.
-    expect(refusalOf(await mail().openSession(await capFor(u.mb), { challengeId: early.id, answer: earlyAnswer }))).toEqual(PROOF_REJECTED);
+    // A key proof of the old key, made before the rotation, opens no session after it (D38: with a factor proof beside it).
+    const withFactor = async (challengeId: string) => factorProof(u.mb, u.recovery, openSessionAction(challengeId));
+    expect(refusalOf(await mail().openSession(await capFor(u.mb), { challengeId: early.id, answer: earlyAnswer, factorProof: await withFactor(early.id) }))).toEqual(PROOF_REJECTED);
     // New challenges are sealed to the new key, which the phone never got.
     const fresh = await challenge(u.mb, { purpose: "session" });
     expect(fresh.keyId).toBe(next.keyId);
@@ -147,12 +160,12 @@ describe("removeDevice: the device goes and the key rotates, in one transaction 
     expect(
       refusalOf(await mail().openSession(await capFor(u.mb), { challengeId: c.id, answer: await openChallenge(u.mb.id, c, newKey), device: { id: phone.id, signature: await signProof(u.mb.id, phone, c) } })),
     ).toEqual(DEVICE_REVOKED);
-    valueOf(await mail().openSession(await capFor(u.mb), { challengeId: fresh.id, answer: await openChallenge(u.mb.id, fresh, newKey) }));
+    valueOf(await mail().openSession(await capFor(u.mb), { challengeId: fresh.id, answer: await openChallenge(u.mb.id, fresh, newKey), factorProof: await withFactor(fresh.id) }));
   });
 
   it("works from the removed device's own session (Remove this device), which ends with it", async () => {
     const { u, phone } = await threeDevices();
-    const { rotation } = await rotationFor(u.mb, phone.id);
+    const { rotation } = await rotationFor(u.mb, phone.id, u.recovery);
     valueOf(await remove(u, phone.id, rotation, u.session));
     expect((await view(u.mb)).devices.map((d) => d.id)).not.toContain(phone.id);
     expect(await sql(u.mb, "SELECT COUNT(*) AS n FROM mail_sessions")).toEqual([{ n: 0 }]);
@@ -160,7 +173,7 @@ describe("removeDevice: the device goes and the key rotates, in one transaction 
 
   it("refuses, and changes nothing, a rotation that misses or adds a recipient, names one twice, is stale, reuses a key, or has a seal of the wrong length", async () => {
     const { u, phone, laptop, desk, remover } = await threeDevices();
-    const { rotation } = await rotationFor(u.mb, phone.id);
+    const { rotation } = await rotationFor(u.mb, phone.id, u.recovery);
     const without = (kind: string, id: string) => rotation.seals.filter((s) => !(s.to.kind === kind && s.to.id === id));
     const cases: [string, unknown, string?][] = [
       ["a device seal missing", { ...rotation, seals: without("device", laptop.id) }],
@@ -180,12 +193,21 @@ describe("removeDevice: the device goes and the key rotates, in one transaction 
       ["a factor seal of 142 bytes", { ...rotation, seals: rotation.seals.map((s) => (s.to.kind === "factor" ? { ...s, sealed: fakeSeal(142) } : s)) }],
       ["a seal to a kind there is none of", { ...rotation, seals: [...rotation.seals, { to: { kind: "successor", id: testId("wrp") }, sealed: fakeSeal(109) }] }],
       ["an unexpected field", { ...rotation, privateKey: "x" }],
+      // Round 3 (M23, M25): the transition is the proof's factor's, over exactly this step.
+      ["no transition", { ...rotation, transition: undefined }],
+      ["a transition whose signature is not one", { ...rotation, transition: { ...rotation.transition, signature: fakeSeal(109).slice(0, 86) } }],
+      ["a transition over another new key", { ...rotation, transition: (await rotationFor(u.mb, phone.id, u.recovery)).rotation.transition }],
     ];
     const before = await keyRingState(u.mb);
     for (const [name, bad] of cases) {
       expect([name, refusalOf(await remove(u, phone.id, bad, remover)).name]).toEqual([name, "InvalidRequest"]);
     }
-    expect([" an unknown device", refusalOf(await remove(u, (await newDevice()).id, rotation, remover)).name]).toEqual([" an unknown device", "InvalidRequest"]);
+    // A device Mail does not hold cannot be described, so no proof names it; with the proof of another request it is refused too.
+    const unknown = (await newDevice()).id;
+    const describeUnknown = { kind: "remove-devices", deviceIds: [unknown], request: (await actionInput(removeDevicesAction({ deviceIds: [unknown], rotation }))).request };
+    expect(refusalOf(await mail().challenge(await capFor(u.mb), { purpose: "factor", factorId: u.recovery.id, action: describeUnknown })).name).toBe("InvalidRequest");
+    const elsewhere = await factorProof(u.mb, u.recovery, removeDevicesAction({ deviceIds: [phone.id], rotation }));
+    expect(refusalOf(await mail().removeDevices(await capFor(u.mb), { deviceIds: [unknown], rotation }, { session: remover, factorProof: elsewhere }))).toEqual(PROOF_REJECTED);
     expect(await keyRingState(u.mb)).toEqual(before);
     // The same request, untouched, still works: nothing above changed what it is checked against.
     valueOf(await remove(u, phone.id, rotation, remover));
@@ -193,8 +215,8 @@ describe("removeDevice: the device goes and the key rotates, in one transaction 
 
   it("refuses a second removal made from the same view: another browser rotated first (G38)", async () => {
     const { u, phone, laptop, remover } = await threeDevices();
-    const first = await rotationFor(u.mb, phone.id);
-    const second = await rotationFor(u.mb, laptop.id);
+    const first = await rotationFor(u.mb, phone.id, u.recovery);
+    const second = await rotationFor(u.mb, laptop.id, u.recovery);
     valueOf(await remove(u, phone.id, first.rotation, remover));
     expect(refusalOf(await remove(u, laptop.id, second.rotation, remover))).toEqual({
       name: "InvalidRequest",
@@ -204,9 +226,9 @@ describe("removeDevice: the device goes and the key rotates, in one transaction 
 
   it("M19: after two rotations each retired key has its successor seal, and every seal is of the active key", async () => {
     const { u, phone, laptop, remover } = await threeDevices();
-    const first = await rotationFor(u.mb, phone.id);
+    const first = await rotationFor(u.mb, phone.id, u.recovery);
     valueOf(await remove(u, phone.id, first.rotation, remover));
-    const second = await rotationFor(u.mb, laptop.id);
+    const second = await rotationFor(u.mb, laptop.id, u.recovery);
     valueOf(await remove(u, laptop.id, second.rotation, remover));
     const keys = await sql<{ key_id: string; retired_at: string | null; successor_key_id: string | null }>(u.mb, "SELECT key_id, retired_at, successor_key_id FROM keys ORDER BY created_at");
     expect(keys.map((k) => [k.key_id, k.retired_at === null, k.successor_key_id])).toEqual([
@@ -220,11 +242,11 @@ describe("removeDevice: the device goes and the key rotates, in one transaction 
   it("is refused while sessions are optional, and is the owner's", async () => {
     const { mb, mailboxKey } = await legacyMailbox();
     const { session } = await openSession(mb, mailboxKey);
-    expect(refusalOf(await mail().removeDevice(await capFor(mb), { deviceId: testId("wrp").replace("wrp", "dev"), rotation: {} }, { session }))).toEqual({
+    expect(refusalOf(await mail().removeDevices(await capFor(mb), { deviceIds: [testId("dev")], rotation: {} }, { session }))).toEqual({
       name: "InvalidRequest",
       message: "invalid request: sessions are not on for this mailbox: upgrade first",
     });
-    expect(refusalOf(await mail().removeDevice(await capFor(mb, { role: "editor" }), {}, { session }))).toEqual({ name: "Forbidden", message: "forbidden" });
+    expect(refusalOf(await mail().removeDevices(await capFor(mb, { role: "editor" }), {}, { session }))).toEqual({ name: "Forbidden", message: "forbidden" });
   });
 });
 
@@ -233,12 +255,12 @@ describe("M5′ through rotations: the active key stays reachable by a recovery 
     const u = await upgradedMailbox();
     const device = await keepDevice(u);
     // The upgrade takes every factor (B5), so no call leaves a recovery wrap without a factor key now. The
-    // state is made here directly, so removeDevice's guard keeps a test: the recovery wrap still reaches the
+    // state is made here directly, so removeDevices' guard keeps a test: the recovery wrap still reaches the
     // active key through its own wrap, but a new key would reach no recovery factor.
-    await sql(u.mb, "UPDATE key_wraps SET factor_key = NULL, tag = NULL, tag_key_id = NULL WHERE id = ?", u.recovery.id);
-    const { session: remover } = await openSession(u.mb, u.mailboxKey);
-    const { rotation } = await rotationFor(u.mb, device.id);
-    const answer = await mail().removeDevice(await capFor(u.mb), { deviceId: device.id, rotation }, { session: remover, factorProof: await factorProof(u.mb, u.passkey) });
+    const remover = await plainSession(u);
+    await sql(u.mb, "UPDATE key_wraps SET factor_key = NULL, signing_key = NULL, tag = NULL, tag_key_id = NULL WHERE id = ?", u.recovery.id);
+    const { rotation } = await rotationFor(u.mb, device.id, u.passkey);
+    const answer = await removeDevices(u, { deviceIds: [device.id], rotation }, remover, u.passkey);
     expect(refusalOf(answer)).toEqual({ name: "InvalidRequest", message: "invalid request: the new key must reach a recovery factor (M5′)" });
     expect((await view(u.mb)).devices.map((d) => d.id)).toEqual([device.id]);
   });
@@ -246,22 +268,15 @@ describe("M5′ through rotations: the active key stays reachable by a recovery 
   it("after a rotation, a recovery factor reaches the new key through its seal, and removeWrap counts it so", async () => {
     const u = await upgradedMailbox();
     const keyId = u.mb.key!.keyId;
-    const spareWrap = recoveryWrap(keyId, { label: "Spare sheet" });
-    const spare = await newFactorKey(spareWrap.id, "recovery");
-    valueOf(
-      await mail().addWrap(
-        await capFor(u.mb),
-        { ...spareWrap, factorKey: base64urlFromBytes(spare.publicKey), tag: fakeTag(), tagKeyId: keyId },
-        { session: u.session, factorProof: await factorProof(u.mb, u.recovery) },
-      ),
-    );
+    const { factor: spare, wrap: spareWrap } = await keyedWrap(u.mb, "recovery", keyId, u.recovery);
+    valueOf(await mail().addWrap(await capFor(u.mb), spareWrap, { session: u.session, factorProof: await factorProof(u.mb, u.recovery, addFactorAction(spareWrap)) }));
     const device = await keepDevice(u);
-    const { session: remover } = await openSession(u.mb, u.mailboxKey);
-    const { rotation } = await rotationFor(u.mb, device.id);
-    valueOf(await mail().removeDevice(await capFor(u.mb), { deviceId: device.id, rotation }, { session: remover, factorProof: await factorProof(u.mb, u.recovery) }));
+    const remover = await plainSession(u);
+    const { rotation } = await rotationFor(u.mb, device.id, u.recovery);
+    valueOf(await removeDevices(u, { deviceIds: [device.id], rotation }, remover, u.recovery));
     // Both recovery wraps are of the retired key now: each reaches the new key only through its seal.
-    valueOf(await mail().removeWrap(await capFor(u.mb), u.recovery.id, { session: remover, factorProof: await factorProof(u.mb, spare) }));
-    expect(refusalOf(await mail().removeWrap(await capFor(u.mb), spareWrap.id, { session: remover, factorProof: await factorProof(u.mb, u.passkey) }))).toEqual({
+    valueOf(await mail().removeWrap(await capFor(u.mb), u.recovery.id, { session: remover, factorProof: await factorProof(u.mb, spare, removeFactorAction(u.recovery.id)) }));
+    expect(refusalOf(await mail().removeWrap(await capFor(u.mb), spareWrap.id, { session: remover, factorProof: await factorProof(u.mb, u.passkey, removeFactorAction(spareWrap.id)) }))).toEqual({
       name: "InvalidRequest",
       message: "invalid request: the last recovery factor that reaches the active key cannot be removed",
     });

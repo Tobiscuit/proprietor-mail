@@ -9,12 +9,20 @@
  *
  * Expiry is checked against the injected clock at every use; after it, or
  * after dispose(), the keys are dropped and every use throws FactorExpired.
+ *
+ * Round 3: the factor's key also signs (A2b, A11: Ed25519), so the FreshFactor
+ * is what admits a device or a factor and signs a rotation's transition (K12).
+ * And it answers a factor challenge only for the action the caller is about to
+ * send: answer() takes that action's Confirmation, builds the descriptor it
+ * expects, compares it with Mail's bytes, and opens the challenge with its own
+ * digest (K4).
  */
 import { DecryptionFailed, openChallenge, type FactorPrivateKey, type MailboxPrivateKey } from "@proprietor/mail-crypto";
 import { base64url } from "./bytes";
+import { expectedDigest } from "./confirmations";
 import { FactorExpired, InvalidChallenge } from "./errors";
 import type { RingWrap } from "./keyring";
-import type { ChallengeView, FactorProof, FreshFactor } from "./types";
+import type { ChallengeView, Confirmation, FactorProof, FreshFactor } from "./types";
 
 /** How long a FreshFactor lasts: 2 minutes, as a challenge does (device-v1 B6). */
 export const FRESH_FACTOR_MS = 2 * 60_000;
@@ -25,8 +33,11 @@ const CHALLENGE_ID = /^chl_[0-9a-hjkmnp-tv-z]{26}$/;
 export type FactorFacts = Pick<RingWrap, "id" | "keyId" | "kind" | "label" | "credentialId">;
 
 interface Material {
+  /** The factor's own key (A2), which also signs (A2b). */
   factorKey: FactorPrivateKey;
   factorPublic: Uint8Array<ArrayBuffer>;
+  /** vS, the factor's Ed25519 signing key (A2b), 32 bytes. */
+  signingPublic: Uint8Array<ArrayBuffer>;
   /** The active key, wrappable; null when this factor cannot reach it (StaleFactor). */
   active: MailboxPrivateKey | null;
 }
@@ -67,7 +78,7 @@ export class FreshFactorImpl implements FreshFactor {
     if (this.material !== null) this.material = { ...this.material, active };
   }
 
-  async answer(challenge: ChallengeView): Promise<FactorProof> {
+  async answer(challenge: ChallengeView, confirmation: Confirmation): Promise<FactorProof> {
     const { factorKey } = this.use(this.mailboxId);
     if (
       typeof challenge !== "object" ||
@@ -79,9 +90,12 @@ export class FreshFactorImpl implements FreshFactor {
     ) {
       throw new TypeError("not a factor challenge for this factor");
     }
+    // K4, K12: only the challenge of the action this browser is about to send; its own digest opens it.
+    const actionDigest = await expectedDigest(challenge, confirmation, this.mailboxId, "factor");
+    if (typeof challenge.sealed !== "string") throw new InvalidChallenge();
     let answer: Uint8Array;
     try {
-      answer = await openChallenge(factorKey, { mailboxId: this.mailboxId, challengeId: challenge.id }, challenge.sealed);
+      answer = await openChallenge(factorKey, { mailboxId: this.mailboxId, challengeId: challenge.id, actionDigest }, challenge.sealed);
     } catch (e) {
       // K4: anything that does not open as this factor's challenge is answered with nothing.
       if (e instanceof DecryptionFailed) throw new InvalidChallenge();

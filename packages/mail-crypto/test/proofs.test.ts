@@ -7,6 +7,8 @@
 import { Aes256Gcm, CipherSuite, DhkemX25519HkdfSha256, HkdfSha256 } from "@hpke/core";
 import { describe, expect, test } from "vitest";
 import * as api from "../src/index";
+import { openChallenge as openWithPackage } from "../src/challenges";
+import { deriveFactorKey } from "../src/factor-keys";
 import { sealChallenge, verifyDeviceProof } from "../src/proofs";
 
 const utf8 = (s: string) => new TextEncoder().encode(s);
@@ -21,12 +23,14 @@ const ctx = (label: string, ...parts: string[]) => utf8(`proprietor-mail/v1/${la
 const CHALLENGE_INFO = "proprietor-mail/v1/challenge";
 const suite = new CipherSuite({ kem: new DhkemX25519HkdfSha256(), kdf: new HkdfSha256(), aead: new Aes256Gcm() });
 
-type Purpose = "session" | "factor";
+type Purpose = "session" | "factor" | "key";
 interface ChallengeIds {
   mailboxId: string;
   challengeId: string;
   purpose: Purpose;
   targetId: string;
+  /** Round 3 (A6): the action descriptor's digest, in the aad of "factor" and "key" challenges. */
+  actionDigest?: string;
 }
 
 async function x25519Recipient(): Promise<{ pair: CryptoKeyPair; publicKey: Uint8Array }> {
@@ -37,7 +41,10 @@ async function x25519Recipient(): Promise<{ pair: CryptoKeyPair; publicKey: Uint
 /** Opens a sealed challenge the way the contract says a browser does: HPKE base mode, A6's info and aad. */
 async function openChallenge(sealed: string, recipient: CryptoKeyPair, ids: ChallengeIds, info = CHALLENGE_INFO): Promise<Uint8Array> {
   const bytes = fromB64u(sealed);
-  const aad = ctx("challenge", ids.mailboxId, ids.challengeId, ids.purpose, ids.targetId);
+  const aad =
+    ids.actionDigest === undefined
+      ? ctx("challenge", ids.mailboxId, ids.challengeId, ids.purpose, ids.targetId)
+      : ctx("challenge", ids.mailboxId, ids.challengeId, ids.purpose, ids.targetId, ids.actionDigest);
   return new Uint8Array(await suite.open({ recipientKey: recipient, enc: bytes.slice(0, 32), info: utf8(info) }, bytes.slice(32), aad));
 }
 
@@ -49,10 +56,17 @@ function sessionIds(over: Partial<ChallengeIds> = {}): ChallengeIds {
   return { mailboxId: testId("mbx"), challengeId: testId("chl"), purpose: "session", targetId: keyIdLike(), ...over };
 }
 
+/** A digest of the shape A10 names: base64url (no padding) of 32 bytes. */
+const digestLike = () => b64u(crypto.getRandomValues(new Uint8Array(32)));
+
+function boundIds(purpose: "factor" | "key", over: Partial<ChallengeIds> = {}): ChallengeIds {
+  return sessionIds({ purpose, targetId: purpose === "factor" ? testId("wrp") : keyIdLike(), actionDigest: digestLike(), ...over });
+}
+
 describe("sealChallenge (device-v1 A6)", () => {
-  test.each(["session", "factor"] as const)("seals a fresh 32-byte answer in 80 bytes that the target's private key opens (%s)", async (purpose) => {
+  test.each(["session", "factor", "key"] as const)("seals a fresh 32-byte answer in 80 bytes that the target's private key opens (%s)", async (purpose) => {
     const target = await x25519Recipient();
-    const ids = sessionIds(purpose === "factor" ? { purpose, targetId: testId("wrp") } : {});
+    const ids = purpose === "session" ? sessionIds() : boundIds(purpose);
     const { sealed, answer } = await sealChallenge({ publicKey: target.publicKey }, ids);
     expect(answer).toBeInstanceOf(Uint8Array);
     expect(answer.length).toBe(32);
@@ -87,12 +101,46 @@ describe("sealChallenge (device-v1 A6)", () => {
     const changed: Partial<ChallengeIds>[] = [
       { mailboxId: testId("mbx") },
       { challengeId: testId("chl") },
-      { purpose: "factor" },
+      { purpose: "factor", actionDigest: digestLike() },
+      { purpose: "key", actionDigest: digestLike() },
       { targetId: keyIdLike() },
     ];
     for (const over of changed) {
       await expect(openChallenge(sealed, target.pair, { ...ids, ...over }), JSON.stringify(Object.keys(over))).rejects.toThrow();
     }
+  });
+
+  test.each(["factor", "key"] as const)("round 3 (A6, D36): a %s challenge opens only with its own action digest in the aad", async (purpose) => {
+    const target = await x25519Recipient();
+    const ids = boundIds(purpose);
+    const { sealed, answer } = await sealChallenge({ publicKey: target.publicKey }, ids);
+    expect(await openChallenge(sealed, target.pair, ids)).toEqual(answer);
+    // Another digest, and none at all (the session form of the aad), open nothing.
+    await expect(openChallenge(sealed, target.pair, { ...ids, actionDigest: digestLike() })).rejects.toThrow();
+    const { actionDigest: _digest, ...without } = ids;
+    await expect(openChallenge(sealed, target.pair, without)).rejects.toThrow();
+  });
+
+  test("round 3: the browser's opener (src/challenges.ts) answers what this sealer seals, for its own digest only", async () => {
+    const mailboxId = testId("mbx");
+    const factorId = testId("wrp");
+    const factor = await deriveFactorKey({ mailboxId, factorId, kind: "recovery", secret: crypto.getRandomValues(new Uint8Array(32)) }); // pragma: allowlist secret (a random test secret drawn at run time)
+    const pk = api.factorPublicKey(factor);
+    const ids = boundIds("factor", { mailboxId, targetId: factorId });
+    const { sealed, answer } = await sealChallenge({ publicKey: pk }, ids);
+    expect(await openWithPackage(factor, { mailboxId, challengeId: ids.challengeId, actionDigest: ids.actionDigest! }, sealed)).toEqual(answer);
+    await expect(openWithPackage(factor, { mailboxId, challengeId: ids.challengeId, actionDigest: digestLike() }, sealed)).rejects.toThrow();
+  });
+
+  test("round 3: a factor or key challenge needs a digest of 32 bytes in base64url, and a session challenge takes none", async () => {
+    const target = await x25519Recipient();
+    for (const purpose of ["factor", "key"] as const) {
+      for (const actionDigest of [undefined, "", digestLike().slice(1), `${digestLike()}=`, `${digestLike().slice(0, 42)}+`, b64u(new Uint8Array(31)), 7]) {
+        const ids = { ...boundIds(purpose), actionDigest } as ChallengeIds;
+        await expect(sealChallenge({ publicKey: target.publicKey }, ids), `${purpose} ${String(actionDigest)}`).rejects.toThrow(TypeError);
+      }
+    }
+    await expect(sealChallenge({ publicKey: target.publicKey }, sessionIds({ actionDigest: digestLike() }))).rejects.toThrow(TypeError);
   });
 
   test("opens with the target's private key only", async () => {

@@ -125,7 +125,7 @@ export class StorageUnavailable extends MailClientError {
     super(message, "StorageUnavailable");
   }
 }
-/** A FreshFactor used after its 2 minutes, or after dispose(): use the security key, passkey or recovery key again. */
+/** A FreshFactor used after its 2 minutes, or after dispose(): use the passkey or the recovery key again. */
 export class FactorExpired extends MailClientError {
   constructor(message = "that unlock is no longer fresh") {
     super(message, "FactorExpired");
@@ -138,14 +138,14 @@ export class MailboxChanged extends MailClientError {
   }
 }
 /**
- * A refusal: a security key or passkey that opens only an older key and has no
+ * A refusal: a passkey that opens only an older key and has no
  * seal of the current one, so it reaches no key Mail seals to now (the key
  * ring is missing that factor's seal). Unlock with another factor. Since the
  * upgrade names every factor (B5 as amended on 2026-10-19), a factor is never
  * left without its key, and there is no repair flow.
  */
 export class StaleFactor extends MailClientError {
-  constructor(message = "this security key only opens an older mailbox key") {
+  constructor(message = "this passkey only opens an older mailbox key") {
     super(message, "StaleFactor");
   }
 }
@@ -202,8 +202,20 @@ export class RotationUnproven extends MailClientError {
  */
 export class MissingFactors extends MailClientError {
   readonly missing: readonly { readonly id: string; readonly kind: "passkey-prf" | "recovery"; readonly label: string }[];
-  constructor(message = "every security key and the recovery key must be used for the upgrade", missing: readonly { id: string; kind: "passkey-prf" | "recovery"; label: string }[] = []) {
+  constructor(message = "every passkey and the recovery key must be used for the upgrade", missing: readonly { id: string; kind: "passkey-prf" | "recovery"; label: string }[] = []) {
     super(message, "MissingFactors");
     this.missing = Object.freeze(missing.map((m) => Object.freeze({ id: m.id, kind: m.kind, label: m.label })));
+  }
+}
+
+// ---- Added by round 3 (contracts/device-v1.md Part C, K13) ----
+
+/**
+ * K13: a rotation is due (an email code revoked devices, B7a), and it comes before any other change.
+ * Finish it first: removeDevices with no devices (or with every flagged one), with this FreshFactor.
+ */
+export class RotationDue extends MailClientError {
+  constructor(message = "finish removing the revoked devices first") {
+    super(message, "RotationDue");
   }
 }

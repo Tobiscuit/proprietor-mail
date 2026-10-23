@@ -62,12 +62,12 @@ describe("0003_devices on a mailbox created before it (plan.md §2)", () => {
     const mb = await lived();
     await migrateFromBeforeDevices(mb.stub);
     expect(await sql(mb, "SELECT sessions FROM policy")).toEqual([{ sessions: "optional" }]);
-    expect(await sql(mb, "SELECT successor_key_id, successor_seal FROM keys")).toEqual([{ successor_key_id: null, successor_seal: null }]);
-    expect(await sql(mb, "SELECT factor_key, tag, tag_key_id FROM key_wraps")).toEqual([
-      { factor_key: null, tag: null, tag_key_id: null },
-      { factor_key: null, tag: null, tag_key_id: null },
+    expect(await sql(mb, "SELECT successor_key_id, successor_seal, successor_signed_by, successor_sig FROM keys")).toEqual([
+      { successor_key_id: null, successor_seal: null, successor_signed_by: null, successor_sig: null },
     ]);
-    for (const table of ["devices", "key_seals", "challenges", "mail_sessions"]) {
+    const empty = { factor_key: null, signing_key: null, admission_by: null, admission_sig: null, admission_self_sig: null, tag: null, tag_key_id: null };
+    expect(await sql(mb, "SELECT factor_key, signing_key, admission_by, admission_sig, admission_self_sig, tag, tag_key_id FROM key_wraps")).toEqual([empty, empty]);
+    for (const table of ["devices", "key_seals", "challenges", "mail_sessions", "removed_factors", "rotation_due"]) {
       expect(await sql(mb, `SELECT COUNT(*) AS n FROM ${table}`), table).toEqual([{ n: 0 }]);
     }
   });
@@ -100,6 +100,8 @@ describe("0003_devices on a mailbox created before it (plan.md §2)", () => {
     expect(view.sessions).toBe("optional");
     expect(view.devices).toEqual([]);
     expect(view.seals).toEqual([]);
+    expect(view.removedFactors).toEqual([]);
+    expect(view.rotationDue).toBeNull();
     expect(view.keys).toEqual([
       {
         keyId: mb.key!.keyId,
@@ -113,17 +115,17 @@ describe("0003_devices on a mailbox created before it (plan.md §2)", () => {
     expect(view.wraps).toHaveLength(2);
     for (const w of view.wraps) {
       expect(Object.keys(w).sort()).toEqual(
-        ["createdAt", "createdBy", "credentialId", "factorKey", "id", "keyId", "kind", "label", "tag", "tagKeyId", "wrapped"].sort(),
+        ["admission", "createdAt", "createdBy", "credentialId", "factorKey", "id", "keyId", "kind", "label", "signingKey", "tag", "tagKeyId", "wrapped"].sort(),
       );
-      expect([w.factorKey, w.tag, w.tagKeyId]).toEqual([null, null, null]);
+      expect([w.factorKey, w.signingKey, w.admission, w.tag, w.tagKeyId]).toEqual([null, null, null, null, null]);
     }
     expect(Object.keys(view).sort()).toEqual(
-      ["addresses", "address", "devices", "displayName", "id", "keys", "policy", "seals", "sessions", "status", "wraps"].sort(),
+      ["addresses", "address", "devices", "displayName", "id", "keys", "policy", "removedFactors", "rotationDue", "seals", "sessions", "status", "wraps"].sort(),
     );
   });
 });
 
-describe("the schema 0003 adds is plan.md §2's", () => {
+describe("the schema 0003 adds is plan.md §2's, with round 3's additions (§10.1)", () => {
   interface Column {
     name: string;
     type: string;
@@ -138,11 +140,19 @@ describe("the schema 0003 adds is plan.md §2's", () => {
   it("adds the columns to policy, keys and key_wraps", async () => {
     const mb = await provisionMailbox();
     expect((await columns(mb, "policy")).at(-1)).toEqual(col("sessions", "TEXT", 1, 0, "'optional'"));
-    expect((await columns(mb, "keys")).slice(-2)).toEqual([col("successor_key_id", "TEXT"), col("successor_seal", "TEXT")]);
-    expect((await columns(mb, "key_wraps")).slice(-3)).toEqual([col("factor_key", "BLOB"), col("tag", "TEXT"), col("tag_key_id", "TEXT")]);
+    expect((await columns(mb, "keys")).slice(-4)).toEqual([col("successor_key_id", "TEXT"), col("successor_seal", "TEXT"), col("successor_signed_by", "TEXT"), col("successor_sig", "TEXT")]);
+    expect((await columns(mb, "key_wraps")).slice(-7)).toEqual([
+      col("factor_key", "BLOB"),
+      col("signing_key", "BLOB"),
+      col("admission_by", "TEXT"),
+      col("admission_sig", "TEXT"),
+      col("admission_self_sig", "TEXT"),
+      col("tag", "TEXT"),
+      col("tag_key_id", "TEXT"),
+    ]);
   });
 
-  it("creates devices, key_seals, challenges and mail_sessions with their keys and indexes", async () => {
+  it("creates devices, key_seals, challenges, mail_sessions, removed_factors and rotation_due with their keys and indexes", async () => {
     const mb = await provisionMailbox();
     expect(await columns(mb, "devices")).toEqual([
       col("id", "TEXT", 0, 1),
@@ -150,6 +160,9 @@ describe("the schema 0003 adds is plan.md §2's", () => {
       col("label", "TEXT", 1),
       col("signing_key", "BLOB", 1),
       col("unlock_key", "BLOB"),
+      col("unlock_sig", "TEXT"),
+      col("admission_by", "TEXT", 1),
+      col("admission_sig", "TEXT", 1),
       col("tag", "TEXT", 1),
       col("tag_key_id", "TEXT", 1),
       col("created_at", "TEXT", 1),
@@ -168,9 +181,12 @@ describe("the schema 0003 adds is plan.md §2's", () => {
       col("id", "TEXT", 0, 1),
       col("purpose", "TEXT", 1),
       col("target_id", "TEXT", 1),
-      col("answer_hash", "TEXT", 1),
+      col("answer_hash", "TEXT"),
       col("nonce", "TEXT", 1),
       col("account_id", "TEXT", 1),
+      col("kind", "TEXT"),
+      col("descriptor", "TEXT"),
+      col("action_digest", "TEXT"),
       col("created_at", "TEXT", 1),
       col("expires_at", "TEXT", 1),
       col("used_at", "TEXT"),
@@ -183,8 +199,24 @@ describe("the schema 0003 adds is plan.md §2's", () => {
       col("created_at", "TEXT", 1),
       col("expires_at", "TEXT", 1),
     ]);
+    expect(await columns(mb, "removed_factors")).toEqual([
+      col("id", "TEXT", 0, 1),
+      col("kind", "TEXT", 1),
+      col("credential_id", "TEXT"),
+      col("label", "TEXT", 1),
+      col("factor_key", "BLOB", 1),
+      col("signing_key", "BLOB", 1),
+      col("admission_by", "TEXT", 1),
+      col("admission_sig", "TEXT", 1),
+      col("admission_self_sig", "TEXT", 1),
+      col("created_at", "TEXT", 1),
+      col("created_by", "TEXT", 1),
+      col("removed_at", "TEXT", 1),
+      col("removed_by", "TEXT", 1),
+    ]);
+    expect(await columns(mb, "rotation_due")).toEqual([col("one", "INTEGER", 0, 1), col("since", "TEXT", 1), col("by_account", "TEXT", 1), col("devices", "TEXT", 1)]);
     const indexes = (await sql<{ name: string }>(mb, "SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'")).map((i) => i.name);
-    expect(indexes).toEqual(expect.arrayContaining(["challenges_by_expiry", "mail_sessions_by_device", "mail_sessions_by_expiry"]));
+    expect(indexes).toEqual(expect.arrayContaining(["challenges_by_expiry", "challenges_by_digest", "mail_sessions_by_device", "mail_sessions_by_expiry"]));
   });
 
   it("enforces its CHECKs and its reference to keys in the database itself", async () => {
@@ -200,6 +232,27 @@ describe("the schema 0003 adds is plan.md §2's", () => {
     await expect(
       sql(mb, "INSERT INTO challenges (id, purpose, target_id, answer_hash, nonce, account_id, created_at, expires_at) VALUES ('c', 'device', 't', 'h', 'n', 'a', 't', 't')"),
     ).rejects.toThrow(/CHECK constraint failed/);
+    // Round 3: an email challenge has no answer; a session challenge has no descriptor; every other has one.
+    const challengeRow = (purpose: string, answer: string | null, kind: string | null, descriptor: string | null) =>
+      sql(mb, "INSERT INTO challenges (id, purpose, target_id, answer_hash, nonce, account_id, kind, descriptor, created_at, expires_at) VALUES (?, ?, 't', ?, 'n', 'a', ?, ?, 't', 't')", crypto.randomUUID(), purpose, answer, kind, descriptor);
+    await expect(challengeRow("email", "h", "revoke-device", "d")).rejects.toThrow(/CHECK constraint failed/);
+    await expect(challengeRow("session", "h", "open-session", "d")).rejects.toThrow(/CHECK constraint failed/);
+    await expect(challengeRow("factor", "h", null, null)).rejects.toThrow(/CHECK constraint failed/);
+    await expect(challengeRow("key", "h", "upgrade", null)).rejects.toThrow(/CHECK constraint failed/);
+    await challengeRow("email", null, "revoke-device", "d");
+    await challengeRow("key", "h", "upgrade", "d");
+    // A device's unlock signature is there exactly when its unlock key is; rotation_due has one row at most.
+    const deviceRow = (unlockKey: Uint8Array | null, unlockSig: string | null) =>
+      sql(
+        mb,
+        "INSERT INTO devices (id, account_id, label, signing_key, unlock_key, unlock_sig, admission_by, admission_sig, tag, tag_key_id, created_at, created_by) VALUES (?, 'a', 'l', x'04', ?, ?, 'w', 's', 't', 'k', 't', 'b')",
+        crypto.randomUUID(),
+        unlockKey,
+        unlockSig,
+      );
+    await expect(deviceRow(new Uint8Array(65), null)).rejects.toThrow(/CHECK constraint failed/);
+    await expect(deviceRow(null, "s")).rejects.toThrow(/CHECK constraint failed/);
+    await expect(sql(mb, "INSERT INTO rotation_due (one, since, by_account, devices) VALUES (2, 't', 'a', '[]')")).rejects.toThrow(/CHECK constraint failed/);
     expect(await sql(mb, "SELECT sessions FROM policy")).toEqual([{ sessions: "optional" }]);
   });
 });

@@ -1,6 +1,7 @@
 /**
  * The two formats of contracts/device-v1.md that the Mail Worker uses: A6,
- * sealing a challenge, and A7, verifying a kept device's signature over one.
+ * sealing a challenge (round 3: "factor" and "key" challenges bound to an
+ * action digest), and A7, verifying a kept device's signature over one.
  * Mail proves nothing to the browser with these; it learns from the browser
  * that it holds the mailbox key now (a key proof), that the person just used
  * a factor (a factor proof), and that a call comes from a device it knows (a
@@ -12,7 +13,7 @@
  * (A7).
  */
 import { Aes256Gcm, CipherSuite, DhkemX25519HkdfSha256, HkdfSha256 } from "@hpke/core";
-import { base64url, concat, copy, randomBytes, utf8 } from "./bytes";
+import { base64url, concat, copy, fromBase64url, randomBytes, utf8 } from "./bytes";
 import { context } from "./envelope";
 
 /**
@@ -36,7 +37,10 @@ export const P256_POINT_BYTES = 65;
 /** ECDSA P-256 in IEEE P1363 form, r || s (A7): what Web Crypto signs and verifies. */
 export const DEVICE_PROOF_BYTES = 64;
 
-export type ChallengePurpose = "session" | "factor";
+/** "session" and "key" are key proofs (sealed to the active mailbox key), "factor" a factor proof (round 3 adds "key"). */
+export type ChallengePurpose = "session" | "factor" | "key";
+
+const ACTION_DIGEST = /^[A-Za-z0-9_-]{43}$/;
 
 const X25519: { name: string } = { name: "X25519" };
 const ECDSA_P256 = { name: "ECDSA", namedCurve: "P-256" };
@@ -44,22 +48,39 @@ const ECDSA_SHA256 = { name: "ECDSA", hash: "SHA-256" };
 
 /**
  * A6: a fresh 32-byte answer sealed to `target`, the active mailbox public
- * key (purpose "session", targetId its keyId) or a factor key (purpose
- * "factor", targetId the factor id), with
- * aad = ctx("challenge", mailboxId, challengeId, purpose, targetId).
- * Returns the 80 sealed bytes as base64url, and the answer, which the caller
- * hashes and forgets.
+ * key (purposes "session" and "key", targetId its keyId) or a factor key
+ * (purpose "factor", targetId the factor id), with
+ *
+ *   aad = ctx("challenge", mailboxId, challengeId, purpose, targetId)                 for "session"
+ *       | ctx("challenge", mailboxId, challengeId, purpose, targetId, actionDigest)   for "factor" and "key"
+ *
+ * Round 3 (D36): `actionDigest` is the digest of the challenge's action
+ * descriptor (A10: base64url of SHA-256 over its bytes, 43 characters), so
+ * the browser opens, and answers, only the challenge of the action it is
+ * about to send. It is required for "factor" and "key" and refused for
+ * "session". Returns the 80 sealed bytes as base64url, and the answer, which
+ * the caller hashes and forgets.
  */
 export async function sealChallenge(
   target: { publicKey: Uint8Array },
-  ids: { mailboxId: string; challengeId: string; purpose: ChallengePurpose; targetId: string },
+  ids: { mailboxId: string; challengeId: string; purpose: ChallengePurpose; targetId: string; actionDigest?: string },
 ): Promise<{ sealed: string; answer: Uint8Array }> {
   const publicKey = target?.publicKey;
   if (!(publicKey instanceof Uint8Array) || publicKey.length !== 32) {
     throw new TypeError("a challenge is sealed to an X25519 public key of exactly 32 bytes");
   }
-  if (ids.purpose !== "session" && ids.purpose !== "factor") throw new TypeError('a challenge\'s purpose is "session" or "factor"');
-  const aad = context("challenge", ids.mailboxId, ids.challengeId, ids.purpose, ids.targetId);
+  if (ids.purpose !== "session" && ids.purpose !== "factor" && ids.purpose !== "key") throw new TypeError('a challenge\'s purpose is "session", "factor" or "key"');
+  let aad: Uint8Array<ArrayBuffer>;
+  if (ids.purpose === "session") {
+    if (ids.actionDigest !== undefined) throw new TypeError("a session challenge carries no action digest");
+    aad = context("challenge", ids.mailboxId, ids.challengeId, ids.purpose, ids.targetId);
+  } else {
+    const digest = ids.actionDigest as unknown;
+    if (typeof digest !== "string" || !ACTION_DIGEST.test(digest) || fromBase64url(digest)?.length !== 32) {
+      throw new TypeError(`a ${ids.purpose} challenge carries its action digest: base64url (no padding) of 32 bytes`);
+    }
+    aad = context("challenge", ids.mailboxId, ids.challengeId, ids.purpose, ids.targetId, digest);
+  }
   const recipientPublicKey = await crypto.subtle.importKey("raw", copy(publicKey), X25519, true, []);
   const answer = randomBytes(CHALLENGE_ANSWER_BYTES);
   // A target whose agreement is all zeros (a low-order point) makes the KEM throw: nothing is sealed to it.

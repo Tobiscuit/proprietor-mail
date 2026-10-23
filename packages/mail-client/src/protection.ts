@@ -18,14 +18,14 @@ const OPTION_A =
   "from code {operator} serves, so a changed version of that code could read " +
   "what you read.";
 
-/** Spec 002 §5: shown under "How your mail is protected" whenever the mailbox has kept devices. */
+/** Spec 002 §5 (as amended by D43): shown under "How your mail is protected" whenever the mailbox has kept devices. */
 const DEVICES =
-  "A device you keep unlocked opens your mail without your security key, until " +
+  "A device you keep unlocked opens your mail without your passkey, until " +
   "it locks or you remove it. Anyone who has it while it is unlocked can read " +
   "your mail, as with any mail app. Its own screen lock and disk encryption " +
   "protect it when you are away. If a device is lost, remove it from another " +
   "device or with your recovery key. It stops working at once, and new mail uses " +
-  "a new key it never gets. If you lose every device, every security key and " +
+  "a new key it never gets. If you lose every device, your passkey and " +
   "your recovery key, nobody can open your mail, not even {operator}.";
 
 export const PROTECTION: ProtectionTexts = Object.freeze({

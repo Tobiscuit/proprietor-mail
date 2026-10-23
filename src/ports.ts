@@ -1,4 +1,4 @@
-import type { MailboxPublicKey, MessageHeader, SealedMessage } from "@proprietor/mail-crypto";
+import type { MailboxPublicKey, MessageHeader, SealedMessage, Statement } from "@proprietor/mail-crypto";
 import type { BuildOptions, BuiltMessage, ComposedMessage, RawSendRequest } from "@proprietor/mail-outbound";
 
 /**
@@ -50,22 +50,26 @@ export interface Clock {
 }
 
 /**
- * contracts/device-v1.md A6 and A7, Mail's side only
- * (@proprietor/mail-crypto, src/proofs.ts): a challenge sealed to a public
- * key, with the answer Mail hashes and forgets, and a device's signature
- * verified with its public signing key. Mail holds nothing that opens a
- * challenge or makes a signature.
+ * contracts/device-v1.md A6, A7 and (round 3) A11, Mail's side only
+ * (@proprietor/mail-crypto: src/proofs.ts and src/statements.ts): a
+ * challenge sealed to a public key, with the answer Mail hashes and forgets
+ * (a "factor" or "key" challenge bound to its action digest), a device's
+ * signature verified with its public signing key, and a signed statement (an
+ * admission, an unlock key, a transition) verified with its signer's public
+ * key. Mail holds nothing that opens a challenge or makes a signature.
  */
 export interface Proofs {
   sealChallenge(
     target: { publicKey: Uint8Array },
-    ids: { mailboxId: string; challengeId: string; purpose: "session" | "factor"; targetId: string },
+    ids: { mailboxId: string; challengeId: string; purpose: "session" | "factor" | "key"; targetId: string; actionDigest?: string },
   ): Promise<{ sealed: string; answer: Uint8Array }>;
   verifyDeviceProof(
     signingKey: Uint8Array, // pragma: allowlist secret (a type annotation: a public P-256 point)
     ids: { mailboxId: string; deviceId: string; challengeId: string; nonce: Uint8Array },
     signature: Uint8Array,
   ): Promise<boolean>;
+  /** A11: true only when `signature` (base64url) signs `statement` under `publicKey`; never throws. */
+  verifyStatement(publicKey: Uint8Array, statement: Statement, signature: string): Promise<boolean>;
 }
 
 export interface MailboxPorts {

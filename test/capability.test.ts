@@ -160,3 +160,48 @@ describe("MAIL_CAPABILITY_KEYS", () => {
     });
   });
 });
+
+describe("capability v1: the confirmation claim (amended 2026-10-22, spec 002 D35)", () => {
+  const attestation = {
+    method: "email-code",
+    accountId: "acc_1",
+    actionKind: "revoke-device",
+    actionDigest: "yAsD42pLJ_e5mdhzbDegZcxtfzRenTDKMggl_cvNopA",
+    at: NOW - 50,
+    codeId: "code_example_1",
+  };
+  const withClaim = async (confirmation: unknown) => signToken(canonicalHeader(TEST_KID), { ...claims(), confirmation }, KEY);
+
+  it("is read only when asked for (revokeDevices), and then exactly as sent", async () => {
+    const token = await withClaim(attestation);
+    expect((await verifyCapability(token, keys, NOW)).confirmation).toBeUndefined();
+    expect((await verifyCapability(token, keys, NOW, { confirmation: true })).confirmation).toEqual(attestation);
+    // A token without the claim verifies exactly as before, asked or not.
+    const plain = await signToken(canonicalHeader(TEST_KID), claims(), KEY);
+    expect(await verifyCapability(plain, keys, NOW, { confirmation: true })).toEqual(await verifyCapability(plain, keys, NOW));
+  });
+
+  it("refuses a malformed claim as invalid when it is read, and ignores it otherwise", async () => {
+    for (const malformed of [
+      null,
+      "email-code",
+      [attestation],
+      { ...attestation, extra: 1 },
+      { ...attestation, at: String(attestation.at) },
+      { ...attestation, at: attestation.at + 0.5 },
+      { ...attestation, actionDigest: "short" },
+      { ...attestation, codeId: "" },
+      { ...attestation, codeId: "a/b" },
+      { ...attestation, accountId: "" },
+      (({ method: _m, ...rest }) => rest)(attestation),
+    ]) {
+      const token = await withClaim(malformed);
+      const err = await verifyCapability(token, keys, NOW, { confirmation: true }).then(
+        () => null,
+        (e: Error & { reason?: string }) => e,
+      );
+      expect([JSON.stringify(malformed), err?.name, err?.reason]).toEqual([JSON.stringify(malformed), "CapabilityRejected", "invalid"]);
+      expect((await verifyCapability(token, keys, NOW)).confirmation).toBeUndefined();
+    }
+  });
+});

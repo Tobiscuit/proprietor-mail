@@ -6,12 +6,19 @@ import { SESSION_NEEDS } from "../src/mailbox/sessions";
 import { MailService } from "../src/service";
 import { newId } from "@proprietor/mail-crypto";
 import {
+  actionInput,
+  admitFactor,
   challenge,
   factorInput,
+  factorProof,
+  keyProof,
   legacyMailbox,
   newFactorKey,
   openChallenge,
   openSession,
+  openSessionAction,
+  plainSession,
+  upgradeRequest,
   upgradedMailbox,
 } from "./support/browser";
 import { base64urlFromBytes, bytesFromBase64url } from "./support/capability-tokens";
@@ -65,6 +72,7 @@ describe("challenges (device-v1 B6, M16)", () => {
       factorId: null,
       nonce: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
       sealed: expect.stringMatching(/^[A-Za-z0-9_-]{107}$/),
+      descriptor: null,
       expiresAt: at(mb, 2 * MINUTE),
     });
     const answer = await openChallenge(mb.id, c, mailboxKey);
@@ -142,8 +150,9 @@ describe("challenges (device-v1 B6, M16)", () => {
 
   it("is per account and purpose: a factor challenge needs a factor with a factor key (NotFound otherwise)", async () => {
     const { mb, recoveryId } = await legacyMailbox();
-    expect(refusalOf(await mail().challenge(await capFor(mb), { purpose: "factor", factorId: recoveryId }))).toEqual({ name: "NotFound", message: "not found" });
-    expect(refusalOf(await mail().challenge(await capFor(mb), { purpose: "factor", factorId: testId("wrp") }))).toEqual({ name: "NotFound", message: "not found" });
+    const action = await actionInput(openSessionAction(newId("chl")));
+    expect(refusalOf(await mail().challenge(await capFor(mb), { purpose: "factor", factorId: recoveryId, action }))).toEqual({ name: "NotFound", message: "not found" });
+    expect(refusalOf(await mail().challenge(await capFor(mb), { purpose: "factor", factorId: testId("wrp"), action }))).toEqual({ name: "NotFound", message: "not found" });
   });
 
   it("refuses a request outside the contract's shape", async () => {
@@ -195,8 +204,12 @@ describe("openSession (B6, M15)", () => {
 
   it("does not open from a factor challenge: that is not a key proof", async () => {
     const u = await upgradedMailbox();
-    const c = await challenge(u.mb, { purpose: "factor", factorId: u.recovery.id });
-    expect(refusalOf(await openWith(u.mb, { challengeId: c.id, answer: await openChallenge(u.mb.id, c, u.recovery.pair) }))).toEqual(PROOF_REJECTED);
+    // Round 3: a factor challenge (bound to an open-session action naming itself) in the key proof's place, with a good factor proof beside it.
+    const asKeyProof = await challenge(u.mb, { purpose: "factor", factorId: u.passkey.id, action: await actionInput(openSessionAction(newId("chl"))) });
+    const answer = await openChallenge(u.mb.id, asKeyProof, u.passkey.pair);
+    const proof = await factorProof(u.mb, u.recovery, openSessionAction(asKeyProof.id));
+    expect(refusalOf(await openWith(u.mb, { challengeId: asKeyProof.id, answer, factorProof: proof }))).toEqual(PROOF_REJECTED);
+    expect(await rejections(u.mb, asKeyProof.id)).toEqual(["purpose"]);
   });
 
   it("refuses a request outside the contract's shape, and spends nothing on it", async () => {
@@ -235,18 +248,18 @@ describe("sessions while optional (B2, R10)", () => {
 });
 
 describe("the upgrade (B5, M20, M13)", () => {
-  it("gives the named factors their keys and tags and turns sessions on, in one step, audited as mailbox-upgraded", async () => {
-    const { mb, mailboxKey, recoveryId, passkeyId } = await legacyMailbox();
-    const recovery = await newFactorKey(recoveryId, "recovery");
-    const passkey = await newFactorKey(passkeyId, "passkey-prf");
+  it("gives the named factors their keys, signing keys, admissions and tags and turns sessions on, in one step, audited as mailbox-upgraded", async () => {
+    const legacy = await legacyMailbox();
+    const { mb, mailboxKey, recoveryId, passkeyId } = legacy;
+    const recovery = await legacy.recovery();
+    const passkey = await legacy.passkey();
     const { session } = await openSession(mb, mailboxKey);
-    const keyId = mb.key!.keyId;
-    const factors = [factorInput(recovery, keyId), factorInput(passkey, keyId)];
-    expect(await mail().upgrade(await capFor(mb), { factors }, { session })).toEqual({ ok: true, value: null });
+    const request = await upgradeRequest(mb, [recovery, passkey], mb.key!.keyId);
+    expect(await mail().upgrade(await capFor(mb), request, { session, keyProof: await keyProof(mb, mailboxKey, request) })).toEqual({ ok: true, value: null });
     const view = valueOf(await mail().mailbox(await capFor(mb)));
     expect(view.sessions).toBe("required");
-    for (const f of factors) {
-      expect(view.wraps.find((w) => w.id === f.id)).toMatchObject({ factorKey: f.factorKey, tag: f.tag, tagKeyId: keyId });
+    for (const f of request.factors) {
+      expect(view.wraps.find((w) => w.id === f.id)).toMatchObject({ factorKey: f.factorKey, signingKey: f.signingKey, admission: f.admission, tag: f.tag, tagKeyId: mb.key!.keyId }); // pragma: allowlist secret (public keys)
     }
     expect(await latestAudit(mb)).toEqual({ actor: "acc_owner", action: "mailbox-upgraded", detail: { factors: `${recoveryId},${passkeyId}` } });
     // The session it ran in still works.
@@ -254,19 +267,71 @@ describe("the upgrade (B5, M20, M13)", () => {
   });
 
   it("needs a live session (it was opened with a key proof): without one it is SessionRequired and nothing changes", async () => {
-    const { mb, recoveryId } = await legacyMailbox();
-    const recovery = await newFactorKey(recoveryId, "recovery");
-    const request = { factors: [factorInput(recovery, mb.key!.keyId)] };
-    expect(refusalOf(await mail().upgrade(await capFor(mb), request))).toEqual(SESSION_REQUIRED);
-    expect(refusalOf(await mail().upgrade(await capFor(mb), request, { session: random(32) }))).toEqual(SESSION_REQUIRED);
+    const legacy = await legacyMailbox();
+    const { mb } = legacy;
+    const request = await upgradeRequest(mb, [await legacy.recovery(), await legacy.passkey()], mb.key!.keyId);
+    const proof = await keyProof(mb, legacy.mailboxKey, request);
+    expect(refusalOf(await mail().upgrade(await capFor(mb), request, { keyProof: proof }))).toEqual(SESSION_REQUIRED);
+    expect(refusalOf(await mail().upgrade(await capFor(mb), request, { session: random(32), keyProof: proof }))).toEqual(SESSION_REQUIRED);
     expect(valueOf(await mail().mailbox(await capFor(mb))).sessions).toBe("optional");
     expect(await sql(mb, "SELECT COUNT(*) AS n FROM key_wraps WHERE factor_key IS NOT NULL")).toEqual([{ n: 0 }]);
+    // The key proof was not spent: the session is checked first.
+    expect(await sql(mb, "SELECT used_at FROM challenges WHERE id = ?", proof.challengeId)).toEqual([{ used_at: null }]);
+  });
+
+  it("round 3: needs a key proof bound to this very request (D36): none, one for another request, or a session challenge's is ProofRejected", async () => {
+    const legacy = await legacyMailbox();
+    const { mb, mailboxKey } = legacy;
+    const recovery = await legacy.recovery();
+    const passkey = await legacy.passkey();
+    const { session } = await openSession(mb, mailboxKey);
+    const request = await upgradeRequest(mb, [recovery, passkey], mb.key!.keyId);
+    expect(refusalOf(await mail().upgrade(await capFor(mb), request, { session }))).toEqual(PROOF_REJECTED);
+    // A relay's own factor keys, with the owner's key proof for the owner's request.
+    const relayed = await upgradeRequest(mb, [await legacy.recovery(), await legacy.passkey()], mb.key!.keyId);
+    const forOwners = await keyProof(mb, mailboxKey, request);
+    expect(refusalOf(await mail().upgrade(await capFor(mb), relayed, { session, keyProof: forOwners }))).toEqual(PROOF_REJECTED);
+    const asKeyProof = await challenge(mb, { purpose: "session" });
+    expect(refusalOf(await mail().upgrade(await capFor(mb), request, { session, keyProof: { challengeId: asKeyProof.id, answer: await openChallenge(mb.id, asKeyProof, mailboxKey) } }))).toEqual(PROOF_REJECTED);
+    const wrong = await keyProof(mb, mailboxKey, request);
+    expect(refusalOf(await mail().upgrade(await capFor(mb), request, { session, keyProof: { ...wrong, answer: random(32) } }))).toEqual(PROOF_REJECTED);
+    expect([await rejections(mb, forOwners.challengeId), await rejections(mb, asKeyProof.id), await rejections(mb, wrong.challengeId)]).toEqual([["action"], ["purpose"], ["answer"]]);
+    expect(valueOf(await mail().mailbox(await capFor(mb))).sessions).toBe("optional");
+    // The owner's own request, with a fresh proof for it, then goes through; the spent one does not come back.
+    expect(refusalOf(await mail().upgrade(await capFor(mb), request, { session, keyProof: forOwners }))).toEqual(PROOF_REJECTED);
+    valueOf(await mail().upgrade(await capFor(mb), request, { session, keyProof: await keyProof(mb, mailboxKey, request) }));
+  });
+
+  it("round 3, M25: the admissions follow A11's cycle (each factor by the next in id order) and verify, or nothing changes", async () => {
+    const legacy = await legacyMailbox();
+    const { mb, mailboxKey } = legacy;
+    const recovery = await legacy.recovery();
+    const passkey = await legacy.passkey();
+    const { session } = await openSession(mb, mailboxKey);
+    const keyId = mb.key!.keyId;
+    const good = await upgradeRequest(mb, [recovery, passkey], keyId);
+    const [first, second] = [recovery, passkey].sort((a, b) => (a.id < b.id ? -1 : 1));
+    const selfAdmitted = { factors: [factorInput(recovery, keyId, await admitFactor(mb.id, recovery, recovery)), factorInput(passkey, keyId, await admitFactor(mb.id, passkey, passkey))] };
+    const stranger = await newFactorKey(first!.id, first!.kind, { label: first!.label, credentialId: first!.credentialId }); // pragma: allowlist secret (a field name, not a value)
+    const unsignedSelf = good.factors.map((f) => (f.id === first!.id ? { ...f, admission: { ...f.admission, selfSignature: random(64) } } : f));
+    const otherKey = good.factors.map((f) => (f.id === second!.id ? { ...f, signingKey: base64urlFromBytes(stranger.signingKey) } : f)); // pragma: allowlist secret (a public Ed25519 key)
+    for (const [name, request] of [
+      ["each admitted by itself", selfAdmitted],
+      ["a self-signature that does not verify", { factors: unsignedSelf }],
+      ["a signing key the admission was not made for", { factors: otherKey }],
+    ] as const) {
+      const answer = await mail().upgrade(await capFor(mb), request, { session, keyProof: await keyProof(mb, mailboxKey, request) });
+      expect([name, refusalOf(answer).name]).toEqual([name, "InvalidRequest"]);
+    }
+    expect(valueOf(await mail().mailbox(await capFor(mb))).sessions).toBe("optional");
+    expect(await sql(mb, "SELECT COUNT(*) AS n FROM key_wraps WHERE factor_key IS NOT NULL OR signing_key IS NOT NULL OR admission_by IS NOT NULL")).toEqual([{ n: 0 }]);
+    valueOf(await mail().upgrade(await capFor(mb), good, { session, keyProof: await keyProof(mb, mailboxKey, good) }));
   });
 
   it("happens once (M20), and sessions never go back to optional (M13)", async () => {
     const u = await upgradedMailbox();
-    const again = { factors: [factorInput(u.recovery, u.mb.key!.keyId)] };
-    expect(refusalOf(await mail().upgrade(await capFor(u.mb), again, { session: u.session }))).toEqual({
+    const again = await upgradeRequest(u.mb, [u.recovery, u.passkey], u.mb.key!.keyId);
+    expect(refusalOf(await mail().upgrade(await capFor(u.mb), again, { session: u.session, keyProof: await keyProof(u.mb, u.mailboxKey, again) }))).toEqual({
       name: "InvalidRequest",
       message: "invalid request: the mailbox is already upgraded",
     });
@@ -276,60 +341,80 @@ describe("the upgrade (B5, M20, M13)", () => {
   });
 
   it("names every wrap of the mailbox, exactly once (B5, M20): one left out is refused, and nothing changes", async () => {
-    const { mb, mailboxKey, recoveryId, passkeyId } = await legacyMailbox();
-    const recovery = await newFactorKey(recoveryId, "recovery");
-    const passkey = await newFactorKey(passkeyId, "passkey-prf");
+    const legacy = await legacyMailbox();
+    const { mb, mailboxKey } = legacy;
+    const recovery = await legacy.recovery();
+    const passkey = await legacy.passkey();
     const { session } = await openSession(mb, mailboxKey);
     const keyId = mb.key!.keyId;
     const every = { name: "InvalidRequest", message: "invalid request: the upgrade must name every wrap of the mailbox, once each" };
-    expect(refusalOf(await mail().upgrade(await capFor(mb), { factors: [factorInput(recovery, keyId)] }, { session }))).toEqual(every);
-    expect(refusalOf(await mail().upgrade(await capFor(mb), { factors: [factorInput(passkey, keyId)] }, { session }))).toEqual(every);
+    for (const factor of [recovery, passkey]) {
+      const alone = await upgradeRequest(mb, [factor], keyId);
+      expect(refusalOf(await mail().upgrade(await capFor(mb), alone, { session, keyProof: await keyProof(mb, mailboxKey, alone) }))).toEqual(every);
+    }
     expect(valueOf(await mail().mailbox(await capFor(mb))).sessions).toBe("optional");
     expect(await sql(mb, "SELECT COUNT(*) AS n FROM key_wraps WHERE factor_key IS NOT NULL OR tag IS NOT NULL")).toEqual([{ n: 0 }]);
-    valueOf(await mail().upgrade(await capFor(mb), { factors: [factorInput(passkey, keyId), factorInput(recovery, keyId)] }, { session }));
+    const both = await upgradeRequest(mb, [passkey, recovery], keyId);
+    valueOf(await mail().upgrade(await capFor(mb), both, { session, keyProof: await keyProof(mb, mailboxKey, both) }));
     expect(valueOf(await mail().mailbox(await capFor(mb))).sessions).toBe("required");
   });
 
   it("takes a mailbox whose owner first removed a factor they no longer have: no proof is needed while sessions are optional", async () => {
-    const { mb, mailboxKey, recoveryId, passkeyId } = await legacyMailbox();
+    const legacy = await legacyMailbox();
+    const { mb, mailboxKey, recoveryId, passkeyId } = legacy;
     valueOf(await mail().removeWrap(await capFor(mb), passkeyId));
-    const recovery = await newFactorKey(recoveryId, "recovery");
+    const recovery = await legacy.recovery();
     const { session } = await openSession(mb, mailboxKey);
-    valueOf(await mail().upgrade(await capFor(mb), { factors: [factorInput(recovery, mb.key!.keyId)] }, { session }));
+    const request = await upgradeRequest(mb, [recovery], mb.key!.keyId);
+    valueOf(await mail().upgrade(await capFor(mb), request, { session, keyProof: await keyProof(mb, mailboxKey, request) }));
     const view = valueOf(await mail().mailbox(await capFor(mb)));
     expect([view.sessions, view.wraps.map((w) => [w.id, w.factorKey !== null])]).toEqual(["required", [[recoveryId, true]]]);
+    // A single factor admits itself (A11).
+    expect(view.wraps[0]!.admission!.by).toBe(recoveryId);
+    // Optional mode removed the passkey's record outright: it never had keys to keep (M24 keeps keyed factors).
+    expect(view.removedFactors).toEqual([]);
   });
 
-  it("names wraps of the active key only, each once, with tags under the active key and usable factor keys", async () => {
-    const { mb, mailboxKey, recoveryId, passkeyId } = await legacyMailbox();
-    const recovery = await newFactorKey(recoveryId, "recovery");
-    const passkey = await newFactorKey(passkeyId, "passkey-prf");
+  it("names wraps of the active key only, each once, with tags under the active key and usable keys", async () => {
+    const legacy = await legacyMailbox();
+    const { mb, mailboxKey, recoveryId } = legacy;
+    const recovery = await legacy.recovery();
+    const passkey = await legacy.passkey();
     const { session } = await openSession(mb, mailboxKey);
     const keyId = mb.key!.keyId;
     const other = (await newKeyPair()).keyId;
     const zeros = base64urlFromBytes(new Uint8Array(32));
+    const admissions = (await upgradeRequest(mb, [recovery, passkey], keyId)).factors;
+    const r = admissions.find((f) => f.id === recovery.id)!;
+    const p = admissions.find((f) => f.id === passkey.id)!;
+    const stranger = await newFactorKey(testId("wrp"), "recovery");
     for (const factors of [
       [],
-      [factorInput(recovery, keyId), factorInput(recovery, keyId)],
-      [factorInput(recovery, keyId), factorInput(await newFactorKey(testId("wrp"), "recovery"), keyId)],
-      [factorInput(recovery, other)],
-      [factorInput(recovery, keyId, { factorKey: zeros })],
-      [factorInput(recovery, keyId, { factorKey: random(31) })],
-      [factorInput(recovery, keyId, { tag: random(31) })],
-      [factorInput(recovery, keyId, { extra: 1 })],
-      [{ id: recoveryId, tag: random(32), tagKeyId: keyId }],
-      [factorInput(passkey, keyId), factorInput(recovery, keyId, { id: "wrp_x" })],
+      [r, r],
+      [r, factorInput(stranger, keyId, await admitFactor(mb.id, stranger, recovery))],
+      [{ ...r, tagKeyId: other }, p],
+      [{ ...r, factorKey: zeros }, p],
+      [{ ...r, factorKey: random(31) }, p],
+      [{ ...r, signingKey: random(31) }, p], // pragma: allowlist secret (a test fixture: a malformed public key)
+      [{ ...r, tag: random(31) }, p],
+      [{ ...r, admission: { by: "wrp_x", signature: r.admission.signature, selfSignature: r.admission.selfSignature } }, p],
+      [{ ...r, extra: "x" }, p],
+      [{ id: recoveryId, tag: random(32), tagKeyId: keyId }, p],
+      [p, { ...r, id: "wrp_x" }],
     ]) {
-      expect(refusalOf(await mail().upgrade(await capFor(mb), { factors }, { session })).name).toBe("InvalidRequest");
+      const request = { factors };
+      const answer = await mail().upgrade(await capFor(mb), request, { session, keyProof: await keyProof(mb, mailboxKey, request) });
+      expect([JSON.stringify(factors).slice(0, 60), refusalOf(answer).name]).toEqual([JSON.stringify(factors).slice(0, 60), "InvalidRequest"]);
     }
     expect(valueOf(await mail().mailbox(await capFor(mb))).sessions).toBe("optional");
     expect(await sql(mb, "SELECT COUNT(*) AS n FROM key_wraps WHERE factor_key IS NOT NULL OR tag IS NOT NULL")).toEqual([{ n: 0 }]);
   });
 
   it("is the owner's: an editor is Forbidden", async () => {
-    const { mb, recoveryId } = await legacyMailbox();
-    const recovery = await newFactorKey(recoveryId, "recovery");
-    expect(refusalOf(await mail().upgrade(await capFor(mb, { role: "editor" }), { factors: [factorInput(recovery, mb.key!.keyId)] }))).toEqual({
+    const legacy = await legacyMailbox();
+    const { mb } = legacy;
+    const request = await upgradeRequest(mb, [await legacy.recovery()], mb.key!.keyId);
+    expect(refusalOf(await mail().upgrade(await capFor(mb, { role: "editor" }), request))).toEqual({
       name: "Forbidden",
       message: "forbidden",
     });
@@ -361,7 +446,7 @@ function sessionMethods(mb: TestMailbox): [string, (cap: string, auth?: { sessio
     ["removeWrap", (cap, auth) => mail().removeWrap(cap, testId("wrp"), auth)],
     ["registerDevice", (cap, auth) => mail().registerDevice(cap, {}, auth)],
     ["updateDevice", (cap, auth) => mail().updateDevice(cap, {}, auth)],
-    ["removeDevice", (cap, auth) => mail().removeDevice(cap, {}, auth)],
+    ["removeDevices", (cap, auth) => mail().removeDevices(cap, {}, auth)],
   ];
 }
 
@@ -387,7 +472,7 @@ describe("sessions once required (B2, B3, M14)", () => {
 
   it("lasts 60 minutes: a millisecond before, it reads; at 60 minutes it is SessionRequired", async () => {
     const u = await upgradedMailbox();
-    const { session } = await openSession(u.mb, u.mailboxKey);
+    const session = await plainSession(u);
     u.mb.ports.clock.advance(60 * MINUTE - 1);
     valueOf(await mail().list(await capFor(u.mb), { folder: "inbox" }, { session }));
     u.mb.ports.clock.advance(1);
@@ -408,7 +493,19 @@ describe("sessions once required (B2, B3, M14)", () => {
 
   it("refuses an auth argument outside the contract's shape (B1)", async () => {
     const u = await upgradedMailbox();
-    for (const auth of ["a-token", 5, [], { bearer: u.session }, { session: 5 }, { factorProof: "x" }, { factorProof: { challengeId: "chl_1" } }, { factorProof: { challengeId: 1, answer: "a" } }]) {
+    for (const auth of [
+      "a-token",
+      5,
+      [],
+      { bearer: u.session },
+      { session: 5 },
+      { factorProof: "x" },
+      { factorProof: { challengeId: "chl_1" } },
+      { factorProof: { challengeId: 1, answer: "a" } },
+      { keyProof: "x" },
+      { keyProof: { challengeId: "chl_1", answer: "a", extra: 1 } },
+      { session: u.session, keyProof: { challengeId: newId("chl"), answer: random(32) } },
+    ]) {
       expect([auth, refusalOf(await mail().list(await capFor(u.mb), { folder: "inbox" }, auth as never)).name]).toEqual([auth, "InvalidRequest"]);
     }
   });
@@ -432,7 +529,7 @@ describe("SESSION_NEEDS (plan.md §4): one table names what every MailService me
       enroll: "bootstrap",
       challenge: "bootstrap",
       openSession: "bootstrap",
-      upgrade: "session",
+      upgrade: "key",
       list: "session",
       body: "session",
       update: "session",
@@ -447,7 +544,8 @@ describe("SESSION_NEEDS (plan.md §4): one table names what every MailService me
       removeWrap: "factor",
       registerDevice: "factor",
       updateDevice: "device-session",
-      removeDevice: "factor",
+      removeDevices: "factor",
+      revokeDevices: "email-confirmation",
     });
   });
 

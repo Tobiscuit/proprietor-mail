@@ -17,6 +17,12 @@ export interface CallContext {
    * what it stores. The token is never stored or logged. Absent: nothing.
    */
   auth?: CallAuth;
+  /**
+   * Round 3 (B7a, M22): the capability's `confirmation` claim, read strictly.
+   * MailService sets it for `revokeDevices` and for no other method, so every
+   * other method ignores an attestation by construction.
+   */
+  confirmation?: Attestation;
 }
 
 /** device-v1 B1, after MailService checked its shape (sessions.ts, parseAuth). */
@@ -25,6 +31,25 @@ export interface CallAuth {
   session: string | null;
   /** A factor proof: a live "factor" challenge and its answer (base64url, 32 bytes). */
   factorProof: { challengeId: string; answer: string } | null;
+  /** Round 3: a key proof bound to the call (only `upgrade` takes one): a live "key" challenge and its answer. */
+  keyProof: { challengeId: string; answer: string } | null;
+}
+
+/**
+ * Round 3 (capability-v1 `confirmation`, action-descriptor-v1): the
+ * dashboard's attestation of an email code, read strictly by the capability
+ * verifier and handed to `revokeDevices` only (B7a, M22).
+ */
+export interface Attestation {
+  method: string;
+  accountId: string;
+  actionKind: string;
+  /** base64url SHA-256 of the descriptor of the email challenge it confirms (43 characters). */
+  actionDigest: string;
+  /** Whole seconds since 1970: when the dashboard checked the code. */
+  at: number;
+  /** The code's id, for the audit row: at most 64 characters of [A-Za-z0-9_-]. */
+  codeId: string;
 }
 
 export interface KeyView {
@@ -36,10 +61,18 @@ export interface KeyView {
   retiredAt: string | null;
   /**
    * A retired key's successor seal (contracts/device-v1.md A4, B4): this key
-   * sealed to the key that replaced it, 109 bytes base64url. Null for the
-   * active key, and for a key retired before spec 002.
+   * sealed to the key that replaced it, 109 bytes base64url, with its
+   * transition (round 3, A11): signed by the factor whose proof the rotation
+   * spent. Null for the active key, and for a key retired before spec 002.
    */
-  successor: { keyId: string; sealed: string } | null;
+  successor: { keyId: string; sealed: string; signedBy: string; signature: string } | null;
+}
+
+/** A factor's admission (A11): by its admitter, and countersigned by the factor itself; base64url of 64 bytes each. */
+export interface FactorAdmission {
+  by: string;
+  signature: string;
+  selfSignature: string;
 }
 
 export interface WrapView {
@@ -54,9 +87,34 @@ export interface WrapView {
   createdBy: string;
   /** The factor's X25519 public key (device-v1 A2), base64url; null until the upgrade gives every factor its key. */
   factorKey: string | null;
+  /** Round 3: its Ed25519 signing key (A2b, D44), base64url of 32 bytes; null while `factorKey` is. */
+  signingKey: string | null;
+  /** Round 3: its admission (A11); null while `factorKey` is. */
+  admission: FactorAdmission | null;
   /** Its binding tag (A5), base64url, made under `tagKeyId`; null while `factorKey` is. */
   tag: string | null;
   tagKeyId: string | null;
+}
+
+/** Round 3 (B4, M24): a removed factor's record, kept (without its wrap or seals) so the signatures it made still verify. */
+export interface RemovedFactorView {
+  id: string;
+  kind: "passkey-prf" | "recovery";
+  credentialId: string | null;
+  label: string;
+  factorKey: string;
+  signingKey: string;
+  admission: FactorAdmission;
+  removedAt: string;
+}
+
+/** Round 3 (B4, B7a): the rotation an email-code revocation left due, until a removeDevices rotates. */
+export interface RotationDueView {
+  since: string;
+  /** The account that revoked last. */
+  by: string;
+  /** Every device revoked since the last rotation. */
+  devices: string[];
 }
 
 /** A kept device (device-v1 B4): public keys, its tag and when it last opened a session. */
@@ -67,9 +125,14 @@ export interface DeviceView {
   signingKey: string;
   /** base64url of the 65-byte P-256 point; null while the device is locked, or keeps nothing. */
   unlockKey: string | null;
+  /** Round 3 (A11): the unlock key's statement signed by the device's own signing key; null exactly when `unlockKey` is. */
+  unlockSignature: string | null;
+  /** Round 3 (A11): signed by the factor whose proof kept the device. */
+  admission: { by: string; signature: string };
   tag: string;
   tagKeyId: string;
   createdAt: string;
+  /** The account that kept it (M21′): another account's page opens nothing of it (K10). */
   createdBy: string;
   lastSeenAt: string | null;
 }
@@ -103,8 +166,12 @@ export interface MailboxView {
   sessions: "optional" | "required";
   keys: KeyView[];
   wraps: WrapView[];
+  /** Round 3 (M24): removed factors, kept for the factor graph (A11). */
+  removedFactors: RemovedFactorView[];
   devices: DeviceView[];
   seals: SealView[];
+  /** Round 3 (B7a): set by revokeDevices, cleared by the next rotation (removeDevices). */
+  rotationDue: RotationDueView | null;
   /** Includes the delivery mode and forwarding target on every read (M10). */
   policy: PolicyView;
 }
@@ -146,15 +213,17 @@ export interface SendResult {
 /** What `challenge()` answers (device-v1 B6). */
 export interface ChallengeView {
   id: string;
-  purpose: "session" | "factor";
-  /** The active key, for a session challenge; null for a factor challenge. */
+  purpose: "session" | "factor" | "key" | "email";
+  /** The active key, for purposes "session" and "key"; null otherwise. */
   keyId: string | null;
-  /** The factor, for a factor challenge; null for a session challenge. */
+  /** The factor, for purpose "factor"; null otherwise. */
   factorId: string | null;
-  /** 32 bytes, base64url: what a device signs with the challenge (A7). */
+  /** 32 bytes, base64url: what a device signs with a session challenge (A7). */
   nonce: string;
-  /** enc || ct, 80 bytes, base64url (A6). */
-  sealed: string;
+  /** enc || ct, 80 bytes, base64url (A6); null for purpose "email". */
+  sealed: string | null;
+  /** Round 3: base64url of the action descriptor's bytes (A10), for every purpose but "session". */
+  descriptor: string | null;
   expiresAt: string;
 }
 

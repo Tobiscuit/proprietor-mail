@@ -7,20 +7,21 @@
  */
 const CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz";
 
-export function testId(prefix: "mbx" | "msg" | "drf" | "wrp"): string {
+export function testId(prefix: "mbx" | "msg" | "drf" | "wrp" | "dev" | "chl"): string {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
-  let bits = 0;
+  // Crockford reads the bytes as one big-endian number, zero-extended at the FRONT to a multiple of 5 bits
+  // (envelope v1): 128 bits become 130, so the first symbol is 0-7, as action-descriptor-v1 checks (round 3).
+  let bits = 2;
   let value = 0;
   let out = "";
   for (const byte of bytes) {
-    value = (value << 8) | byte;
+    value = ((value << 8) | byte) & 0xfff;
     bits += 8;
     while (bits >= 5) {
       out += CROCKFORD[(value >>> (bits - 5)) & 31];
       bits -= 5;
     }
   }
-  if (bits > 0) out += CROCKFORD[(value << (5 - bits)) & 31];
   return `${prefix}_${out}`;
 }
 

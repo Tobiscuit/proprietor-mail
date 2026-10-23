@@ -30,13 +30,15 @@ import type { MailboxPorts } from "../ports";
 import { productionPorts } from "../wiring";
 import { type FolderId, Folders } from "./folders";
 import { applyMigrations, mailboxMigrations } from "./schema";
+import type { Bound } from "./confirmations";
 import {
   addKeyedWrap,
   enrolmentDevice,
   enrolmentFactors,
   registerDevice,
-  removeDevice,
+  removeDevices,
   removeKeyedWrap,
+  revokeDevices,
   splitFactorFields,
   updateDevice,
   upgradeMailbox,
@@ -512,14 +514,14 @@ export class Mailbox extends Agent<Env> {
       if (wraps.length === 0 || !wraps.some((w) => w.kind === "recovery")) throw new InvalidRequest("a recovery wrap is required");
       if (wraps.some((w) => w.keyId !== keyId)) throw new InvalidRequest("a wrap names another key");
       if (new Set(wraps.map((w) => w.id)).size !== wraps.length) throw new InvalidRequest("wrap ids repeat");
-      // device-v1 B5: wraps that all carry factor keys start the mailbox with sessions required, and may bring the enrolling device.
-      const factors = await enrolmentFactors(wraps, split.map((w) => w.fields), keyId);
-      const device = req.device === undefined ? null : await enrolmentDevice(req.device, keyId);
-      if (device !== null && factors === null) throw new InvalidRequest("a device needs factor keys");
+      // device-v1 B5: wraps that all carry factor keys start the mailbox with sessions required, and may bring the enrolling
+      // device; round 3: their admissions follow A11's cycle and the device's its admitter, every signature verified (M25).
+      const store = this.store();
+      const factors = await enrolmentFactors(wraps, split.map((w) => w.fields), keyId, store);
+      const device = req.device === undefined ? null : await enrolmentDevice(req.device, keyId, wraps, factors, store);
 
       const at = this.now();
       const by = ctx.actor.accountId;
-      const store = this.store();
       this.ctx.storage.transactionSync(() => {
         const existing = this.rows<{ key_id: string }>("SELECT key_id FROM keys WHERE retired_at IS NULL");
         if (existing.length > 0) {
@@ -544,11 +546,12 @@ export class Mailbox extends Agent<Env> {
 
   async addWrap(ctx: CallContext, wrap: unknown): Promise<MailResult<null>> {
     return this.answer("addWrap", async () => {
-      const access = await this.enter(ctx, "addWrap", "owner");
+      // A10: an add-factor proof confirms the `wrap` argument itself.
+      const access = await this.enter(ctx, "addWrap", "owner", { kind: "add-factor", request: wrap });
       if (access.sessions === "required") {
-        // device-v1 B7: once sessions are required a wrap also brings its factor key and a tag (devices.ts).
+        // device-v1 B7: once sessions are required a wrap also brings its factor key, signing key, admission and a tag (devices.ts).
         const { plain, fields } = splitFactorFields(wrap);
-        return addKeyedWrap(this.store(), ctx, parseWrap(plain, "wrap"), fields);
+        return addKeyedWrap(this.store(), ctx, access, parseWrap(plain, "wrap"), fields);
       }
       const w = parseWrap(wrap, "wrap");
       const key = this.activeKey();
@@ -564,9 +567,10 @@ export class Mailbox extends Agent<Env> {
 
   async removeWrap(ctx: CallContext, wrapId: unknown): Promise<MailResult<null>> {
     return this.answer("removeWrap", async () => {
-      const access = await this.enter(ctx, "removeWrap", "owner");
+      // A10: a remove-factor proof confirms `{ wrapId }`.
+      const access = await this.enter(ctx, "removeWrap", "owner", { kind: "remove-factor", request: { wrapId } });
       const id = v.id(wrapId, "wrap id", "wrp");
-      // device-v1 B7: once sessions are required its seals go with it, and M5′ guards the active key.
+      // device-v1 B7: once sessions are required its seals go with it, its record is kept (M24), and M5′ guards the active key.
       if (access.sessions === "required") return removeKeyedWrap(this.store(), ctx, id);
       const wrap = this.rows<{ id: string; key_id: string; kind: string }>("SELECT id, key_id, kind FROM key_wraps WHERE id = ?", id)[0];
       if (wrap === undefined) throw new NotFound();
@@ -587,7 +591,7 @@ export class Mailbox extends Agent<Env> {
   // Thin: the logic is in sessions.ts and devices.ts; each method enters
   // through `enter`, which applies SESSION_NEEDS.
 
-  /** B6: a challenge sealed to the active key or to a factor's key. MailService's `challenge`. */
+  /** B6: a challenge sealed to the active key or to a factor's key, or (purpose "email") not sealed; each but a session's with its action descriptor. MailService's `challenge`. */
   async createChallenge(ctx: CallContext, request: unknown): Promise<MailResult<ChallengeView>> {
     return this.answer("createChallenge", async () => {
       await this.enter(ctx, "challenge", "open");
@@ -595,7 +599,7 @@ export class Mailbox extends Agent<Env> {
     });
   }
 
-  /** B6, M15: a 60-minute session from a key proof, and a kept device's signature when it names one. */
+  /** B6, M15′: a 60-minute session from a key proof, and (while sessions are required) a kept device's signature or a factor proof. */
   async openSession(ctx: CallContext, request: unknown): Promise<MailResult<SessionView>> {
     return this.answer("openSession", async () => {
       await this.enter(ctx, "openSession", "open");
@@ -603,18 +607,19 @@ export class Mailbox extends Agent<Env> {
     });
   }
 
-  /** B5, M20: the factors' keys and `sessions = required`, once. */
+  /** B5, M20: the factors' keys and `sessions = required`, once, with a key proof bound to the request. */
   async upgrade(ctx: CallContext, request: unknown): Promise<MailResult<null>> {
     return this.answer("upgrade", async () => {
-      const access = await this.enter(ctx, "upgrade", "owner");
+      const access = await this.enter(ctx, "upgrade", "owner", { kind: "upgrade", request: { factors: fieldOf(request, "factors") } });
       return upgradeMailbox(this.store(), ctx, access, request);
     });
   }
 
-  /** B7, F1: keeps the calling browser, with a factor proof. */
+  /** B7, F1: keeps the calling browser, with a factor proof bound to the request. */
   async registerDevice(ctx: CallContext, request: unknown): Promise<MailResult<DeviceView>> {
     return this.answer("registerDevice", async () => {
-      const access = await this.enter(ctx, "registerDevice", "owner");
+      const device = fieldOf(request, "device");
+      const access = await this.enter(ctx, "registerDevice", "owner", { kind: "register-device", request: { device, seal: fieldOf(request, "seal") }, device });
       return registerDevice(this.store(), ctx, access, request);
     });
   }
@@ -627,11 +632,21 @@ export class Mailbox extends Agent<Env> {
     });
   }
 
-  /** B7, F6, M18: the device goes and the key rotates, in one transaction. */
-  async removeDevice(ctx: CallContext, request: unknown): Promise<MailResult<{ keyId: string }>> {
-    return this.answer("removeDevice", async () => {
-      const access = await this.enter(ctx, "removeDevice", "owner");
-      return removeDevice(this.store(), ctx, access, request);
+  /** B7, F6, F14, M18′: the devices (0 to 20) go and the key rotates, in one transaction, with a factor proof bound to the request. */
+  async removeDevices(ctx: CallContext, request: unknown): Promise<MailResult<{ keyId: string }>> {
+    return this.answer("removeDevices", async () => {
+      const deviceIds = fieldOf(request, "deviceIds");
+      const bound: Bound = { kind: "remove-devices", request: { deviceIds, rotation: fieldOf(request, "rotation") }, deviceIds };
+      const access = await this.enter(ctx, "removeDevices", "owner", bound);
+      return removeDevices(this.store(), ctx, access, request);
+    });
+  }
+
+  /** B7a, M22: an email code revokes devices, and does nothing else; a rotation is then due. No session. */
+  async revokeDevices(ctx: CallContext, request: unknown): Promise<MailResult<{ revoked: string[] }>> {
+    return this.answer("revokeDevices", async () => {
+      const access = await this.enter(ctx, "revokeDevices", "owner");
+      return revokeDevices(this.store(), ctx, access, request);
     });
   }
 
@@ -1007,13 +1022,15 @@ export class Mailbox extends Agent<Env> {
   /**
    * Every MailService call comes in here: the mailbox's identity (M4), the
    * caller's role, then what the method needs by SESSION_NEEDS (a session, a
-   * factor proof, a device's session: device-v1 B2, B3), in one place. The
-   * caller passes the MailService method it serves; the table decides.
+   * factor or key proof, a device's session: device-v1 B2, B3), in one place.
+   * The caller passes the MailService method it serves; the table decides. A
+   * method that takes a proof also passes the action it confirms, built from
+   * its own arguments (A10, M17′).
    */
-  private async enter(ctx: CallContext, method: MailServiceMethod, role: "open" | "send" | "owner"): Promise<Access> {
+  private async enter(ctx: CallContext, method: MailServiceMethod, role: "open" | "send" | "owner", bound?: Bound): Promise<Access> {
     await this.ensureIdentity(ctx.mailbox, ctx.actor.accountId);
     this.requireRole(ctx, role);
-    return checkAccess(this.store(), ctx, method);
+    return checkAccess(this.store(), ctx, method, bound);
   }
 
   /** The key ring's modules reach this object only through this (src/mailbox/store.ts). */
@@ -1163,6 +1180,12 @@ export class Mailbox extends Agent<Env> {
       return null;
     }
   }
+}
+
+/** A member of a request as the caller sent it (for A10's digest, which is taken before the request's shape is checked); undefined for anything but a plain object. */
+function fieldOf(request: unknown, name: string): unknown {
+  if (typeof request !== "object" || request === null || Array.isArray(request)) return undefined;
+  return Object.hasOwn(request, name) ? (request as Record<string, unknown>)[name] : undefined;
 }
 
 function invalidForward(): never {

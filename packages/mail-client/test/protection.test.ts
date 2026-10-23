@@ -67,7 +67,9 @@ describe("PROTECTION: spec 002 §5, the promise amended", () => {
   test("devices is the spec's \"Devices you keep unlocked.\" text, with {operator} filled in", () => {
     const text = blockquoteAfter(spec002, "**Devices you keep unlocked.**");
     expect(text).toContain("{operator}");
-    expect(text).toContain("A device you keep unlocked opens your mail without your security key");
+    // D43: "passkey" means the phone's or laptop's own; the factors are named "passkey" and "recovery key" only.
+    expect(text).toContain("A device you keep unlocked opens your mail without your passkey");
+    expect(text).toContain("your passkey and your recovery key");
     expect(PROTECTION.devices("{operator}")).toBe(text);
     expect(PROTECTION.devices("Acme")).toBe(text.replaceAll("{operator}", "Acme"));
     expect(PROTECTION.devices("Acme")).not.toContain("{operator}");
@@ -77,6 +79,12 @@ describe("PROTECTION: spec 002 §5, the promise amended", () => {
     expect(rows002.length).toBe(3);
     expect(PROTECTION.metadata.slice(rows001.length).map((m) => [m.what, m.where, m.why])).toEqual(rows002);
     expect(PROTECTION.metadata.length).toBe(rows001.length + rows002.length);
+  });
+
+  test("D43: the owner-facing words name the factors \"passkey\" and \"recovery key\" and mention no hardware", () => {
+    const words = [PROTECTION.devices("Acme"), ...PROTECTION.metadata.slice(rows001.length).map((m) => `${m.what} ${m.where} ${m.why}`)].join(" ");
+    expect(words).not.toMatch(/security key|hardware|YubiKey|USB|NFC/i);
+    expect(PROTECTION.devices("Acme")).toMatch(/passkey/);
   });
 
   test("R11, D33: spec 002's words never assume a phone, a face scan or a fingerprint", () => {

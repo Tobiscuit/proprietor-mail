@@ -128,10 +128,10 @@ export function callContext(mb: TestMailbox, opts: { role?: Role; accountId?: st
  * exactly as enrolment leaves it.
  */
 export async function provisionMailbox(
-  opts: { status?: MailboxStatus; enroll?: boolean; sesConfigurationSet?: string | null; addresses?: string[] } = {},
+  opts: { status?: MailboxStatus; enroll?: boolean; sesConfigurationSet?: string | null; addresses?: string[]; id?: string } = {},
 ): Promise<TestMailbox> {
   const status = opts.status ?? "active";
-  const id = freshMailboxId();
+  const id = opts.id ?? freshMailboxId();
   const businessId = freshBusinessId();
   const address = `hello.${id.slice(4, 12)}@mail.test`;
   const addresses = [address, ...(opts.addresses ?? [])];
@@ -165,8 +165,11 @@ export function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
 }
 
-/** A capability as the dashboard would mint it (contracts/capability-v1.md), signed with the test key. */
-export async function mint(opts: { business: string; mbx?: string; role?: Role; sub?: string; iat?: number; jti?: string }): Promise<string> {
+/**
+ * A capability as the dashboard would mint it (contracts/capability-v1.md), signed with the test key; with
+ * `confirmation`, the claim an email code's attestation travels in (round 3, B7a), copied in as given.
+ */
+export async function mint(opts: { business: string; mbx?: string; role?: Role; sub?: string; iat?: number; jti?: string; confirmation?: unknown }): Promise<string> {
   const claims = canonicalClaims({
     sub: opts.sub ?? "acc_owner",
     business: opts.business,
@@ -175,8 +178,9 @@ export async function mint(opts: { business: string; mbx?: string; role?: Role; 
     iat: opts.iat ?? nowSeconds(),
     jti: opts.jti ?? randomJti(),
   });
+  if (opts.confirmation !== undefined) claims.confirmation = opts.confirmation;
   return signToken(canonicalHeader(TEST_KID), claims, bytesFromBase64url(TEST_KEY_B64URL));
 }
 
-export const capFor = (mb: TestMailbox, opts: { role?: Role; sub?: string; jti?: string } = {}) =>
+export const capFor = (mb: TestMailbox, opts: { role?: Role; sub?: string; jti?: string; confirmation?: unknown } = {}) =>
   mint({ business: mb.businessId, mbx: mb.id, ...opts });

@@ -2,28 +2,36 @@
  * Enrollment (contracts/mail-client-v1.md "Enrollment", as amended by spec
  * 002): the key pair is made in the browser and wrapped twice, under the
  * passkey's PRF output and under a recovery key the owner is shown once and
- * must prove saved. Each wrap carries its factor's key (device-v1 A2, from
- * the same secret) and its tag under the new key (A5), so the mailbox
- * requires sessions from the start (B5).
+ * must prove saved. Each wrap carries its factor's key and signing key
+ * (device-v1 A2, A2b, from the same secret), its admission (A11: the factors
+ * sorted by id, each admitted by the next, the last by the first; a single
+ * factor by itself) and its tag under the new key (A5), so the mailbox
+ * requires sessions from the start (B5). A device kept at enrollment is
+ * admitted by the recovery factor, which is its trustRoot, and signs its own
+ * unlock key.
  */
 import {
   bindingKey,
   bindingTag,
+  bootstrapAdmitters,
+  factorSigningKey,
   fingerprint,
   generateMailboxKey,
   generateSigningKey,
   generateUnlockKey,
   newId,
   sealKey,
+  signStatement,
   x25519Supported,
   type BindingKey,
+  type FactorPrivateKey,
   type MailboxPrivateKey,
   type MailboxPublicKey,
 } from "@proprietor/mail-crypto";
 import { base64url, randomBytes } from "./bytes";
-import { deviceLabelOk } from "./device-store";
+import { accountIdOk, deviceLabelOk } from "./device-store";
 import { EnrollmentDiscarded, InvalidDeviceLabel, MailboxNotProvisioned, RecoveryNotConfirmed, StorageUnavailable, UnsupportedBrowser } from "./errors";
-import { decryptOnlyCopy, makePasskeyWrap, makeRecoveryWrap } from "./factors";
+import { admissionOf, decryptOnlyCopy, makePasskeyWrap, makeRecoveryWrap, type MadeWrap } from "./factors";
 import type { Ring } from "./keyring";
 import { DEFAULT_IDLE_LOCK_MS, LOCK_AFTER_MS, Session } from "./session";
 import type {
@@ -76,6 +84,7 @@ class EnrollmentImpl implements Enrollment {
   private priv: MailboxPrivateKey | null;
   private readonly pub: MailboxPublicKey;
   private readonly binding: BindingKey;
+  private readonly trustStart: Uint8Array;
   private readonly wraps: WrapInput[];
   private readonly keep: KeepAtEnrollment | null;
   private readonly now: () => number;
@@ -89,6 +98,7 @@ class EnrollmentImpl implements Enrollment {
     priv: MailboxPrivateKey,
     pub: MailboxPublicKey,
     binding: BindingKey,
+    trustStart: Uint8Array,
     recoveryKey: string,
     wraps: WrapInput[],
     passkey: "prf" | "none",
@@ -102,6 +112,7 @@ class EnrollmentImpl implements Enrollment {
     this.priv = priv;
     this.pub = pub;
     this.binding = binding;
+    this.trustStart = trustStart;
     this.wraps = wraps;
     this.keep = keep;
     this.now = now;
@@ -147,15 +158,19 @@ class EnrollmentImpl implements Enrollment {
     if (this.keep !== null && this.kept === null) throw new TypeError("commit() first: the device is kept once Mail has it");
     // The session takes the decrypt-only copy made at startEnrollment; the wrappable key is dropped here (K1′).
     const ring = this.ring();
+    const store = options?.store ?? this.keep?.store ?? null;
     const session = new Session({
       ring,
       keys: new Map([[this.pub.keyId, this.priv]]),
       binding: this.binding,
-      store: options?.store ?? this.keep?.store ?? null,
+      store,
+      accountId: options?.accountId ?? this.keep?.record.accountId ?? null,
       signInId: options?.signInId !== undefined ? options.signInId : (this.keep?.record.signInId ?? null),
       now: options?.now ?? this.now,
       freshFactor: null,
       idleLockMs: options?.idleLockMs ?? DEFAULT_IDLE_LOCK_MS,
+      // Every factor here was made here and admitted by the cycle; trust starts from the recovery factor.
+      trustStart: this.trustStart,
     });
     if (this.kept !== null) session.attachDevice(this.kept, this.keep!.lockedTag);
     this.priv = null;
@@ -170,9 +185,11 @@ class EnrollmentImpl implements Enrollment {
       sessions: "required",
       keys: [active],
       active,
-      wraps: this.wraps.map((w) => ({ ...w, factorKey: w.factorKey ?? null, tag: w.tag ?? null, tagKeyId: w.tagKeyId ?? null })),
-      devices: this.keep === null ? [] : [{ ...this.keep.request.device, createdAt: "", createdBy: "", lastSeenAt: null }],
+      wraps: this.wraps.map((w) => ({ ...w, factorKey: w.factorKey ?? null, signingKey: w.signingKey ?? null, admission: w.admission ?? null, tag: w.tag ?? null, tagKeyId: w.tagKeyId ?? null })), // pragma: allowlist secret (public values)
+      removedFactors: [],
+      devices: this.keep === null ? [] : [{ ...this.keep.request.device, createdAt: "", createdBy: this.keep.record.accountId, lastSeenAt: null }],
       seals: this.keep?.request.seal ? [{ keyId: this.pub.keyId, to: { kind: "device", id: this.keep.request.device.id }, sealed: this.keep.request.seal }] : [],
+      rotationDue: null,
     };
   }
 
@@ -183,9 +200,16 @@ class EnrollmentImpl implements Enrollment {
   }
 }
 
-/** The kept device made with the mailbox key (F12): its keys, its seal and its tag under the new key. */
-async function keepAtEnrollment(mailboxId: string, priv: MailboxPrivateKey, binding: BindingKey, keep: NonNullable<EnrollmentOptions["keep"]>): Promise<KeepAtEnrollment> {
+/** The kept device made with the mailbox key (F12): its keys, its seal and its tag under the new key, admitted by `admitter`. */
+async function keepAtEnrollment(
+  mailboxId: string,
+  priv: MailboxPrivateKey,
+  binding: BindingKey,
+  keep: NonNullable<EnrollmentOptions["keep"]>,
+  admitter: FactorPrivateKey,
+): Promise<KeepAtEnrollment> {
   if (!deviceLabelOk(keep.label)) throw new InvalidDeviceLabel();
+  if (!accountIdOk(keep.accountId)) throw new TypeError("keep names the signed-in account (K10)");
   const lockAfter: LockAfter = keep.lockAfter ?? "sign-out";
   if (!(lockAfter in LOCK_AFTER_MS)) throw new TypeError("an unknown lock setting");
   const deviceId = newId("dev");
@@ -194,8 +218,20 @@ async function keepAtEnrollment(mailboxId: string, priv: MailboxPrivateKey, bind
   const seal = unlock === null ? null : await sealKey(priv, { mailboxId }, { kind: "device", deviceId, publicKey: unlock.publicKey });
   const tag = await bindingTag(binding, { kind: "device", deviceId, label: keep.label, signingKey: signing.publicKey, unlockKey: unlock?.publicKey ?? null }); // pragma: allowlist secret (a pattern, public keys or a test double, not a secret)
   const lockedTag = unlock === null ? tag : await bindingTag(binding, { kind: "device", deviceId, label: keep.label, signingKey: signing.publicKey, unlockKey: null }); // pragma: allowlist secret (a pattern, public keys or a test double, not a secret)
+  // A11: the device signs its own unlock key, and one of the factors made here admits it.
+  const unlockSignature = unlock === null ? null : await signStatement(signing.privateKey, { kind: "unlock-key", mailboxId, deviceId, unlockKey: unlock.publicKey });
+  const admission = { by: admitter.factorId, signature: await signStatement(admitter, { kind: "admit-device", mailboxId, deviceId, label: keep.label, signingKey: signing.publicKey, admitterId: admitter.factorId }) }; // pragma: allowlist secret (a public key)
   const request: RegisterDeviceRequest = {
-    device: { id: deviceId, label: keep.label, signingKey: base64url(signing.publicKey), unlockKey: unlock === null ? null : base64url(unlock.publicKey), tag, tagKeyId: binding.keyId },
+    device: {
+      id: deviceId,
+      label: keep.label,
+      signingKey: base64url(signing.publicKey), // pragma: allowlist secret (a public key)
+      unlockKey: unlock === null ? null : base64url(unlock.publicKey),
+      unlockSignature,
+      admission,
+      tag,
+      tagKeyId: binding.keyId,
+    },
     seal,
   };
   return {
@@ -203,6 +239,7 @@ async function keepAtEnrollment(mailboxId: string, priv: MailboxPrivateKey, bind
     request,
     record: {
       mailboxId,
+      accountId: keep.accountId,
       deviceId,
       label: keep.label,
       signingKey: signing.privateKey, // pragma: allowlist secret (a non-extractable CryptoKey reference)
@@ -210,6 +247,7 @@ async function keepAtEnrollment(mailboxId: string, priv: MailboxPrivateKey, bind
       signingPublic: request.device.signingKey,
       unlockPublic: request.device.unlockKey,
       lastKeyId: binding.keyId,
+      trustRoot: base64url(factorSigningKey(admitter)),
       lockAfter,
       signInId: keep.signInId ?? null,
     },
@@ -227,12 +265,18 @@ export async function startEnrollment(
   const { publicKey, privateKey } = await generateMailboxKey();
   // Every factor gets its factor key and a tag under the new key: the mailbox requires sessions from the start (device-v1 B5).
   const binding = await bindingKey(privateKey, { mailboxId: mailbox.id });
-  const wraps: WrapInput[] = [];
-  if (passkey !== null) wraps.push(await makePasskeyWrap(mailbox.id, privateKey, passkey, binding));
+  const made: MadeWrap[] = [];
+  if (passkey !== null) made.push(await makePasskeyWrap(mailbox.id, privateKey, passkey, binding));
   const recovery = await makeRecoveryWrap(mailbox.id, privateKey, binding);
-  wraps.push(recovery.wrap);
-  const keep = options?.keep === undefined ? null : await keepAtEnrollment(mailbox.id, privateKey, binding, options.keep);
+  made.push(recovery);
+  // A11 at enrollment: every factor is present, so each is admitted by the next in id order, the last by the first.
+  const keyOf = new Map(made.map((m) => [m.wrap.id, m.factor!]));
+  const admitterOf = new Map(bootstrapAdmitters(made.map((m) => m.wrap.id)).map((c) => [c.factorId, c.admitterId]));
+  const wraps: WrapInput[] = [];
+  for (const m of made) wraps.push({ ...m.wrap, admission: await admissionOf(mailbox.id, { facts: m.wrap, key: m.factor! }, keyOf.get(admitterOf.get(m.wrap.id)!)!) });
+  const keep = options?.keep === undefined ? null : await keepAtEnrollment(mailbox.id, privateKey, binding, options.keep, recovery.factor!);
   // Every wrap and seal is made; from here on only a decrypt-only copy of the key exists in this page (K1′).
   const decryptOnly = await decryptOnlyCopy(mailbox.id, privateKey);
-  return new EnrollmentImpl(mailbox.id, decryptOnly, publicKey, binding, recovery.recoveryKey, wraps, passkey === null ? "none" : "prf", keep, options?.now ?? Date.now);
+  const trustStart = factorSigningKey(recovery.factor!);
+  return new EnrollmentImpl(mailbox.id, decryptOnly, publicKey, binding, trustStart, recovery.recoveryKey, wraps, passkey === null ? "none" : "prf", keep, options?.now ?? Date.now);
 }

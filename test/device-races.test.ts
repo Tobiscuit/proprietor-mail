@@ -1,9 +1,9 @@
-import { sealChallenge, verifyDeviceProof } from "@proprietor/mail-crypto";
+import { sealChallenge, verifyDeviceProof, verifyStatement } from "@proprietor/mail-crypto";
 import { runInDurableObject } from "cloudflare:test";
 import { exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import type { Proofs } from "../src/ports";
-import { challenge, factorProof, keepDevice, openChallenge, openSession, rotationFor, signProof, type TestDevice, type Upgraded, upgradedMailbox } from "./support/browser";
+import { challenge, keepDevice, openChallenge, plainSession, removeDevices, rotationFor, signProof, type TestDevice, type Upgraded, upgradedMailbox } from "./support/browser";
 import { base64urlFromBytes, bytesFromBase64url } from "./support/capability-tokens";
 import { capFor, type TestMailbox } from "./support/mailbox";
 import { refusalOf, valueOf } from "./support/results";
@@ -43,6 +43,7 @@ function gatedProofs(): { proofs: Proofs; gate: { entered: boolean; open: boolea
     gate,
     proofs: {
       sealChallenge,
+      verifyStatement,
       async verifyDeviceProof(signingKey, ids, signature) {
         gate.entered = true;
         while (!gate.open) await tick();
@@ -56,8 +57,8 @@ function gatedProofs(): { proofs: Proofs; gate: { entered: boolean; open: boolea
 async function twoDevices(): Promise<{ u: Upgraded; phone: TestDevice; laptop: TestDevice; remover: string }> {
   const u = await upgradedMailbox();
   const phone = await keepDevice(u);
-  const laptop = await keepDevice(u, { session: (await openSession(u.mb, u.mailboxKey)).session });
-  const remover = (await openSession(u.mb, u.mailboxKey)).session;
+  const laptop = await keepDevice(u, { session: await plainSession(u) });
+  const remover = await plainSession(u);
   return { u, phone, laptop, remover };
 }
 
@@ -74,8 +75,8 @@ async function phoneOpensBehindTheGate(u: Upgraded, phone: TestDevice) {
 }
 
 async function removeDuringTheCheck(u: Upgraded, deviceId: string, remover: string) {
-  const { rotation } = await rotationFor(u.mb, deviceId);
-  return valueOf(await mail().removeDevice(await capFor(u.mb), { deviceId, rotation }, { session: remover, factorProof: await factorProof(u.mb, u.recovery) }));
+  const { rotation } = await rotationFor(u.mb, deviceId, u.recovery);
+  return valueOf(await removeDevices(u, { deviceIds: [deviceId], rotation }, remover, u.recovery));
 }
 
 describe("openSession checks the device and the key again after it awaits the signature check (B6)", () => {
@@ -106,12 +107,12 @@ describe("openSession checks the device and the key again after it awaits the si
 
 describe("a rotation deletes the old key's session challenges (B7)", () => {
   it("leaves none of them, used or not, and keeps the factor challenges", async () => {
-    const { u, laptop, remover } = await twoDevices();
+    const { u, phone, laptop, remover } = await twoDevices();
     const oldKey = u.mb.key!.keyId;
     await challenge(u.mb, { purpose: "session" });
     const used = await challenge(u.mb, { purpose: "session" });
-    valueOf(await mail().openSession(await capFor(u.mb), { challengeId: used.id, answer: await openChallenge(u.mb.id, used, u.mailboxKey) }));
-    const factor = await challenge(u.mb, { purpose: "factor", factorId: u.passkey.id });
+    valueOf(await mail().openSession(await capFor(u.mb), { challengeId: used.id, answer: await openChallenge(u.mb.id, used, u.mailboxKey), device: { id: phone.id, signature: await signProof(u.mb.id, phone, used) } }));
+    const factor = await challenge(u.mb, { purpose: "factor", factorId: u.passkey.id, action: { kind: "remove-factor", request: base64urlFromBytes(crypto.getRandomValues(new Uint8Array(32))) } });
     expect((await sql<{ n: number }>(u.mb, "SELECT COUNT(*) AS n FROM challenges WHERE purpose = 'session' AND target_id = ?", oldKey))[0]!.n).toBeGreaterThanOrEqual(2);
     await removeDuringTheCheck(u, laptop.id, remover);
     expect(await sql(u.mb, "SELECT COUNT(*) AS n FROM challenges WHERE purpose = 'session' AND target_id = ?", oldKey)).toEqual([{ n: 0 }]);

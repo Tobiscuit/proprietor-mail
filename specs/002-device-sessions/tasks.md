@@ -256,23 +256,176 @@ with:
 A read-only review asked for these before the operator's upgrade. Each was
 checked against the code first; none was wrong.
 
-- [ ] R2-1 (D1, D3) K3 flags a recipient whose tag fails instead of stopping
+- [x] R2-1 (D1, D3) K3 flags a recipient whose tag fails instead of stopping
   everything: never sealed to, shown, removable (contract Part C K3)
-- [ ] R2-2 (D1) K8: a rotation opens its successor seal and the used factor's
+- [x] R2-2 (D1) K8: a rotation opens its successor seal and the used factor's
   seal before it is sent; tested with a corrupted seal
-- [ ] R2-3 (D1) K9: the factor just used derives the factor key Mail lists;
+- [x] R2-3 (D1) K9: the factor just used derives the factor key Mail lists;
   one that does not is flagged; tested
-- [ ] R2-4 (D1, D2, D3) the upgrade names every factor (B5, M20); `setFactorKey`,
+- [x] R2-4 (D1, D2, D3) the upgrade names every factor (B5, M20); `setFactorKey`,
   the partial upgrade and the stale-factor flows are removed
-- [ ] R2-5 (D3) the body route's header is `x-proprietor-mail-session-token`,
+- [x] R2-5 (D3) the body route's header is `x-proprietor-mail-session-token`,
   a name Cloudflare's log redaction covers
-- [ ] R2-6 (architect) the rollback text and the upgrade's order (spec §7,
+- [x] R2-6 (architect) the rollback text and the upgrade's order (spec §7,
   plan §8)
-- [ ] R2-7 (D3) the dashboard vendors the packages from the merged commit
-- [ ] R2-8 (D1) the workaround for WebKit bug 307095 leaves #15 for the
+- [x] R2-7 (D3) the dashboard vendors the packages from the merged commit
+- [x] R2-8 (D1) the workaround for WebKit bug 307095 leaves #15 for the
   branch `feat/002-webkitgtk-workaround`; CI tests WebKit on macOS only
+
+Round 2 audited (architect, 2026-10-19): D1 #15 at c908477, D2 #10 at
+2eab8b3, D4 #16 at a05d74a (965 passed, 8 skipped; its new end-to-end test
+plants a device in Mail's storage and the real client flags it, keeps
+reading, refuses other removals, and removes it), D3 seo-engine #13 at
+b10c16c (unit 253, render 111, Chromium 13). Mutations that fail tests: a
+failing tag throwing again, a flagged device not reported, an upgrade that
+misses a wrap, the header back to its unredacted name.
 
 ## Held
 
 - [H] Mail enforcing timed locks (spec §8), until the operator wants it.
 - [H] The external cryptographic review (D32), before the first client mailbox.
+
+## Round 3: Better Auth, bound confirmations, factor signatures (2026-10-22)
+
+The spec's D34–D43, `plan.md` §10, `contracts/device-v1.md` (every change
+marked "round 3") and `contracts/action-descriptor-v1.md` with its vectors
+are the inputs. One builder at a time, in this order; each slice is audited
+before the next starts. Every rule of "Rules for every builder" holds, and
+these:
+
+- Use context7 at every step of the way. Memory isn't a source for any of
+  it. (Load the tools with ToolSearch
+  `select:mcp__context7__resolve-library-id,mcp__context7__query-docs`;
+  resolve and query before writing or reviewing code against any API; take
+  versions from `npm view` or the lockfile; where context7 has nothing, the
+  official docs or the RFC text, and what could not be verified goes into the
+  spec.)
+- Run every build, test run and dev server inside its own memory box
+  (`boxed`, with `timeout`), in the foreground, and leave nothing running.
+- Read the `package.json` scripts for self-calls before the first build.
+
+**Branches.** mail-crypto lives on the client branch (#15), so R3-1 changes
+it there. The Worker needs round 3's mail-crypto, so R3-2 first merges the
+client branch into the Worker branch (#10 then carries #15's commits; both
+are pull requests into the spec branch, so nothing is duplicated when they
+merge). R3-4 merges both into the integration branch (#16).
+
+### R3-1a — mail-crypto  *(builder)*
+
+**Owns:** `packages/mail-crypto/**` on `feat/002-device-client`,
+`contracts/device-v1.vectors.json`.
+
+- [ ] RFC 8785 for the values descriptors and requests hold, the action
+  descriptor (build, strict read, digest) and the request digest (A10);
+  tests run every vector of `action-descriptor-v1.vectors.json`
+- [ ] A2b factor signing keys; A11 statements (sign and verify each); the
+  factor graph helper (trusted component, admitted devices and factors,
+  trusted transitions) as pure functions over a view
+- [ ] A6: `factor` and `key` challenges open only with their action digest
+- [ ] device-v1 vectors: A9's round 3 additions
+
+**Acceptance:** every descriptor vector (valid parses to its object and
+digest; every invalid one refused); a statement fails after any one field
+changes; a challenge opened with another digest fails; the factor graph
+connects a later factor through its admission and refuses an admission
+whose self-signature or admitter key fails; a transition by a factor
+outside the component is refused; the runtime scan passes.
+
+### R3-1b — mail-client  *(the same builder, after R3-1a is audited)*
+
+**Owns:** `packages/mail-client/**`, the API part of
+`contracts/mail-client-v1.md`'s round 3 amendment.
+
+- [ ] K10: the store keyed by mailbox and account (version 2), `accountId`
+  everywhere a record is read or written; `Forbidden` wipes nothing
+- [ ] K11: `lastKeyId` compare-and-swap in one transaction; resume again on a
+  miss
+- [ ] K2″ and K3′ wherever K2′ and K3 ran; `trustRoot` in the record
+- [ ] K4/K12: `FreshFactor.answer` takes the request it confirms; the
+  descriptor built and compared; signed transitions, admissions and unlock
+  keys in every flow (keep, rekey, enrollment, upgrade, add a passkey,
+  replace the recovery key)
+- [ ] D38: a deviceless session proof carries a factor proof
+- [ ] D40, K13: `removeDevices` (several; none while a rotation is due;
+  every flagged device included); `revokeRequest`; `rotationDue`
+- [ ] D34: lock checks unchanged in meaning ("signed-out" on a changed id and
+  on null after non-null), with tests for both
+- [ ] PROTECTION's text follows spec §5 as amended ("passkey")
+
+**Acceptance:** another account's record is never read, opened or deleted
+(resume, unlock, `DeviceRevoked`, `Forbidden`); two pages: the slower one's
+`lastKeyId` write misses and it resumes again; a forked chain (a key from a
+removed device, a successor and seal made with it) is refused at a factor
+unlock and at resume; a planted device with a genuine tag but no admission is
+flagged and never sealed to; a factor challenge for another request is not
+answered; `removeDevices` with two flagged devices succeeds; with a rotation
+due, a FreshFactor finishes it first; every earlier test still passes.
+
+**Mutation checks (the audit runs them):** drop the account check in
+`resumeDevice`; drop the transition-signature check; seal to a recipient
+without an admission; answer a factor challenge without comparing the
+descriptor; write `lastKeyId` unconditionally. Each must fail a test.
+
+### R3-2 — the Mail Worker  *(builder, after R3-1 is audited)*
+
+**Owns:** on `feat/002-mail-worker` after merging `feat/002-device-client`:
+`src/**`, `test/**`, `packages/mail-crypto/src/proofs.ts` and its test, the
+root `package.json` and lockfile.
+
+- [ ] 0003 as §10.1; the view's new fields; `removed_factors`
+- [ ] `challenge` with actions and the four purposes; descriptors issued and
+  stored by digest; `sealChallenge` with the digest (A6)
+- [ ] M15′: sessions need a device signature or a factor proof
+- [ ] M17′: every factor and key proof checked against its call's own request
+- [ ] M21′: another account's device is `Forbidden`, nothing written
+- [ ] M22, B7a: `revokeDevices` with the capability's `confirmation`;
+  `rotation_due`; audit with `codeId`
+- [ ] M18′, M23: `removeDevices` (0 to 20, 0 only while due; transition
+  signed by the proof's factor; clears the due rotation)
+- [ ] M24, M25: removed factors kept; every signature checked before writing
+- [ ] capability: the `confirmation` claim read strictly, only for
+  `revokeDevices`
+
+**Acceptance:** each attestation case of the descriptor vectors; two
+concurrent `revokeDevices` with one attestation: exactly one is applied; an
+email attestation never opens any other method; a factor proof answered for
+one descriptor is refused on another call; a relay's rotation with the
+owner's proof and session is refused; a session with a key proof alone is
+refused while required; another account's device answers `Forbidden` and
+its record and sessions are untouched; `removeDevices` of two devices; a
+rotation whose transition is unsigned or signed by another factor is
+refused; the whole earlier suite passes.
+
+**Mutation checks:** accept an email attestation on `removeDevices`; drop the
+request-digest comparison; let a key proof alone open a session; answer
+another account's device with `DeviceRevoked`; accept a transition signed by
+a factor other than the proof's. Each must fail a test.
+
+### R3-3 — the dashboard's inbox  *(after R3-2; in the dashboard's repository)*
+
+**Owns:** as D3, on `feat/inbox-kept-devices` stacked on the dashboard's
+spec 008 branch; and `feat/mail-shell-types` (`lib/mail.ts`'s types). Never
+the shell's sign-in code.
+
+- [ ] D34: `InboxShell.signInId` from `currentSignInId()`, `accountId` from
+  `currentSession().accountId`
+- [ ] the new actions, `revokeWithCode` (the code checked and the capability
+  minted in one server action), the screens of F13 and F14
+- [ ] the vendored packages from the integration commit
+
+**Acceptance:** the dashboard's suites (`npm run typecheck`, `npm test`,
+`npx vitest run --project screens test/screens/inbox-flow.test.ts`), with:
+a second account on the same browser profile sees no kept device and the
+owner's still opens; "when I sign out" locks after a new sign-in; F13 with a
+fake code service; F14.
+
+### R3-4 — integration  *(architect)*
+
+- [ ] merge R3-1 and R3-2 into `integration/002-device-sessions`; the
+  end-to-end test grows F13, F14, the account check, a relayed proof, and a
+  fork attempt, with the real crypto on both sides
+
+### R3-5 — the formal model  *(architect)*
+
+- [ ] `formal/002/ir.md` first (round 3's design, its expected verdicts),
+  then `device.spthy`; the bounded sweep, boxed; README's results

@@ -19,6 +19,7 @@ import { mailboxRpc } from "./service";
  */
 const OPERATOR = /^[A-Za-z0-9._@:-]{1,100}$/;
 
+/** As with MailService: its helper is `#private`, so Workers RPC serves only the three operator methods. */
 export class MailAdmin extends WorkerEntrypoint<Env> {
   async suspend(input: { mailboxId: string; operator: string }): Promise<MailResult<{ status: "suspended" }>> {
     return this.#run("suspend", input, async (entry, operator) => {

@@ -1,22 +1,26 @@
 /**
- * Factors (spec 002 §3: a security key or passkey with PRF, or the recovery
+ * Factors (spec 002 §3: a passkey with PRF, or the recovery
  * key). Using one opens its envelope v1 wrap AND derives its factor key
  * (contracts/device-v1.md A2) from the same secret, which is zeroed at once.
  * The wrap's key is the factor's anchor for K2′ (a). When the wrap is of a
  * retired key, the active key comes from the factor's seal (K2′ (b)), and the
- * chain walk must then lead back to the anchor. K9: the factor key it derives
- * is compared with the one the key ring lists for it; a mismatch flags it.
+ * chain walk must then lead back to the anchor. K9: the factor key and the
+ * signing key it derives (A2, A2b) are compared with the ones the key ring
+ * lists for it; a mismatch flags it, and it is then no start of the factor
+ * graph (A11), so nothing is trusted from it.
  */
 import {
   bindingTag,
   DecryptionFailed,
   deriveFactorKey,
   factorPublicKey,
+  factorSigningKey,
   newId,
   newRecoveryKey,
   openKeySeal,
   parseRecoveryKey,
   RecoveryKeyTypo as CryptoRecoveryKeyTypo,
+  signStatement,
   unwrapPrivateKey,
   wrapPrivateKey,
   type BindingKey,
@@ -27,7 +31,7 @@ import { base64url, bytesEqual, fromBase64url } from "./bytes";
 import { KeySubstitutionDetected, NoMatchingWrap, RecoveryKeyTypo, WrongRecoveryKey } from "./errors";
 import type { Ring, RingWrap } from "./keyring";
 import { assertPasskeyPrf, createPasskeyWithPrf } from "./passkeys";
-import type { PasskeyOptions, ReAuth, WrapInput } from "./types";
+import type { FactorAdmission, PasskeyOptions, ReAuth, WrapInput } from "./types";
 
 export const RECOVERY_LABEL = "Recovery key";
 
@@ -38,15 +42,21 @@ export interface OpenedFactor {
   /** The same key, wrappable, for a FreshFactor when it is the active key. */
   wrapKeyWrappable: MailboxPrivateKey;
   factorKey: FactorPrivateKey;
-  /** K9: whether the factor key the wrap lists is the one this factor derives; null when it lists none. */
+  /** K9: whether the factor key and signing key the wrap lists are the ones this factor derives; null when it lists neither. */
   listedKeyMatches: boolean | null;
 }
 
-/** K9: the factor key a wrap lists, against the one the factor derives (null when the wrap lists none). */
-export function listedKeyMatches(wrap: Pick<RingWrap, "factorKey">, derived: Uint8Array): boolean | null {
-  if (wrap.factorKey === null) return null;
-  const listed = fromBase64url(wrap.factorKey);
-  return listed !== null && bytesEqual(listed, derived);
+/**
+ * K9: the factor key and the signing key a wrap lists, against the ones the factor derives. Null when
+ * it lists neither (a factor before the upgrade); false when either differs, or only one is listed.
+ */
+export function listedKeyMatches(wrap: Pick<RingWrap, "factorKey" | "signingKey">, derived: FactorPrivateKey): boolean | null {
+  if (wrap.factorKey === null && wrap.signingKey === null) return null;
+  const same = (listed: string | null, mine: Uint8Array) => {
+    const bytes = listed === null ? null : fromBase64url(listed);
+    return bytes !== null && bytesEqual(bytes, mine);
+  };
+  return same(wrap.factorKey, factorPublicKey(derived)) && same(wrap.signingKey, factorSigningKey(derived));
 }
 
 async function opened(ring: Ring, wrap: RingWrap, secret: Uint8Array): Promise<OpenedFactor> { // pragma: allowlist secret (a parameter type)
@@ -55,7 +65,7 @@ async function opened(ring: Ring, wrap: RingWrap, secret: Uint8Array): Promise<O
   const wrapKey = await unwrapPrivateKey(asWrap, ctx);
   const wrapKeyWrappable = await unwrapPrivateKey(asWrap, ctx, { wrappable: true });
   const factorKey = await deriveFactorKey({ mailboxId: ring.mailboxId, factorId: wrap.id, kind: wrap.kind, secret });
-  return { wrap, wrapKey, wrapKeyWrappable, factorKey, listedKeyMatches: listedKeyMatches(wrap, factorPublicKey(factorKey)) };
+  return { wrap, wrapKey, wrapKeyWrappable, factorKey, listedKeyMatches: listedKeyMatches(wrap, factorKey) };
 }
 
 /** Wraps of the active key first: they need no seal. */
@@ -131,19 +141,51 @@ export function factorTag(binding: BindingKey, facts: Pick<RingWrap, "id" | "kin
   return bindingTag(binding, { kind: "factor", factorId: facts.id, factorKind: facts.kind, label: facts.label, factorKey, credentialId: facts.credentialId }); // pragma: allowlist secret (field names and public values, not secrets)
 }
 
-async function withFactorKey(wrap: WrapInput, mailboxId: string, secret: Uint8Array, binding: BindingKey | null): Promise<WrapInput> { // pragma: allowlist secret (a parameter type)
-  if (binding === null) return wrap;
+/**
+ * A11: the admission of a factor (`subject`, with the facts its wrap names) by `admitter`: one
+ * statement, signed by the admitter (signature) and by the factor itself (selfSignature). A single
+ * factor admits itself (enrollment with the recovery key alone).
+ */
+export async function admissionOf(mailboxId: string, subject: { facts: Pick<WrapInput, "id" | "kind" | "label" | "credentialId">; key: FactorPrivateKey }, admitter: FactorPrivateKey): Promise<FactorAdmission> {
+  const statement = {
+    kind: "admit-factor" as const,
+    mailboxId,
+    factorId: subject.facts.id,
+    factorKind: subject.facts.kind,
+    label: subject.facts.label,
+    factorKey: factorPublicKey(subject.key),
+    signingKey: factorSigningKey(subject.key), // pragma: allowlist secret (a public key)
+    credentialId: subject.facts.credentialId, // pragma: allowlist secret (field names and public keys)
+    admitterId: admitter.factorId,
+    admitterSigningKey: factorSigningKey(admitter), // pragma: allowlist secret (field names and public keys)
+  };
+  return { by: admitter.factorId, signature: await signStatement(admitter, statement), selfSignature: await signStatement(subject.key, statement) };
+}
+
+/** A wrap made here, and the new factor's own key when it got one (sessions required): what its admission is signed with. */
+export interface MadeWrap {
+  wrap: WrapInput;
+  /** The factor's key from the same secret (A2, A2b); null when the mailbox's sessions are optional. */
+  factor: FactorPrivateKey | null;
+}
+
+async function withFactorKey(wrap: WrapInput, mailboxId: string, secret: Uint8Array, binding: BindingKey | null): Promise<MadeWrap> { // pragma: allowlist secret (a parameter type)
+  if (binding === null) return { wrap, factor: null };
   const key = await deriveFactorKey({ mailboxId, factorId: wrap.id, kind: wrap.kind, secret });
   const factorKey = factorPublicKey(key);
-  return { ...wrap, factorKey: base64url(factorKey), tag: await factorTag(binding, wrap, factorKey), tagKeyId: binding.keyId };
+  return {
+    wrap: { ...wrap, factorKey: base64url(factorKey), signingKey: base64url(factorSigningKey(key)), tag: await factorTag(binding, wrap, factorKey), tagKeyId: binding.keyId }, // pragma: allowlist secret (public keys)
+    factor: key,
+  };
 }
 
 /**
  * A passkey wrap of `priv` (which must be wrappable) for a new passkey: one
  * create(), maybe one get(). With a binding key (sessions required), the wrap
- * also carries the passkey's factor key, from the same PRF output, and its tag.
+ * also carries the passkey's factor key and signing key, from the same PRF
+ * output, and its tag; its admission is the caller's to add (admissionOf).
  */
-export async function makePasskeyWrap(mailboxId: string, priv: MailboxPrivateKey, passkey: PasskeyOptions, binding: BindingKey | null): Promise<WrapInput> {
+export async function makePasskeyWrap(mailboxId: string, priv: MailboxPrivateKey, passkey: PasskeyOptions, binding: BindingKey | null): Promise<MadeWrap> {
   const wrapId = newId("wrp");
   const { credentialId, secret } = await createPasskeyWithPrf(passkey, mailboxId, wrapId);
   try {
@@ -154,12 +196,12 @@ export async function makePasskeyWrap(mailboxId: string, priv: MailboxPrivateKey
   }
 }
 
-/** A recovery wrap of `priv` with a new recovery key, shown once; with its factor key and tag when sessions are required. */
-export async function makeRecoveryWrap(mailboxId: string, priv: MailboxPrivateKey, binding: BindingKey | null): Promise<{ recoveryKey: string; wrap: WrapInput }> {
+/** A recovery wrap of `priv` with a new recovery key, shown once; with its keys and tag when sessions are required. */
+export async function makeRecoveryWrap(mailboxId: string, priv: MailboxPrivateKey, binding: BindingKey | null): Promise<MadeWrap & { recoveryKey: string }> {
   const { secret, display } = newRecoveryKey();
   try {
     const wrap = await wrapPrivateKey(priv, { mailboxId, wrapId: newId("wrp"), kind: "recovery", secret });
-    return { recoveryKey: display, wrap: await withFactorKey({ ...wrap, credentialId: null, label: RECOVERY_LABEL }, mailboxId, secret, binding) };
+    return { recoveryKey: display, ...(await withFactorKey({ ...wrap, credentialId: null, label: RECOVERY_LABEL }, mailboxId, secret, binding)) };
   } finally {
     secret.fill(0);
   }

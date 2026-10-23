@@ -12,10 +12,13 @@
 // WebKit runs only in CI, on macOS (the browsers-macos job; Linux WebKit is not tested). Playwright's WebKit
 // is not Safari: where its IndexedDB cannot keep a CryptoKey, the test checks that the fallback is
 // the safe one (a shared computer that keeps nothing) instead.
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { chromium, firefox, webkit, type Browser, type BrowserContext, type Page } from "playwright";
 import { KEPT_DEVICE_FIELDS } from "../../src/index";
-import { enrolledMailbox, type Enrolled } from "../keyring-support";
+import { enrolledMailbox, rotateByHand, type Enrolled } from "../keyring-support";
 import type { Harness } from "./harness";
 import { startTestServer, type TestServer } from "./server";
 
@@ -23,6 +26,10 @@ declare global {
   // eslint-disable-next-line no-var
   var harness: Harness;
 }
+
+const contracts = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../contracts");
+const deviceVectors = JSON.parse(readFileSync(resolve(contracts, "device-v1.vectors.json"), "utf8"));
+const descriptorVectors = JSON.parse(readFileSync(resolve(contracts, "action-descriptor-v1.vectors.json"), "utf8"));
 
 const BROWSERS = { chromium, firefox, webkit } as const;
 type BrowserName = keyof typeof BROWSERS;
@@ -64,15 +71,21 @@ describe.each(chosen)("%s: a kept device under the dashboard's policy", (name) =
     return page;
   }
 
-  /** F1 in `page`: the recovery key, a mail session, a factor proof, keepThisDevice, registerDevice at the fake, commit. */
+  /**
+   * F1 in `page`: the recovery key; a mail session with a factor proof bound to it (D38); keepThisDevice,
+   * registerDevice at the fake with a factor proof bound to that request (K4, K12); commit.
+   */
   async function keepIn(page: Page, e: Enrolled, signInId: string) {
     const unlocked = await page.evaluate(([v, k, s]) => harness.device.unlockRecovery(v, k, s, true), [e.fake.mailbox(), e.recoveryKey, signInId] as const);
     if (!unlocked.ok) throw new Error(`${unlocked.error.name}: ${unlocked.error.message}`);
-    const proof = await page.evaluate((c) => harness.device.sessionProof(c), await e.fake.challenge({ purpose: "session" }));
+    const factorId = e.fake.wraps.find((w) => w.kind === "recovery")!.id;
+    const sessionChallenge = await e.fake.challenge({ purpose: "session" });
+    const sessionConfirmation = await page.evaluate((c) => harness.device.sessionConfirmation(c), sessionChallenge);
+    const forSession = await page.evaluate(([c, conf]) => harness.device.answerFactor(c, conf), [await e.fake.challenge({ purpose: "factor", factorId, action: sessionConfirmation.action }), sessionConfirmation] as const);
+    const proof = await page.evaluate(([c, f]) => harness.device.sessionProof(c, f), [sessionChallenge, forSession] as const);
     const { session } = await e.fake.openSession(proof);
-    const factorChallenge = await e.fake.challenge({ purpose: "factor", factorId: e.fake.wraps.find((w) => w.kind === "recovery")!.id });
-    const factorProof = await page.evaluate((c) => harness.device.answerFactor(c), factorChallenge);
-    const request = await page.evaluate(() => harness.device.keep("Test laptop", "sign-out"));
+    const { request, confirmation } = await page.evaluate(() => harness.device.keep("Test laptop", "sign-out"));
+    const factorProof = await page.evaluate(([c, conf]) => harness.device.answerFactor(c, conf), [await e.fake.challenge({ purpose: "factor", factorId, action: confirmation.action }), confirmation] as const);
     await e.fake.registerDevice(request, { session, factorProof });
     const committed = await page.evaluate(() => harness.device.commitKeep());
     if (!committed.ok) throw new Error(`${committed.error.name}: ${committed.error.message}`);
@@ -184,6 +197,56 @@ describe.each(chosen)("%s: a kept device under the dashboard's policy", (name) =
     const again = await reload.evaluate(([v, k]) => harness.device.unlockRecovery(v, k, "signin-1", true), [e.fake.mailbox(), e.recoveryKey] as const);
     if (!again.ok) throw new Error(`${again.error.name}: ${again.error.message}`);
     expect(again.device).toMatchObject({ keepsUnlocked: false });
+  });
+
+  test("round 3 in this engine: every device-v1 and action-descriptor-v1 vector (Ed25519 factor keys derived and signing here, A11 statements, the factor graph, descriptors)", async () => {
+    const page = await openPage();
+    const r = await page.evaluate(([d, a]) => harness.cryptoVectors(d, a), [deviceVectors, descriptorVectors] as const);
+    console.info(`${name}: ${JSON.stringify(r)}`);
+    expect(r).toEqual({
+      derived: deviceVectors.factors.map(() => "ok"),
+      signsHere: true,
+      statements: { verified: 5, refusedChanges: 31, failures: 0 },
+      graph: { trusted: true, device: true, outsider: false },
+      descriptors: { valid: 8, invalidRefused: 33 },
+      requestDigest: true,
+    });
+  });
+
+  test("K10: another account on this browser profile resumes to nothing; the owner's record is not touched", async () => {
+    if (!canKeep) return; // nothing is kept where keys cannot be (checked above)
+    const e = await enrolledMailbox();
+    const page = await openPage();
+    await keepIn(page, e, "signin-1");
+    const other = await page.evaluate(([v]) => harness.device.resume(v, "signin-other", "acc_other"), [e.fake.mailbox()] as const);
+    expect(other).toMatchObject({ ok: true, state: "none" });
+    const record = recordOf(await page.evaluate(() => harness.device.dumpIndexedDb()), e.mailboxId);
+    expect(record.fields.accountId).toEqual({ kind: "string", value: "acc_owner" });
+    expect(record.fields.unlockKey!.kind).toBe("CryptoKey");
+    expect(await page.evaluate(([v]) => harness.device.resume(v, "signin-1"), [e.fake.mailbox()] as const)).toMatchObject({ ok: true, state: "unlocked" });
+  });
+
+  test("K11 across two pages: the slower page's lastKeyId write misses, it resumes again from the newer value, and IndexedDB never moves back", async () => {
+    if (!canKeep) return;
+    const e = await enrolledMailbox();
+    const first = await openPage();
+    await keepIn(first, e, "signin-1");
+    const older = e.fake.mailbox();
+    await rotateByHand(e.fake, e.recoveryKey);
+    const newer = e.fake.mailbox();
+    const k2 = e.fake.activeKey.keyId;
+    const pageB = await openPage();
+    const pageA = await openPage();
+    // B reads its record (the first key) and walks its older view; its write waits.
+    await pageB.evaluate(([v]) => harness.device.resumeGated(v, "signin-1"), [older] as const);
+    await pageB.evaluate(() => harness.device.gatedAtSwap());
+    // A, shown the newer view, moves the anchor forward.
+    expect(await pageA.evaluate(([v]) => harness.device.resume(v, "signin-1"), [newer] as const)).toMatchObject({ ok: true, state: "unlocked" });
+    // B's write misses (one readwrite transaction: read, compare, write); B resumes again and finds the newer key out of its view's reach.
+    const b = await pageB.evaluate(() => harness.device.gatedRelease());
+    expect(b).toMatchObject({ ok: false, error: { name: "MailboxChanged" } });
+    const record = recordOf(await pageA.evaluate(() => harness.device.dumpIndexedDb()), e.mailboxId);
+    expect(record.fields.lastKeyId).toEqual({ kind: "string", value: k2 });
   });
 
   test("no policy violation on any page but the harness's own probes", async () => {

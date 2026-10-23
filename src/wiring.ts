@@ -1,4 +1,4 @@
-import { keyIdOf, newId, sealChallenge, sealMessage, verifyDeviceProof } from "@proprietor/mail-crypto";
+import { keyIdOf, newId, sealChallenge, sealMessage, verifyDeviceProof, verifyStatement } from "@proprietor/mail-crypto";
 import { buildMime, sesRawMailer } from "@proprietor/mail-outbound";
 import type { Env } from "./env";
 import type { MailboxPorts, NewMailSignal, RawMailer } from "./ports";
@@ -26,8 +26,8 @@ export function productionPorts(env: Env): MailboxPorts {
     },
     signal: noNewMailSignal,
     clock: { now: () => new Date() },
-    // contracts/device-v1.md A6 and A7, Mail's side (packages/mail-crypto/src/proofs.ts).
-    proofs: { sealChallenge, verifyDeviceProof },
+    // contracts/device-v1.md A6, A7 and A11, Mail's side (packages/mail-crypto: src/proofs.ts, src/statements.ts).
+    proofs: { sealChallenge, verifyDeviceProof, verifyStatement },
   };
 }
 

@@ -2,23 +2,36 @@
 // or verifies with the package AND a second time straight from the contract's text (OpenSSL through
 // node:crypto, @hpke/core and raw Web Crypto, none of src/), so the vectors cannot merely agree with
 // the code; every negative case is refused by both.
-import { createECDH, createPrivateKey, createPublicKey, diffieHellman } from "node:crypto";
+import { createECDH, createHash, createPrivateKey, createPublicKey, diffieHellman, verify as nodeVerify } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Aes256Gcm, CipherSuite, DhkemP256HkdfSha256, DhkemX25519HkdfSha256, ExportOnly, HkdfSha256 } from "@hpke/core";
 import { describe, expect, test } from "vitest";
 import {
+  actionPurpose,
   bindingKey,
+  bootstrapAdmitters,
+  canonicalJson,
   DecryptionFailed,
   deriveFactorKey,
   factorPublicKey,
+  factorSigningKey,
+  isTrustedDevice,
+  isTrustedTransition,
   openChallenge,
   openKeySeal,
   parseRecoveryKey,
+  readActionDescriptor,
   signDeviceProof,
+  statementMessage,
+  trustedFactors,
   verifyBindingTag,
+  verifyStatement,
+  type FactorGraphView,
   type FactorPrivateKey,
+  type GraphDevice,
+  type Statement,
   type MailboxPrivateKey,
   type SealOpener,
   type TagRecipient,
@@ -32,14 +45,53 @@ const vectorsPath = resolve(dirname(fileURLToPath(import.meta.url)), "../../../c
 const PKCS8_X25519 = "302e020100300506032b656e04220420";
 
 interface KeyVector { label: string; sk: string; pk: string; keyId: string }
-interface FactorVector { name: string; kind: "passkey-prf" | "recovery"; factorId: string; secretLabel: string; secret: string; recoveryDisplay?: string; ikm: string; skF: string; pkF: string }
+interface FactorVector {
+  name: string;
+  kind: "passkey-prf" | "recovery";
+  factorId: string;
+  secretLabel: string;
+  secret: string;
+  recoveryDisplay?: string;
+  ikm: string;
+  skF: string;
+  pkF: string;
+  /** Round 3, A2b (Ed25519, D44): seedS, the private key, and vS, its public key (hex). */
+  signing: { seedS: string; vS: string };
+}
+interface StatementVector {
+  name: Statement["kind"];
+  statement: Record<string, string | null>;
+  message: string;
+  signatures: { role: string; signer: string; publicKey: string; signature: string }[];
+  changed: { field: string; value: string | null }[];
+}
+interface GraphVector {
+  note: string;
+  view: FactorGraphView;
+  start: string;
+  trusted: string[];
+  device: GraphDevice;
+  transitionOutsideGraph: { fromKeyId: string; toKeyId: string; toPublicKey: string; signedBy: string; signer: string; message: string; signature: string; expect: "untrusted" };
+}
 interface P256Vector { label: string; d: string; publicKey: string }
 interface SealVector { name: string; toKind: "device" | "factor" | "successor"; toId: string; sealedKeyId: string; recipient: string; sealed: string }
 interface TagVector { name: string; keyId: string; recipient: Record<string, string | null>; message: string; tag: string }
-interface ChallengeVector { name: string; purpose: "session" | "factor"; challengeId: string; targetId: string; sealed: string; answer: string }
+interface ChallengeVector {
+  name: string;
+  purpose: "session" | "factor" | "key";
+  challengeId: string;
+  targetId: string;
+  sealed: string;
+  answer: string;
+  /** Round 3, purposes factor and key: the descriptor's bytes (base64url), the request it digests, and the descriptor's digest. */
+  descriptor?: string;
+  request?: Record<string, unknown>;
+  requestDigest?: string;
+  actionDigest?: string;
+}
 type NegativeVector =
   | { name: string; open: "seal"; sealed: string; toKind: string; toId: string; sealedKeyId: string; recipient: string; expect: "DecryptionFailed" }
-  | { name: string; open: "challenge"; sealed: string; purpose: string; challengeId: string; targetId: string; recipient: string; expect: "DecryptionFailed" }
+  | { name: string; open: "challenge"; sealed: string; purpose: string; challengeId: string; targetId: string; actionDigest?: string; recipient: string; expect: "DecryptionFailed" }
   | { name: string; open: "tag"; of: "device"; label: string; tag: string; expect: "invalid" }
   | { name: string; open: "deviceProof"; nonce: string; signature: string; expect: "invalid" };
 interface Vectors {
@@ -54,6 +106,8 @@ interface Vectors {
   challenges: ChallengeVector[];
   deviceProof: { deviceId: string; challengeId: string; nonce: string; message: string; publicKey: string; signature: string };
   negative: NegativeVector[];
+  statements: StatementVector[];
+  graph: GraphVector;
 }
 
 const vectors: Vectors = JSON.parse(readFileSync(vectorsPath, "utf8"));
@@ -158,10 +212,11 @@ async function opener(v: { recipient: string; toId: string }): Promise<SealOpene
 describe("D1b vectors: the file has every case A9 lists", () => {
   test("a fixed mailbox key, a PRF output and a recovery secret with their factor keys, a seal to each recipient kind, two tags, a challenge per purpose, a device proof, and the negative cases", () => {
     expect(vectors.contract).toBe("contracts/device-v1.md");
-    expect(vectors.factors.map((f) => f.kind)).toEqual(["passkey-prf", "recovery"]);
+    // The passkey and the recovery key; round 3 adds a third factor outside the graph.
+    expect(vectors.factors.map((f) => [f.name, f.kind])).toEqual([["passkey", "passkey-prf"], ["recovery", "recovery"], ["outsider", "recovery"]]);
     expect(vectors.seals.map((s) => s.toKind)).toEqual(["device", "factor", "successor"]);
     expect(vectors.tags.map((t) => t.recipient.kind)).toEqual(["device", "factor"]);
-    expect(vectors.challenges.map((c) => c.purpose)).toEqual(["session", "factor"]);
+    expect(vectors.challenges.map((c) => c.purpose)).toEqual(["session", "factor", "key"]);
     expect(vectors.deviceProof.signature).toMatch(/^[A-Za-z0-9_-]{86}$/);
     const names = vectors.negative.map((n) => n.name);
     for (const required of [
@@ -172,6 +227,8 @@ describe("D1b vectors: the file has every case A9 lists", () => {
       "a challenge opened as a key seal",
       "a key seal opened as a challenge",
       "a message key envelope (envelope v1) presented as a challenge",
+      "a factor challenge opened with another action's digest",
+      "a key challenge opened with another action's digest",
       "a tag over a changed label",
       "a device proof over another nonce",
     ]) {
@@ -243,11 +300,31 @@ describe("D1b vectors: every positive vector opens or verifies", () => {
   });
 
   test.each(vectors.challenges.map((c) => [c.name, c] as const))("challenge %s: the package and @hpke/core both open it to its answer", async (_, c) => {
-    const aad = `proprietor-mail/v1/challenge|${mailboxId}|${c.challengeId}|${c.purpose}|${c.targetId}`;
-    const key = c.purpose === "session" ? k1 : factorKeys.get("passkey")!;
-    expect(c.targetId).toBe(c.purpose === "session" ? vectors.mailboxKey.keyId : factorByName("passkey").factorId);
-    expect(hex(await openChallenge(key, { mailboxId, challengeId: c.challengeId }, c.sealed))).toBe(c.answer);
-    const pair = c.purpose === "session" ? await x25519Pair(vectors.mailboxKey.sk) : factorMaterialOf(factorKeys.get("passkey")!).keyPair;
+    const sha = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("base64url");
+    let digestPart = "";
+    if (c.purpose === "session") {
+      expect(c.descriptor ?? c.actionDigest).toBeUndefined();
+    } else {
+      // Round 3 (A6, A10): the descriptor reads strictly, its kind belongs to the purpose, it holds the
+      // request's digest (RFC 8785, checked against this file's request), and its digest is the AAD's.
+      const bytes = b64urlDecode(c.descriptor!);
+      const descriptor = readActionDescriptor(bytes)!;
+      expect(descriptor).not.toBeNull();
+      expect(descriptor.mailboxId).toBe(mailboxId);
+      expect(actionPurpose(descriptor.kind)).toBe(c.purpose);
+      expect(descriptor.kind).toBe(c.purpose === "factor" ? "open-session" : "upgrade");
+      expect(descriptor.request).toBe(c.requestDigest);
+      expect(sha(utf8(canonicalJson(c.request)))).toBe(c.requestDigest);
+      expect(sha(bytes)).toBe(c.actionDigest);
+      if (c.purpose === "factor") expect(c.request).toEqual({ challengeId: vectors.challenges[0]!.challengeId });
+      digestPart = `|${c.actionDigest}`;
+    }
+    const aad = `proprietor-mail/v1/challenge|${mailboxId}|${c.challengeId}|${c.purpose}|${c.targetId}${digestPart}`;
+    const key = c.purpose === "factor" ? factorKeys.get("passkey")! : k1;
+    expect(c.targetId).toBe(c.purpose === "factor" ? factorByName("passkey").factorId : vectors.mailboxKey.keyId);
+    const ids = { mailboxId, challengeId: c.challengeId, ...(c.actionDigest === undefined ? {} : { actionDigest: c.actionDigest }) };
+    expect(hex(await openChallenge(key, ids, c.sealed))).toBe(c.answer);
+    const pair = c.purpose === "factor" ? factorMaterialOf(factorKeys.get("passkey")!).keyPair : await x25519Pair(vectors.mailboxKey.sk);
     expect(await contractOpenChallenge(pair, aad, c.sealed)).toBe(c.answer);
   });
 
@@ -276,11 +353,19 @@ describe("D1b vectors: every negative case is refused", () => {
       return;
     }
     if (n.open === "challenge") {
-      const key = n.recipient === "mailboxKey" ? k1 : k2;
-      expect(n.targetId).toBe(materialOf(key).keyId);
-      await expect(openChallenge(key, { mailboxId, challengeId: n.challengeId }, n.sealed)).rejects.toBeInstanceOf(DecryptionFailed);
+      const ids = { mailboxId, challengeId: n.challengeId, ...(n.actionDigest === undefined ? {} : { actionDigest: n.actionDigest }) };
+      if (n.recipient.startsWith("factors.")) {
+        const key = factorKeys.get(n.recipient.slice(8))!;
+        expect(n.targetId).toBe(key.factorId);
+        await expect(openChallenge(key, ids, n.sealed)).rejects.toBeInstanceOf(DecryptionFailed);
+      } else {
+        const key = n.recipient === "mailboxKey" ? k1 : k2;
+        expect(n.targetId).toBe(materialOf(key).keyId);
+        await expect(openChallenge(key, ids, n.sealed)).rejects.toBeInstanceOf(DecryptionFailed);
+      }
       const { pair } = await recipientPair(n.recipient);
-      await expect(contractOpenChallenge(pair, `proprietor-mail/v1/challenge|${mailboxId}|${n.challengeId}|${n.purpose}|${n.targetId}`, n.sealed)).rejects.toThrow();
+      const digestPart = n.actionDigest === undefined ? "" : `|${n.actionDigest}`;
+      await expect(contractOpenChallenge(pair, `proprietor-mail/v1/challenge|${mailboxId}|${n.challengeId}|${n.purpose}|${n.targetId}${digestPart}`, n.sealed)).rejects.toThrow();
       return;
     }
     if (n.open === "tag") {
@@ -315,6 +400,16 @@ describe("D1b vectors: every negative case is refused", () => {
     expect(n5.sealed).toBe(vectors.challenges[0]!.sealed);
     const n6 = byName("a key seal opened as a challenge") as Extract<NegativeVector, { open: "challenge" }>;
     expect(n6.sealed).toBe(successorSeal!.sealed);
+    for (const [name, i, purpose] of [
+      ["a factor challenge opened with another action's digest", 1, "factor"],
+      ["a key challenge opened with another action's digest", 2, "key"],
+    ] as const) {
+      const n = byName(name) as Extract<NegativeVector, { open: "challenge" }>;
+      const c = vectors.challenges[i]!;
+      expect([n.sealed, n.challengeId, n.targetId, n.purpose]).toEqual([c.sealed, c.challengeId, c.targetId, purpose]);
+      expect(n.actionDigest).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(n.actionDigest).not.toBe(c.actionDigest);
+    }
     const envelope = byName("a message key envelope (envelope v1) presented as a challenge") as Extract<NegativeVector, { open: "challenge" }>;
     expect(b64urlDecode(envelope.sealed).length).toBe(80);
     expect(envelope.targetId).toBe(vectors.mailboxKey.keyId);
@@ -325,5 +420,143 @@ describe("D1b vectors: every negative case is refused", () => {
     expect(proof.signature).toBe(vectors.deviceProof.signature);
     expect(proof.nonce).not.toBe(vectors.deviceProof.nonce);
     expect(b64urlDecode(proof.nonce).length).toBe(32);
+  });
+});
+
+// ---- Round 3: factor signing keys (A2b), signed statements (A11) and the factor graph ----------------
+
+const STATEMENT_KEYS = new Set(["signingKey", "unlockKey", "factorKey", "admitterSigningKey", "toPublicKey"]);
+
+/** A statement from its JSON form (keys base64url, as a view holds them). */
+function statementOf(json: Record<string, string | null>): Statement {
+  return Object.fromEntries(Object.entries(json).map(([k, v]) => [k, STATEMENT_KEYS.has(k) && typeof v === "string" ? b64urlDecode(v) : v])) as unknown as Statement;
+}
+
+/** A11's messages, written out from the contract's text over the JSON form. */
+function contractStatementMessage(s: Record<string, string | null>): string {
+  const label = (x: string | null) => b64urlEncode(utf8(x!));
+  switch (s.kind) {
+    case "admit-device":
+      return `proprietor-mail/v1/admit-device|${s.mailboxId}|${s.deviceId}|${label(s.label!)}|${s.signingKey}|${s.admitterId}`;
+    case "unlock-key":
+      return `proprietor-mail/v1/unlock-key|${s.mailboxId}|${s.deviceId}|${s.unlockKey}`;
+    case "admit-factor":
+      return `proprietor-mail/v1/admit-factor|${s.mailboxId}|${s.factorId}|${s.factorKind}|${label(s.label!)}|${s.factorKey}|${s.signingKey}|${s.credentialId ?? "-"}|${s.admitterId}|${s.admitterSigningKey}`;
+    case "transition":
+      return `proprietor-mail/v1/transition|${s.mailboxId}|${s.fromKeyId}|${s.toKeyId}|${s.toPublicKey}|${s.signerId}`;
+    default:
+      throw new Error(`unknown statement ${s.kind}`);
+  }
+}
+
+/** OpenSSL's verification from the signer's public key (hex): Ed25519 for a 32-byte factor key, ECDSA P-256 / SHA-256 (IEEE P1363) for a 65-byte device point. */
+function opensslVerifyStatement(publicKeyHex: string, message: string, signature: string): boolean {
+  const publicKey = Buffer.from(publicKeyHex, "hex");
+  if (publicKey.length === 32) {
+    return nodeVerify(null, utf8(message), createPublicKey({ key: { kty: "OKP", crv: "Ed25519", x: publicKey.toString("base64url") }, format: "jwk" }), b64urlDecode(signature));
+  }
+  const jwk = { kty: "EC", crv: "P-256", x: publicKey.subarray(1, 33).toString("base64url"), y: publicKey.subarray(33).toString("base64url") };
+  return nodeVerify("sha256", utf8(message), { key: createPublicKey({ key: jwk, format: "jwk" }), dsaEncoding: "ieee-p1363" }, b64urlDecode(signature));
+}
+
+/** The public point a vector's signer reference names. */
+function signerPoint(ref: string): string {
+  if (ref === "device.signing") return vectors.device.signing.publicKey;
+  return factorByName(ref.slice(8)).signing.vS;
+}
+
+describe("Round 3 vectors: A9's additions are all there", () => {
+  test("each factor's signing key, one of each A11 statement, and a transition by a factor outside the graph", () => {
+    for (const f of vectors.factors) expect([f.signing.seedS, f.signing.vS].map((x) => x.length)).toEqual([64, 64]);
+    expect(vectors.statements.map((s) => s.name)).toEqual(["admit-device", "unlock-key", "admit-factor", "transition"]);
+    for (const s of vectors.statements) expect(s.changed.length, s.name).toBeGreaterThan(0);
+    expect(vectors.statements.find((s) => s.name === "admit-factor")!.signatures.map((x) => x.role)).toEqual(["signature", "selfSignature"]);
+    expect(vectors.graph.transitionOutsideGraph.expect).toBe("untrusted");
+  });
+});
+
+describe("Round 3 vectors: factor signing keys (A2b, Ed25519 by D44)", () => {
+  test.each(vectors.factors.map((f) => [f.name, f] as const))("factor %s: seedS from the contract; vS its Ed25519 public key by OpenSSL; the package derives the same", async (_, f) => {
+    const base = await crypto.subtle.importKey("raw", fromHex(f.secret), "HKDF", false, ["deriveBits"]);
+    const info = utf8(`proprietor-mail/v1/factor-signing-key|${mailboxId}|${f.factorId}|${f.kind}`);
+    const seedS = new Uint8Array(await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: utf8(f.factorId), info }, base, 256)); // pragma: allowlist secret (HKDF parameter names)
+    expect(hex(seedS)).toBe(f.signing.seedS);
+    const privateKey = createPrivateKey({ key: Buffer.from("302e020100300506032b657004220420" + f.signing.seedS, "hex"), format: "der", type: "pkcs8" }); // pragma: allowlist secret (a test variable)
+    expect(Buffer.from(createPublicKey(privateKey).export({ format: "jwk" }).x!, "base64url").toString("hex")).toBe(f.signing.vS);
+    expect(hex(factorSigningKey(factorKeys.get(f.name)!))).toBe(f.signing.vS);
+  });
+});
+
+describe("Round 3 vectors: signed statements (A11)", () => {
+  test.each(vectors.statements.map((s) => [s.name, s] as const))("%s: the message is the contract's; each signature verifies with OpenSSL and with the package", async (_, v) => {
+    expect(v.statement.kind).toBe(v.name);
+    expect(v.statement.mailboxId).toBe(mailboxId);
+    expect(v.message).toBe(contractStatementMessage(v.statement));
+    expect(new TextDecoder().decode(statementMessage(statementOf(v.statement)))).toBe(v.message);
+    for (const s of v.signatures) {
+      expect(s.publicKey).toBe(signerPoint(s.signer));
+      expect(opensslVerifyStatement(s.publicKey, v.message, s.signature)).toBe(true);
+      expect(await verifyStatement(fromHex(s.publicKey), statementOf(v.statement), s.signature)).toBe(true);
+    }
+  });
+
+  test.each(vectors.statements.map((s) => [s.name, s] as const))("%s is refused after any one field changes, by OpenSSL and by the package", async (_, v) => {
+    for (const change of v.changed) {
+      expect(change.field in v.statement, change.field).toBe(true);
+      expect(change.value).not.toEqual(v.statement[change.field]);
+      const changed = { ...v.statement, [change.field]: change.value };
+      for (const s of v.signatures) {
+        expect(opensslVerifyStatement(s.publicKey, contractStatementMessage(changed), s.signature), `${v.name}.${change.field}`).toBe(false);
+        expect(await verifyStatement(fromHex(s.publicKey), statementOf(changed), s.signature), `${v.name}.${change.field}`).toBe(false);
+      }
+    }
+  });
+
+  test("the statements name this mailbox's own records: the device, the factors, and the key change K1 to K2", () => {
+    const [admitDevice, unlockKey, admitFactor, transition] = vectors.statements.map((s) => s.statement);
+    expect([admitDevice!.deviceId, admitDevice!.label, admitDevice!.signingKey]).toEqual([vectors.device.deviceId, vectors.device.label, b64urlEncode(fromHex(vectors.device.signing.publicKey))]);
+    expect(unlockKey!.unlockKey).toBe(b64urlEncode(fromHex(vectors.device.unlock.publicKey)));
+    expect(admitFactor!.factorId).toBe(factorByName("recovery").factorId);
+    expect(admitFactor!.factorKey).toBe(b64urlEncode(fromHex(factorByName("recovery").pkF)));
+    expect(admitFactor!.signingKey).toBe(b64urlEncode(fromHex(factorByName("recovery").signing.vS)));
+    expect([transition!.fromKeyId, transition!.toKeyId, transition!.toPublicKey]).toEqual([vectors.mailboxKey.keyId, vectors.successorKey.keyId, b64urlEncode(fromHex(vectors.successorKey.pk))]);
+  });
+});
+
+describe("Round 3 vectors: the factor graph (A11)", () => {
+  const g = vectors.graph;
+  const start = () => fromHex(signerPoint(g.start));
+
+  test("the passkey and the recovery key follow A11's enrollment rule; the outsider admits itself", () => {
+    const [passkey, recovery, outsider] = g.view.wraps;
+    for (const { factorId, admitterId } of bootstrapAdmitters([passkey!.id, recovery!.id])) {
+      expect(g.view.wraps.find((w) => w.id === factorId)!.admission!.by).toBe(admitterId);
+    }
+    expect(outsider!.admission!.by).toBe(outsider!.id);
+    expect(g.view.wraps.map((w) => w.signingKey)).toEqual(["passkey", "recovery", "outsider"].map((n) => b64urlEncode(fromHex(factorByName(n).signing.vS))));
+  });
+
+  test("from the passkey, the trusted factors are the passkey and the recovery key, not the outsider", async () => {
+    const trusted = await trustedFactors(g.view, start());
+    expect([...trusted.ids]).toEqual(g.trusted);
+    expect(trusted.ids).not.toContain(factorByName("outsider").factorId);
+  });
+
+  test("the device is trusted: admitted by the passkey, its unlock key signed by itself", async () => {
+    expect(await isTrustedDevice(await trustedFactors(g.view, start()), g.device)).toBe(true);
+  });
+
+  test("the transition signed by the passkey is trusted", async () => {
+    const t = vectors.statements.find((s) => s.name === "transition")!;
+    const step = { fromKeyId: t.statement.fromKeyId!, toKeyId: t.statement.toKeyId!, toPublicKey: t.statement.toPublicKey!, signedBy: t.statement.signerId!, signature: t.signatures[0]!.signature };
+    expect(await isTrustedTransition(await trustedFactors(g.view, start()), step)).toBe(true);
+  });
+
+  test("a transition signed by a factor outside the graph is refused, although its signature is genuine", async () => {
+    const o = g.transitionOutsideGraph;
+    expect(o.message).toBe(`proprietor-mail/v1/transition|${mailboxId}|${o.fromKeyId}|${o.toKeyId}|${o.toPublicKey}|${o.signedBy}`);
+    expect(o.signedBy).toBe(factorByName("outsider").factorId);
+    expect(opensslVerifyStatement(signerPoint(o.signer), o.message, o.signature)).toBe(true);
+    expect(await isTrustedTransition(await trustedFactors(g.view, start()), o)).toBe(false);
   });
 });

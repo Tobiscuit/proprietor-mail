@@ -1,5 +1,6 @@
 import { base64url, decodeProtectedHeader, errors, jwtVerify } from "jose";
 import { CapabilityRejected } from "./errors";
+import type { Attestation } from "./mailbox/types";
 
 /**
  * Verifies a Mail capability (contracts/capability-v1.md): a ≤ 60-second HS256
@@ -26,6 +27,14 @@ export interface Capability {
   exp: number;
   /** Random, required; logged on every call so one request can be traced across both Workers. */
   jti: string;
+  /**
+   * Round 3 (amended 2026-10-22): the dashboard's attestation of an email
+   * code, present only when the caller asked for it to be read (only
+   * `revokeDevices` does, B7a) and the token carries one. Read strictly: a
+   * malformed claim there is CapabilityRejected (invalid). Every other method
+   * never reads it, so for them it is ignored, whatever it holds.
+   */
+  confirmation?: Attestation;
 }
 
 export type CapabilityKeys = ReadonlyMap<string, Uint8Array>;
@@ -72,7 +81,30 @@ export function parseCapabilityKeys(json: string | undefined): CapabilityKeys {
 
 const isNonEmptyString = (v: unknown): v is string => typeof v === "string" && v.length > 0;
 
-export async function verifyCapability(token: string, keys: CapabilityKeys, nowSeconds: number): Promise<Capability> {
+/**
+ * capability-v1's `confirmation` claim, in shape: exactly the six members of
+ * action-descriptor-v1's attestation, with their types (`at` a whole number,
+ * `actionDigest` 43 base64url characters, `codeId` at most 64 characters of
+ * [A-Za-z0-9_-]). What it is worth (the method, the account, the kind, the
+ * digest of a live email challenge, the time) is the Mailbox's to check
+ * (src/mailbox/devices.ts, revokeDevices). Anything else is
+ * CapabilityRejected (invalid).
+ */
+export function readConfirmation(claim: unknown): Attestation {
+  if (typeof claim !== "object" || claim === null || Array.isArray(claim)) throw new CapabilityRejected("invalid");
+  const c = claim as Record<string, unknown>;
+  const members = Object.keys(c).sort();
+  const expected = ["accountId", "actionDigest", "actionKind", "at", "codeId", "method"];
+  if (members.length !== expected.length || members.some((m, i) => m !== expected[i])) throw new CapabilityRejected("invalid");
+  const { method, accountId, actionKind, actionDigest, at, codeId } = c;
+  if (!isNonEmptyString(method) || !isNonEmptyString(accountId) || !isNonEmptyString(actionKind)) throw new CapabilityRejected("invalid");
+  if (typeof actionDigest !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(actionDigest)) throw new CapabilityRejected("invalid");
+  if (typeof at !== "number" || !Number.isSafeInteger(at) || at < 0) throw new CapabilityRejected("invalid");
+  if (typeof codeId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(codeId)) throw new CapabilityRejected("invalid");
+  return { method, accountId, actionKind, actionDigest, at, codeId };
+}
+
+export async function verifyCapability(token: string, keys: CapabilityKeys, nowSeconds: number, options: { confirmation?: boolean } = {}): Promise<Capability> {
   // Rule 1, before any key is looked up: HS256 and nothing else, `none` included.
   let kid: unknown;
   try {
@@ -122,9 +154,13 @@ export async function verifyCapability(token: string, keys: CapabilityKeys, nowS
   if (mbx !== undefined && !isNonEmptyString(mbx)) throw new CapabilityRejected("invalid");
 
   // Exactly the claims that were checked, in the contract's order.
-  return mbx === undefined
-    ? { iss: ISSUER, aud: AUDIENCE, sub, business, role, iat, exp, jti }
-    : { iss: ISSUER, aud: AUDIENCE, sub, business, mbx, role, iat, exp, jti };
+  const capability: Capability =
+    mbx === undefined
+      ? { iss: ISSUER, aud: AUDIENCE, sub, business, role, iat, exp, jti }
+      : { iss: ISSUER, aud: AUDIENCE, sub, business, mbx, role, iat, exp, jti };
+  // The confirmation claim, only for the one method that reads it (B7a); everywhere else it is never looked at.
+  if (options.confirmation === true && payload.confirmation !== undefined) capability.confirmation = readConfirmation(payload.confirmation);
+  return capability;
 }
 
 /**
