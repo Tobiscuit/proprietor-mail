@@ -70,7 +70,7 @@ function serverFactor(fake: FakeMail): string {
     keyId: fake.activeKey.keyId,
     kind: "passkey-prf",
     credentialId: b64url(crypto.getRandomValues(new Uint8Array(16))), // pragma: allowlist secret (random public test values)
-    label: "Security key",
+    label: "Planted passkey",
     wrapped: b64url(new Uint8Array([1, ...crypto.getRandomValues(new Uint8Array(76))])),
     factorKey: b64url(crypto.getRandomValues(new Uint8Array(32))),
     tag: b64url(crypto.getRandomValues(new Uint8Array(32))),

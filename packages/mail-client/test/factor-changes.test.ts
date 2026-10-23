@@ -53,7 +53,7 @@ describe("the upgrade (F5, D26): a mailbox enrolled under spec 001, every factor
     expect((await resumeDevice(e.fake.mailbox(), { store, signInId: "s" })).state).toBe("unlocked");
   });
 
-  test("with the security key: the screen asks for the recovery key once, and both factors get their keys", async () => {
+  test("with the passkey: the screen asks for the recovery key once, and both factors get their keys", async () => {
     const e = await enrolledMailbox({ legacy: true });
     const unlocked = await unlockWithPasskey(e.fake.mailbox(), prompt(e.credentials));
     const session = await openSession(e.fake, unlocked);

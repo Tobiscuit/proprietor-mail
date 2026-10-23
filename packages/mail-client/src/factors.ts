@@ -1,5 +1,5 @@
 /**
- * Factors (spec 002 §3: a security key or passkey with PRF, or the recovery
+ * Factors (spec 002 §3: a passkey with PRF, or the recovery
  * key). Using one opens its envelope v1 wrap AND derives its factor key
  * (contracts/device-v1.md A2) from the same secret, which is zeroed at once.
  * The wrap's key is the factor's anchor for K2′ (a). When the wrap is of a
