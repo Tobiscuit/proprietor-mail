@@ -232,7 +232,7 @@ describe("the unlocked mailbox", () => {
     const wrongKey = (await startEnrollment(provisioned, null)).recoveryKey;
     await expect(unlocked.reauthenticate({ recoveryKey: wrongKey })).rejects.toBeInstanceOf(WrongRecoveryKey);
 
-    const byRecovery = await unlocked.addPasskey(passkeyOptions(credentials, { label: "Phone" }), await unlocked.reauthenticate({ recoveryKey }));
+    const byRecovery = (await unlocked.addPasskey(passkeyOptions(credentials, { label: "Phone" }), await unlocked.reauthenticate({ recoveryKey }))).request;
     expect(byRecovery).toMatchObject({ kind: "passkey-prf", keyId: pub.keyId, label: "Phone", credentialId: credentials.lastCredentialId() }); // pragma: allowlist secret (a variable or type name, not a value)
     expect(byRecovery.id).toMatch(/^wrp_/);
     expect(fromB64url(byRecovery.wrapped).length).toBe(77);
@@ -243,7 +243,7 @@ describe("the unlocked mailbox", () => {
     expect(viaPhone.keyId).toBe(pub.keyId);
 
     credentials.options = {};
-    const byPasskey = await unlocked.addPasskey(passkeyOptions(credentials, { label: "Tablet" }), await unlocked.reauthenticate({ passkey: { rpId: "example.com", credentials } }));
+    const byPasskey = (await unlocked.addPasskey(passkeyOptions(credentials, { label: "Tablet" }), await unlocked.reauthenticate({ passkey: { rpId: "example.com", credentials } }))).request;
     expect(byPasskey.label).toBe("Tablet");
     expect(byPasskey.credentialId).toBe(credentials.lastCredentialId());
     expect(byPasskey.credentialId).not.toBe(byRecovery.credentialId);
@@ -254,8 +254,8 @@ describe("the unlocked mailbox", () => {
     const replaced = await unlocked.replaceRecoveryKey(await unlocked.reauthenticate({ passkey: { rpId: "example.com", credentials } }));
     expect(replaced.recoveryKey).toMatch(/^[0-9A-HJKMNP-TV-Z]{5}(-[0-9A-HJKMNP-TV-Z]{5}){10}$/);
     expect(replaced.recoveryKey).not.toBe(recoveryKey);
-    expect(replaced.wrap).toMatchObject({ kind: "recovery", keyId: pub.keyId, credentialId: null, label: "Recovery key" });
-    const rotated = { ...view, wraps: [...view.wraps.filter((w) => w.kind !== "recovery"), { ...replaced.wrap, createdAt: "2026-10-04T12:00:00.000Z", createdBy: "acc_owner" }] };
+    expect(replaced.request).toMatchObject({ kind: "recovery", keyId: pub.keyId, credentialId: null, label: "Recovery key" });
+    const rotated = { ...view, wraps: [...view.wraps.filter((w) => w.kind !== "recovery"), { ...replaced.request, createdAt: "2026-10-04T12:00:00.000Z", createdBy: "acc_owner" }] };
     expect((await unlockWithRecoveryKey(rotated, replaced.recoveryKey)).keyId).toBe(pub.keyId);
     await expect(unlockWithRecoveryKey(rotated, recoveryKey)).rejects.toBeInstanceOf(WrongRecoveryKey);
   });

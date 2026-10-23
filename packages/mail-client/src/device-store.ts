@@ -3,10 +3,13 @@
  * as amended by spec 002): the ONE place this package persists anything, and
  * the only module the runtime scan lets touch IndexedDB.
  *
- * One database for the package, one record per mailbox, exactly K5's fields:
- * the device id and label, two non-extractable P-256 private keys and their
- * public forms, the keyId it last accepted, its lock setting, its last
- * activity and the sign-in id it was unlocked under. Every write is checked
+ * One database for the package, one record per mailbox AND account (round 3,
+ * K10: two people can share one browser profile, and one person's record is
+ * never read, written or deleted for the other), exactly K5's fields: the
+ * account, the device id and label, two non-extractable P-256 private keys and
+ * their public forms, the keyId it last accepted, the signing key of the
+ * factor it trusts (trustRoot), its lock setting, its last activity and the
+ * sign-in id it was unlocked under. Every write is checked
  * here, so no caller can persist a mailbox key, a factor secret, a token or
  * decrypted content through it: a record with any other field, or with any
  * key that is not a non-extractable P-256 key of the right kind, is refused.
@@ -16,7 +19,10 @@
  *
  * Updates and deletes name the device they are for and run in one
  * transaction, so a page that is behind never resurrects a key another page
- * deleted (a lock), or touches a device another page made.
+ * deleted (a lock), or touches a device another page made. K11: the last
+ * accepted key moves only by swapLastKeyId, which reads, compares and writes in
+ * ONE readwrite transaction (IndexedDB runs writing transactions with
+ * overlapping scope one after another), so two pages cannot move it back.
  */
 import { generateSigningKey, generateUnlockKey, isDeviceSigningKey, isDeviceUnlockKey, newId } from "@proprietor/mail-crypto";
 import { base64url, bytesEqual, fromBase64url, randomBytes } from "./bytes";
@@ -26,6 +32,7 @@ import type { DeviceStore, KeptDevice, KeptDeviceChange, LockAfter } from "./typ
 /** K5's fields, in the domain model's order (specs/002-device-sessions/domain-model.md). */
 export const KEPT_DEVICE_FIELDS = Object.freeze([
   "mailboxId",
+  "accountId",
   "deviceId",
   "label",
   "signingKey",
@@ -33,12 +40,13 @@ export const KEPT_DEVICE_FIELDS = Object.freeze([
   "signingPublic",
   "unlockPublic",
   "lastKeyId",
+  "trustRoot",
   "lockAfter",
   "lastActiveAt",
   "signInId",
 ] as const);
 
-const CHANGEABLE: readonly string[] = ["unlockKey", "unlockPublic", "lastKeyId", "lockAfter", "lastActiveAt", "signInId"];
+const CHANGEABLE: readonly string[] = ["unlockKey", "unlockPublic", "lastKeyId", "trustRoot", "lockAfter", "lastActiveAt", "signInId"];
 const LOCK_SETTINGS: readonly string[] = ["right-away", "15-minutes", "1-hour", "sign-out"] satisfies LockAfter[];
 const MAILBOX_ID = /^mbx_[0-9a-hjkmnp-tv-z]{26}$/;
 const DEVICE_ID = /^dev_[0-9a-hjkmnp-tv-z]{26}$/;
@@ -46,6 +54,7 @@ const KEY_ID = /^[0-9a-f]{32}$/;
 const CONTROL = /[\u0000-\u001f\u007f]/;
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 const SIGN_IN_ID_MAX = 512;
+const ACCOUNT_ID_MAX = 255;
 
 /** Line breaks beyond the control characters: NEL, LINE SEPARATOR, PARAGRAPH SEPARATOR. */
 const LINE_SEPARATORS = /[\u0085\u2028\u2029]/;
@@ -66,6 +75,30 @@ function point(value: unknown): boolean {
   return bytes !== null && bytes.length === 65 && bytes[0] === 0x04;
 }
 
+function key32(value: unknown): boolean {
+  const bytes = typeof value === "string" ? fromBase64url(value) : null;
+  return bytes !== null && bytes.length === 32;
+}
+
+/** The dashboard's account id (the capability's `sub`): 1 to 255 characters, one line, well-formed. */
+export function accountIdOk(accountId: unknown): accountId is string {
+  return (
+    typeof accountId === "string" &&
+    accountId.length > 0 &&
+    accountId.length <= ACCOUNT_ID_MAX &&
+    !CONTROL.test(accountId) &&
+    !LINE_SEPARATORS.test(accountId) &&
+    !LONE_SURROGATE.test(accountId)
+  );
+}
+
+/** A store call's mailbox and account, checked: a TypeError for anything else (a caller's mistake). */
+function keyOf(mailboxId: unknown, accountId: unknown): [string, string] {
+  if (typeof mailboxId !== "string" || !MAILBOX_ID.test(mailboxId)) throw new TypeError("a mailbox id");
+  if (!accountIdOk(accountId)) throw new TypeError("an account id (the capability's sub)");
+  return [mailboxId, accountId];
+}
+
 /** K5, checked: a fresh object with exactly the listed fields, or a TypeError naming what is wrong (never a value). */
 export function checkKeptDevice(value: unknown): KeptDevice {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new TypeError("a kept device is an object");
@@ -78,6 +111,7 @@ export function checkKeptDevice(value: unknown): KeptDevice {
     throw new TypeError(`a kept device's ${field} is not what K5 allows`);
   };
   if (typeof r.mailboxId !== "string" || !MAILBOX_ID.test(r.mailboxId)) fail("mailboxId");
+  if (!accountIdOk(r.accountId)) fail("accountId");
   if (typeof r.deviceId !== "string" || !DEVICE_ID.test(r.deviceId)) fail("deviceId");
   if (!deviceLabelOk(r.label)) fail("label");
   if (!isDeviceSigningKey(r.signingKey)) fail("signingKey");
@@ -85,12 +119,14 @@ export function checkKeptDevice(value: unknown): KeptDevice {
   if (!point(r.signingPublic)) fail("signingPublic");
   if (r.unlockKey === null ? r.unlockPublic !== null : !point(r.unlockPublic)) fail("unlockPublic");
   if (typeof r.lastKeyId !== "string" || !KEY_ID.test(r.lastKeyId)) fail("lastKeyId");
+  if (!key32(r.trustRoot)) fail("trustRoot");
   if (typeof r.lockAfter !== "string" || !LOCK_SETTINGS.includes(r.lockAfter)) fail("lockAfter");
   if (r.lockAfter === "right-away" && r.unlockKey !== null) fail("unlockKey (a device locked right away keeps none)");
   if (typeof r.lastActiveAt !== "number" || !Number.isFinite(r.lastActiveAt) || r.lastActiveAt < 0) fail("lastActiveAt");
   if (r.signInId !== null && (typeof r.signInId !== "string" || r.signInId.length === 0 || r.signInId.length > SIGN_IN_ID_MAX)) fail("signInId");
   return {
     mailboxId: r.mailboxId as string,
+    accountId: r.accountId as string,
     deviceId: r.deviceId as string,
     label: r.label as string,
     signingKey: r.signingKey as CryptoKey, // pragma: allowlist secret (a CryptoKey reference)
@@ -98,6 +134,7 @@ export function checkKeptDevice(value: unknown): KeptDevice {
     signingPublic: r.signingPublic as string,
     unlockPublic: r.unlockPublic as string | null,
     lastKeyId: r.lastKeyId as string,
+    trustRoot: r.trustRoot as string,
     lockAfter: r.lockAfter as LockAfter,
     lastActiveAt: r.lastActiveAt as number,
     signInId: r.signInId as string | null,
@@ -119,36 +156,58 @@ function applyChange(current: KeptDevice, change: KeptDeviceChange): KeptDevice 
   return checkKeptDevice({ ...current, ...change });
 }
 
+/** The swap K11 makes: `change` applied only while the record still holds `expected`; null when there is no such device. */
+function swapped(current: KeptDevice | null, deviceId: string, expected: string, change: KeptDeviceChange & { lastKeyId: string }): { next: KeptDevice | null; record: KeptDevice | null } {
+  if (typeof change !== "object" || change === null || typeof change.lastKeyId !== "string") throw new TypeError("a swap sets lastKeyId");
+  if (current === null || current.deviceId !== deviceId) return { next: null, record: null };
+  if (current.lastKeyId !== expected) return { next: null, record: current };
+  const next = applyChange(current, change);
+  return { next, record: next };
+}
+
 /** A store in memory, for tests and for Node. It clones on every read and write, as IndexedDB does. */
 export function memoryDeviceStore(): DeviceStore {
   const records = new Map<string, KeptDevice>();
+  const slot = (mailboxId: unknown, accountId: unknown) => JSON.stringify(keyOf(mailboxId, accountId));
   return {
-    async get(mailboxId) {
-      const r = records.get(mailboxId);
+    async get(mailboxId, accountId) {
+      const r = records.get(slot(mailboxId, accountId));
       return r === undefined ? null : structuredClone(r);
     },
     async put(record) {
       const checked = checkKeptDevice(record);
-      records.set(checked.mailboxId, structuredClone(checked));
+      records.set(slot(checked.mailboxId, checked.accountId), structuredClone(checked));
     },
-    async update(mailboxId, deviceId, change) {
-      const current = records.get(mailboxId);
+    async update(mailboxId, accountId, deviceId, change) {
+      const key = slot(mailboxId, accountId);
+      const current = records.get(key);
       if (current === undefined || current.deviceId !== deviceId) return null;
       const next = applyChange(current, change);
-      records.set(mailboxId, structuredClone(next));
+      records.set(key, structuredClone(next));
       return structuredClone(next);
     },
-    async delete(mailboxId, deviceId) {
-      const current = records.get(mailboxId);
-      if (current !== undefined && (deviceId === undefined || current.deviceId === deviceId)) records.delete(mailboxId);
+    async swapLastKeyId(mailboxId, accountId, deviceId, expectedLastKeyId, change) {
+      const key = slot(mailboxId, accountId);
+      const { next, record } = swapped(records.get(key) ?? null, deviceId, expectedLastKeyId, change);
+      if (next !== null) records.set(key, structuredClone(next));
+      return { swapped: next !== null, record: record === null ? null : structuredClone(record) };
+    },
+    async delete(mailboxId, accountId, deviceId) {
+      const key = slot(mailboxId, accountId);
+      const current = records.get(key);
+      if (current !== undefined && (deviceId === undefined || current.deviceId === deviceId)) records.delete(key);
     },
   };
 }
 
 // ---- IndexedDB ------------------------------------------------------------------------------------
 
-/** The package's one database, and its one object store, keyed by mailbox id. */
-export const DEVICE_DATABASE = Object.freeze({ name: "proprietor-mail", version: 1, store: "kept-devices" });
+/**
+ * The package's one database, and its one object store, keyed by [mailboxId, accountId] (round 3,
+ * version 2). Version 1's store, keyed by mailbox alone, is dropped on the upgrade: no record of it
+ * exists outside tests (spec 002 is not deployed).
+ */
+export const DEVICE_DATABASE = Object.freeze({ name: "proprietor-mail", version: 2, store: "kept-devices", keyPath: Object.freeze(["mailboxId", "accountId"] as const) });
 
 function factory(): IDBFactory {
   const idb = (globalThis as { indexedDB?: IDBFactory }).indexedDB;
@@ -183,9 +242,11 @@ export function indexedDbDeviceStore(): DeviceStore {
         reject(e instanceof StorageUnavailable ? e : new StorageUnavailable());
         return;
       }
-      req.onupgradeneeded = () => {
+      req.onupgradeneeded = (event) => {
         const db = req.result;
-        if (!db.objectStoreNames.contains(DEVICE_DATABASE.store)) db.createObjectStore(DEVICE_DATABASE.store, { keyPath: "mailboxId" });
+        // Version 1 kept one record per mailbox; version 2 keys it by mailbox and account (K10).
+        if (event.oldVersion < 2 && db.objectStoreNames.contains(DEVICE_DATABASE.store)) db.deleteObjectStore(DEVICE_DATABASE.store);
+        if (!db.objectStoreNames.contains(DEVICE_DATABASE.store)) db.createObjectStore(DEVICE_DATABASE.store, { keyPath: [...DEVICE_DATABASE.keyPath] });
       };
       req.onsuccess = () => {
         const db = req.result;
@@ -241,9 +302,10 @@ export function indexedDbDeviceStore(): DeviceStore {
   }
 
   return {
-    get(mailboxId) {
+    get(mailboxId, accountId) {
+      const key = keyOf(mailboxId, accountId);
       return run("readonly", (store) => {
-        const req = store.get(mailboxId);
+        const req = store.get(key);
         return () => readRecord(req.result);
       });
     },
@@ -254,11 +316,12 @@ export function indexedDbDeviceStore(): DeviceStore {
         return () => undefined;
       });
     },
-    update(mailboxId, deviceId, change) {
+    update(mailboxId, accountId, deviceId, change) {
+      const key = keyOf(mailboxId, accountId);
       return run("readwrite", (store) => {
         let updated: KeptDevice | null = null;
         let refusal: unknown = null;
-        const req = store.get(mailboxId);
+        const req = store.get(key);
         req.onsuccess = () => {
           const current = readRecord(req.result);
           if (current === null || current.deviceId !== deviceId) return;
@@ -276,15 +339,38 @@ export function indexedDbDeviceStore(): DeviceStore {
         };
       });
     },
-    async delete(mailboxId, deviceId) {
+    swapLastKeyId(mailboxId, accountId, deviceId, expectedLastKeyId, change) {
+      const key = keyOf(mailboxId, accountId);
+      return run("readwrite", (store) => {
+        // Read, compare and write in this one transaction (K11): take it first, then decide.
+        let result: { swapped: boolean; record: KeptDevice | null } = { swapped: false, record: null };
+        let refusal: unknown = null;
+        const req = store.get(key);
+        req.onsuccess = () => {
+          try {
+            const { next, record } = swapped(readRecord(req.result), deviceId, expectedLastKeyId, change);
+            if (next !== null) store.put(next);
+            result = { swapped: next !== null, record };
+          } catch (e) {
+            refusal = e; // nothing is written: the transaction completes empty
+          }
+        };
+        return () => {
+          if (refusal !== null) throw refusal;
+          return result;
+        };
+      });
+    },
+    async delete(mailboxId, accountId, deviceId) {
+      const key = keyOf(mailboxId, accountId);
       await run("readwrite", (store) => {
         if (deviceId === undefined) {
-          store.delete(mailboxId);
+          store.delete(key);
         } else {
-          const req = store.get(mailboxId);
+          const req = store.get(key);
           req.onsuccess = () => {
             const current = req.result as { deviceId?: unknown } | undefined;
-            if (current !== undefined && current !== null && current.deviceId === deviceId) store.delete(mailboxId);
+            if (current !== undefined && current !== null && current.deviceId === deviceId) store.delete(key);
           };
         }
         return () => undefined;
@@ -305,11 +391,13 @@ export function indexedDbDeviceStore(): DeviceStore {
  */
 export async function canKeepDevices(store: DeviceStore): Promise<boolean> {
   const mailboxId = newId("mbx");
+  const accountId = "storage-check";
   try {
     const signing = await generateSigningKey();
     const unlock = await generateUnlockKey();
     await store.put({
       mailboxId,
+      accountId,
       deviceId: newId("dev"),
       label: "Storage check",
       signingKey: signing.privateKey, // pragma: allowlist secret (a CryptoKey reference)
@@ -317,11 +405,12 @@ export async function canKeepDevices(store: DeviceStore): Promise<boolean> {
       signingPublic: base64url(signing.publicKey),
       unlockPublic: base64url(unlock.publicKey),
       lastKeyId: "0".repeat(32),
+      trustRoot: base64url(new Uint8Array(32)),
       lockAfter: "sign-out",
       lastActiveAt: 0,
       signInId: null,
     });
-    const back = await store.get(mailboxId);
+    const back = await store.get(mailboxId, accountId);
     if (back === null || !isDeviceSigningKey(back.signingKey) || !isDeviceUnlockKey(back.unlockKey)) return false;
     // The keys read back must still work, and be the keys that were stored.
     const data = randomBytes(32);
@@ -336,7 +425,7 @@ export async function canKeepDevices(store: DeviceStore): Promise<boolean> {
     return false;
   } finally {
     try {
-      await store.delete(mailboxId);
+      await store.delete(mailboxId, accountId);
     } catch {
       // nothing more can be done; the probe's random mailbox id names no mailbox
     }

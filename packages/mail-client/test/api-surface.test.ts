@@ -24,6 +24,8 @@ const functions = [
   "indexedDbDeviceStore",
   "memoryDeviceStore",
   "resumeDevice",
+  // round 3 (spec 002 D35, F13)
+  "revokeRequest",
 ] as const;
 
 const errors = [
@@ -51,6 +53,8 @@ const errors = [
   "FlaggedRecipient",
   "RotationUnproven",
   "MissingFactors",
+  // round 3 (K13)
+  "RotationDue",
 ] as const;
 
 describe("@proprietor/mail-client exports the contract's API", () => {
@@ -70,10 +74,17 @@ describe("@proprietor/mail-client exports the contract's API", () => {
     expect(typeof api.IMPLEMENTED).toBe("boolean");
   });
 
-  test("the spec 002 constants: K5's fields, the lock settings, the FreshFactor's 2 minutes, the one database", () => {
-    expect(api.KEPT_DEVICE_FIELDS.length).toBe(11);
+  test("the spec 002 constants: K5's fields (round 3: the account and the trust root), the lock settings, the FreshFactor's 2 minutes, the one database (version 2, by mailbox and account)", () => {
+    expect(api.KEPT_DEVICE_FIELDS.length).toBe(13);
     expect(api.LOCK_AFTER_MS).toEqual({ "right-away": 0, "15-minutes": 900_000, "1-hour": 3_600_000, "sign-out": Infinity });
     expect(api.FRESH_FACTOR_MS).toBe(120_000);
-    expect(api.DEVICE_DATABASE).toEqual({ name: "proprietor-mail", version: 1, store: "kept-devices" });
+    expect(api.DEVICE_DATABASE).toEqual({ name: "proprietor-mail", version: 2, store: "kept-devices", keyPath: ["mailboxId", "accountId"] });
+  });
+
+  test("round 3: every confirmed change carries the Confirmation its proof is bound to; removeDevice is removeDevices", async () => {
+    const methods = ["sessionConfirmation", "sessionProof", "keyProof", "keepThisDevice", "removeDevices", "upgradeRequest", "addPasskey", "replaceRecoveryKey", "removeFactor"];
+    const { Session } = await import("../src/session");
+    for (const m of methods) expect(typeof (Session.prototype as unknown as Record<string, unknown>)[m], m).toBe("function");
+    expect((Session.prototype as unknown as Record<string, unknown>).removeDevice).toBeUndefined();
   });
 });

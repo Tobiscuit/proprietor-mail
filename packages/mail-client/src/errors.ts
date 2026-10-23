@@ -207,3 +207,15 @@ export class MissingFactors extends MailClientError {
     this.missing = Object.freeze(missing.map((m) => Object.freeze({ id: m.id, kind: m.kind, label: m.label })));
   }
 }
+
+// ---- Added by round 3 (contracts/device-v1.md Part C, K13) ----
+
+/**
+ * K13: a rotation is due (an email code revoked devices, B7a), and it comes before any other change.
+ * Finish it first: removeDevices with no devices (or with every flagged one), with this FreshFactor.
+ */
+export class RotationDue extends MailClientError {
+  constructor(message = "finish removing the revoked devices first") {
+    super(message, "RotationDue");
+  }
+}

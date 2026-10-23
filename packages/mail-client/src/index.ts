@@ -12,12 +12,15 @@
  * persists; keys stay non-extractable and decrypt-only; errors are typed.
  */
 export type {
+  ActionInput,
   Address,
   Auth,
   BodyAttachment,
   ChallengeRequest,
   ChallengeView,
   ComposeInput,
+  Confirmation,
+  ConfirmedChange,
   DeviceInfo,
   DeviceInput,
   DeviceStore,
@@ -27,12 +30,14 @@ export type {
   DraftRecord,
   Enrollment,
   EnrollRequest,
+  FactorAdmission,
   FactorProof,
   FlaggedRecipients,
   Folder,
   FreshFactor,
   KeptDevice,
   KeptDeviceChange,
+  KeyProof,
   KeyView,
   LockAfter,
   LockEvent,
@@ -42,6 +47,7 @@ export type {
   MailboxView,
   MessageHeader,
   MessageItem,
+  NewRecoveryKey,
   OpenedDraft,
   OpenedMessage,
   OpenSessionRequest,
@@ -53,11 +59,16 @@ export type {
   ReAuth,
   RecipientRef,
   RegisterDeviceRequest,
-  RemoveDeviceRequest,
+  RemovedFactorView,
+  RemoveDevicesRequest,
+  RemoveWrapRequest,
   RenderedBody,
   ResumeOptions,
   ResumeResult,
+  RevokeDevicesRequest,
+  RevokeRequest,
   Rotation,
+  RotationDueView,
   SaveDraftRequest,
   SealView,
   SendRequest,
@@ -93,6 +104,7 @@ export {
   PrfUnavailable,
   RecoveryKeyTypo,
   RecoveryNotConfirmed,
+  RotationDue,
   RotationUnproven,
   StaleFactor,
   StorageUnavailable,
@@ -105,6 +117,7 @@ export {
 export { canKeepDevices, DEVICE_DATABASE, indexedDbDeviceStore, KEPT_DEVICE_FIELDS, memoryDeviceStore } from "./device-store";
 
 export { startEnrollment } from "./enrollment";
+export { revokeRequest } from "./confirmations";
 export { DEFAULT_IDLE_LOCK_MS, LOCK_AFTER_MS, unlockWithPasskey, unlockWithRecoveryKey } from "./session";
 export { FRESH_FACTOR_MS } from "./fresh-factor";
 export { resumeDevice } from "./resume";

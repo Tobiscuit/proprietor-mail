@@ -1,5 +1,21 @@
 /**
- * Trusting a mailbox's key ring (contracts/device-v1.md Part C, K2′ and K3).
+ * Trusting a mailbox's key ring (contracts/device-v1.md Part C, K2″ and K3′;
+ * round 3, D39).
+ *
+ * K2″: K2′ below, and every successor step must carry a transition (A11) that
+ * verifies with the signing key of a factor in the browser's trusted component:
+ * the factor graph's component of the start (the factor just used, once K9
+ * confirms its keys, or a kept device's trustRoot). A step without one stops
+ * everything, like any other K2′ failure. So a key from a removed device, even
+ * with a successor seal made with it and every tag under it, is not accepted:
+ * no factor signed it.
+ *
+ * K3′: a recipient is trusted only when its tag verifies AND a trusted factor
+ * admitted it: a device whose admission verifies with a trusted factor's
+ * signing key and whose unlock key (while it has one) its own key signed; a
+ * factor that is in the trusted component, keyed and not removed. One that
+ * fails any of these is flagged, never sealed to (a genuine tag made with a
+ * copied mailbox key no longer suffices).
  *
  * K2′: the advertised active key is accepted only when its private key was
  * opened from (a) an envelope v1 wrap with the factor just used, or (b) a seal
@@ -25,16 +41,21 @@
  */
 import {
   bindingKey,
+  isFactorRecipient,
+  isTrustedDevice,
+  isTrustedTransition,
   openKeySeal,
   publicKeyMatches,
+  trustedFactors,
   verifyBindingTag,
   type BindingKey,
   type MailboxPrivateKey,
   type TagRecipient,
+  type TrustedFactors,
 } from "@proprietor/mail-crypto";
 import { fromBase64url } from "./bytes";
-import { KeySubstitutionDetected, NoActiveKey } from "./errors";
-import type { DeviceView, FlaggedRecipients, MailboxView, SealView } from "./types";
+import { KeySubstitutionDetected, MailboxChanged, NoActiveKey } from "./errors";
+import type { DeviceView, FactorAdmission, FlaggedRecipients, MailboxView, RemovedFactorView, RotationDueView, SealView } from "./types";
 
 const KEY_ID = /^[0-9a-f]{32}$/;
 
@@ -42,7 +63,8 @@ export interface RingKey {
   keyId: string;
   publicKey: Uint8Array<ArrayBuffer>;
   retiredAt: string | null;
-  successor: { keyId: string; sealed: string } | null;
+  /** The successor seal and, round 3, its transition (A11): null fields when the view has none. */
+  successor: { keyId: string; sealed: string; signedBy: string | null; signature: string | null } | null;
 }
 
 export interface RingWrap {
@@ -53,6 +75,9 @@ export interface RingWrap {
   label: string;
   wrapped: string;
   factorKey: string | null;
+  /** Round 3: vS (A2b) and the admission (A11). */
+  signingKey: string | null;
+  admission: FactorAdmission | null;
   tag: string | null;
   tagKeyId: string | null;
 }
@@ -64,9 +89,13 @@ export interface Ring {
   keys: RingKey[];
   active: RingKey;
   wraps: RingWrap[];
+  /** Round 3 (M24): removed factors, nodes of the factor graph still. */
+  removedFactors: RemovedFactorView[];
   /** null when the view has no `devices` at all (a Worker without spec 002): not the same as none. */
   devices: DeviceView[] | null;
   seals: SealView[];
+  /** Round 3 (B7a, K13). */
+  rotationDue: RotationDueView | null;
 }
 
 /** Decodes base64url of exactly `length` bytes, or null. */
@@ -83,7 +112,10 @@ export function readRing(view: MailboxView): Ring {
     keyId: k.keyId,
     publicKey: bytesOf(k.publicKey, 32) ?? new Uint8Array(0),
     retiredAt: k.retiredAt ?? null,
-    successor: k.successor ?? null,
+    successor:
+      k.successor === null || k.successor === undefined
+        ? null
+        : { keyId: k.successor.keyId, sealed: k.successor.sealed, signedBy: k.successor.signedBy ?? null, signature: k.successor.signature ?? null },
   }));
   const actives = keys.filter((k) => k.retiredAt === null);
   if (actives.length === 0) throw new NoActiveKey();
@@ -104,12 +136,26 @@ export function readRing(view: MailboxView): Ring {
       label: w.label,
       wrapped: w.wrapped,
       factorKey: w.factorKey ?? null,
+      signingKey: w.signingKey ?? null, // pragma: allowlist secret (a public key)
+      admission: w.admission ?? null,
       tag: w.tag ?? null,
       tagKeyId: w.tagKeyId ?? null,
     })),
+    removedFactors: Array.isArray(view.removedFactors) ? view.removedFactors.map((f) => ({ ...f })) : [],
     devices: Array.isArray(view.devices) ? view.devices.map((d) => ({ ...d })) : null,
     seals: Array.isArray(view.seals) ? view.seals.map((s) => ({ keyId: s.keyId, to: { kind: s.to.kind, id: s.to.id }, sealed: s.sealed })) : [],
+    rotationDue: view.rotationDue ?? null,
   };
+}
+
+/**
+ * The factor graph's trusted component for this ring, from `start` (a factor's 32-byte signing key):
+ * A11's node rule and edges, removed factors included. A start that is no node trusts nothing.
+ */
+export function trustOf(ring: Ring, start: Uint8Array | null): Promise<TrustedFactors> {
+  // With no start (a factor whose listed keys are not its own, K9), the component is empty.
+  const none = new Uint8Array(32);
+  return trustedFactors({ id: ring.mailboxId, wraps: start === null ? [] : ring.wraps, removedFactors: start === null ? [] : ring.removedFactors }, start ?? none);
 }
 
 /** K2: the opened key is the advertised one, its public half included (G7). */
@@ -118,13 +164,21 @@ export async function checkAdvertisedKey(priv: MailboxPrivateKey, key: Pick<Ring
 }
 
 /**
- * K2′: from the opened active key, walk the successor seals back through every
- * key of the ring. Every key in `anchors` (keys this browser trusts already)
- * must be on the walk, and the walk must reach every key the ring lists (they
- * form one chain). Returns every key reached, non-extractable, by keyId, the
- * active key first.
+ * K2″: from the opened active key, walk the successor seals back through every
+ * key of the ring; each step's transition must verify with a factor of
+ * `trusted` (removed or not). Every key in `anchors` (keys this browser trusts
+ * already) must be on the walk, and the walk must reach every key the ring
+ * lists (they form one chain). Returns every key reached, non-extractable, by
+ * keyId, the active key first.
  */
-export async function trustChain(ring: Ring, opened: MailboxPrivateKey, anchors: readonly string[]): Promise<Map<string, MailboxPrivateKey>> {
+export async function trustChain(
+  ring: Ring,
+  opened: MailboxPrivateKey,
+  anchors: readonly string[],
+  trusted: TrustedFactors,
+  /** K11: an anchor that moved during this resume (another page accepted a newer key) means a stale view, not a rollback. */
+  anchorMoved = false,
+): Promise<Map<string, MailboxPrivateKey>> {
   await checkAdvertisedKey(opened, ring.active);
   if (ring.active.successor !== null) throw new KeySubstitutionDetected("the active key names a successor");
   const reached = new Map<string, MailboxPrivateKey>([[ring.active.keyId, opened]]);
@@ -142,11 +196,22 @@ export async function trustChain(ring: Ring, opened: MailboxPrivateKey, anchors:
       throw new KeySubstitutionDetected("a successor seal does not open to the key it names");
     }
     await checkAdvertisedKey(key, previous);
+    // K2″: the step is accepted only with a transition a trusted factor signed.
+    const step = previous.successor!;
+    if (
+      step.signedBy === null ||
+      step.signature === null ||
+      !(await isTrustedTransition(trusted, { fromKeyId: previous.keyId, toKeyId: current.keyId, toPublicKey: current.publicKey, signedBy: step.signedBy, signature: step.signature }))
+    ) {
+      throw new KeySubstitutionDetected("a step of the key chain is not signed by a factor this browser trusts");
+    }
     reached.set(previous.keyId, key);
     current = previous;
   }
   for (const anchor of anchors) {
-    if (!reached.has(anchor)) throw new KeySubstitutionDetected("the advertised key does not lead back to a key this browser trusts");
+    if (reached.has(anchor)) continue;
+    if (anchorMoved) throw new MailboxChanged("another page of this browser accepted a newer key meanwhile: fetch the mailbox again");
+    throw new KeySubstitutionDetected("the advertised key does not lead back to a key this browser trusts");
   }
   if (reached.size !== ring.keys.length) throw new KeySubstitutionDetected("a key is not on the chain");
   return reached;
@@ -176,24 +241,26 @@ export function flaggedOf(devices: Iterable<string>, factors: Iterable<string>):
 }
 
 /**
- * K3: every tag in the ring, under the active key's binding key. Answers the
- * recipients whose tag fails, is malformed, or is made under another key:
- * flagged, never sealed to. A factor with no factor key at all (before the
- * upgrade) has nothing to check.
+ * K3′: every recipient in the ring. Answers those whose tag fails, is
+ * malformed, or is made under another key (A5), and those no trusted factor
+ * admitted (A11): flagged, never sealed to. A factor with no factor key at all
+ * (before the upgrade) has nothing to check.
  */
-export async function checkTags(ring: Ring, binding: BindingKey): Promise<FlaggedRecipients> {
+export async function checkRecipients(ring: Ring, binding: BindingKey, trusted: TrustedFactors): Promise<FlaggedRecipients> {
   if (binding.keyId !== ring.active.keyId || binding.mailboxId !== ring.mailboxId) throw new TypeError("the binding key is not the active key's");
   const devices: string[] = [];
   for (const d of ring.devices ?? []) {
     const recipient = deviceRecipient(d);
-    if (recipient === null || d.tagKeyId !== ring.active.keyId || !(await verifyBindingTag(binding, recipient, d.tag))) devices.push(d.id);
+    const tagged = recipient !== null && d.tagKeyId === ring.active.keyId && (await verifyBindingTag(binding, recipient, d.tag));
+    if (!tagged || !(await isTrustedDevice(trusted, d))) devices.push(d.id);
   }
   const factors: string[] = [];
   for (const w of ring.wraps) {
     const keyed = [w.factorKey, w.tag, w.tagKeyId].filter((x) => x !== null).length;
     if (keyed === 0) continue; // a factor not yet given its key (before the upgrade)
     const recipient = keyed === 3 ? factorRecipient(w) : null;
-    if (recipient === null || w.tagKeyId !== ring.active.keyId || !(await verifyBindingTag(binding, recipient, w.tag!))) factors.push(w.id);
+    const tagged = recipient !== null && w.tagKeyId === ring.active.keyId && (await verifyBindingTag(binding, recipient, w.tag!));
+    if (!tagged || !isFactorRecipient(trusted, w.id)) factors.push(w.id);
   }
   return flaggedOf(devices, factors);
 }
