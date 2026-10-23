@@ -43,10 +43,10 @@ interface DescriptorVectors {
   valid: { name: string; object: unknown; utf8: string; sha256: string }[];
   attestations: {
     sub: string;
-    now: number;
     descriptor: string;
-    accepted: { name: string; attestation: TestAttestation }[];
-    refused: { name: string; attestation: Record<string, unknown>; why: string }[];
+    /** Each case carries Mail's clock (`now`, whole seconds) for that case. */
+    accepted: { name: string; now: number; attestation: TestAttestation }[];
+    refused: { name: string; now: number; attestation: Record<string, unknown>; why: string }[];
   };
 }
 const vectors = JSON.parse(committedVectors) as DescriptorVectors;
@@ -322,7 +322,29 @@ describe("F14, M23: the due rotation is finished by removeDevices with a factor,
 });
 
 describe("the attestation cases of action-descriptor-v1's vectors are Mail's checks", () => {
-  /** The vectors' mailbox, kept device ("Laptop") and pending email challenge, at the vectors' clock, for their `sub`. */
+  /**
+   * How Mail refuses each refused case, by its name in the vectors: a claim that is not an attestation's shape
+   * is the capability's fault (capability-v1: invalid, nothing spent); a digest that names no pending email
+   * challenge spends and writes nothing; every other rule spends the challenge and is audited as proof-rejected
+   * with the rule's reason. Each case breaks exactly one rule, so the reason says which check refused it.
+   */
+  const HOW_REFUSED: Record<string, { error: object; reason: string | null; spent: boolean }> = {
+    "another account": { error: PROOF_REJECTED, reason: "account", spent: true },
+    "another method": { error: PROOF_REJECTED, reason: "method", spent: true },
+    "a kind an email code may not confirm": { error: PROOF_REJECTED, reason: "kind", spent: true },
+    "another digest": { error: PROOF_REJECTED, reason: null, spent: false },
+    "confirmed 301 seconds ago, after the descriptor was issued": { error: PROOF_REJECTED, reason: "late", spent: true },
+    "confirmed 6 seconds ahead of Mail's clock": { error: PROOF_REJECTED, reason: "early", spent: true },
+    "confirmed before the descriptor was issued": { error: PROOF_REJECTED, reason: "before-issue", spent: true },
+    "an extra member": { error: INVALID_CAPABILITY, reason: null, spent: false },
+    "at as a string": { error: INVALID_CAPABILITY, reason: null, spent: false },
+  };
+
+  /**
+   * The vectors' mailbox and kept device ("Laptop"), for their `sub`; `reset` puts the device back as it was,
+   * clears any rotation due, and leaves exactly one pending email challenge: the vectors' descriptor, issued at
+   * its issuedAt, live for 10 minutes. Its id is returned.
+   */
   async function vectorMailbox(): Promise<{ u: Upgraded; deviceId: string; reset: () => Promise<string> }> {
     const valid = vectors.valid.find((v) => v.name === vectors.attestations.descriptor)!;
     const object = valid.object as { mailboxId: string; targets: { deviceId: string; label: string }[]; issuedAt: number; nonce: string };
@@ -330,10 +352,13 @@ describe("the attestation cases of action-descriptor-v1's vectors are Mail's che
     const target = object.targets[0]!;
     const device = { ...(await newDevice({ label: target.label })), id: target.deviceId };
     await keepDevice(u, { device });
-    u.mb.ports.clock.current = new Date(vectors.attestations.now * 1000);
+    const [kept] = await sql<Record<string, unknown>>(u.mb, "SELECT * FROM devices WHERE id = ?", target.deviceId);
+    const columns = Object.keys(kept!);
     const reset = async () => {
       const id = newId("chl");
       await sql(u.mb, "DELETE FROM challenges");
+      await sql(u.mb, "DELETE FROM rotation_due");
+      await sql(u.mb, `INSERT OR IGNORE INTO devices (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`, ...columns.map((c) => kept![c]));
       await sql(
         u.mb,
         "INSERT INTO challenges (id, purpose, target_id, answer_hash, nonce, account_id, kind, descriptor, action_digest, created_at, expires_at) VALUES (?, 'email', '', NULL, ?, ?, 'revoke-device', ?, ?, ?, ?)",
@@ -350,29 +375,37 @@ describe("the attestation cases of action-descriptor-v1's vectors are Mail's che
     return { u, deviceId: target.deviceId, reset };
   }
 
-  it("refuses each refused case (nine), and changes nothing; then accepts the accepted one", async () => {
+  it("runs all twelve cases, each at its own clock: the three accepted ones revoke, and each refused one is refused for the one rule it breaks, changing nothing", async () => {
     const { u, deviceId, reset } = await vectorMailbox();
-    const pendingDigest = vectors.valid.find((v) => v.name === vectors.attestations.descriptor)!.sha256;
     const call = async (attestation: unknown) =>
       mail().revokeDevices(await capFor(u.mb, { sub: vectors.attestations.sub, confirmation: attestation }), { deviceIds: [deviceId] });
-    expect(vectors.attestations.refused).toHaveLength(9);
+    expect([vectors.attestations.accepted.length, vectors.attestations.refused.length]).toEqual([3, 9]);
+    expect(vectors.attestations.refused.map((r) => r.name).sort()).toEqual(Object.keys(HOW_REFUSED).sort());
+
     for (const refused of vectors.attestations.refused) {
       const challengeId = await reset();
-      const a = refused.attestation as Partial<TestAttestation> & Record<string, unknown>;
-      const shapeOnly = Object.keys(a).length !== 6 || typeof a.at !== "number";
-      const answer = refusalOf(await call(a));
-      // A claim that is not an attestation's shape is the capability's fault; any other rule is the confirmation's.
-      expect([refused.name, answer]).toEqual([refused.name, shapeOnly ? INVALID_CAPABILITY : PROOF_REJECTED]);
+      u.mb.ports.clock.current = new Date(refused.now * 1000);
+      const how = HOW_REFUSED[refused.name]!;
+      const auditRows = (await sql<{ n: number }>(u.mb, "SELECT COUNT(*) AS n FROM audit"))[0]!.n;
+      const answer = await call(refused.attestation);
+      // Named in the comparison, so a case that is accepted says which one it was.
+      expect([refused.name, answer.ok ? "accepted" : refusalOf(answer)]).toEqual([refused.name, how.error]);
       const spent = (await sql<{ used_at: string | null }>(u.mb, "SELECT used_at FROM challenges WHERE id = ?", challengeId))[0]!.used_at !== null;
-      // Spent exactly when it reached Mail naming the pending challenge's digest (B7a: whatever the outcome).
-      expect([refused.name, spent]).toEqual([refused.name, !shapeOnly && a.actionDigest === pendingDigest]);
-      expect([refused.name, (await view(u.mb)).devices.map((d) => d.id), (await view(u.mb)).rotationDue]).toEqual([refused.name, [deviceId], null]);
+      const reasons = (await audits(u.mb, "proof-rejected")).filter((a) => a.detail.challenge === challengeId).map((a) => a.detail.reason);
+      expect([refused.name, spent, reasons]).toEqual([refused.name, how.spent, how.reason === null ? [] : [how.reason]]);
+      // A refusal that spent nothing wrote nothing either.
+      if (!how.spent) expect([refused.name, (await sql<{ n: number }>(u.mb, "SELECT COUNT(*) AS n FROM audit"))[0]!.n]).toEqual([refused.name, auditRows]);
+      const v = await view(u.mb);
+      expect([refused.name, v.devices.map((d) => d.id), v.rotationDue]).toEqual([refused.name, [deviceId], null]);
     }
-    expect(vectors.attestations.accepted).toHaveLength(1);
-    await reset();
-    expect(valueOf(await call(vectors.attestations.accepted[0]!.attestation))).toEqual({ revoked: [deviceId] });
-    const v = await view(u.mb);
-    expect([v.devices, v.rotationDue]).toEqual([[], { since: u.mb.ports.clock.now().toISOString(), by: vectors.attestations.sub, devices: [deviceId] }]);
-    expect((await audits(u.mb, "device-revoked")).at(-1)!.detail).toMatchObject({ device: deviceId, method: "email-code", codeId: "code_example_1" });
+
+    for (const accepted of vectors.attestations.accepted) {
+      await reset();
+      u.mb.ports.clock.current = new Date(accepted.now * 1000);
+      expect([accepted.name, valueOf(await call(accepted.attestation))]).toEqual([accepted.name, { revoked: [deviceId] }]);
+      const v = await view(u.mb);
+      expect([accepted.name, v.devices, v.rotationDue]).toEqual([accepted.name, [], { since: u.mb.ports.clock.now().toISOString(), by: vectors.attestations.sub, devices: [deviceId] }]);
+      expect((await audits(u.mb, "device-revoked")).at(-1)!.detail).toMatchObject({ device: deviceId, method: "email-code", codeId: accepted.attestation.codeId });
+    }
   });
 });
