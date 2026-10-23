@@ -1,5 +1,7 @@
-// Round 3, contracts/device-v1.md A11: signed statements. ECDSA P-256 with SHA-256, IEEE P1363
-// (r || s, 64 bytes), base64url. A factor signs with sS (A2b), a device with its signing key (A3):
+// Round 3, contracts/device-v1.md A11: signed statements. A factor signs with sS (A2b): Ed25519, 64
+// bytes, over a 32-byte key (D44). A device signs with its signing key (A3): ECDSA P-256 with SHA-256,
+// IEEE P1363 (r || s, 64 bytes). All base64url. Signatures are verified, never compared (Safari's
+// Ed25519 signatures are randomized).
 //   admit-device = ctx("admit-device", mailboxId, deviceId, b64u(UTF-8(label)), b64u(signingKey), admitterId)
 //   unlock-key   = ctx("unlock-key", mailboxId, deviceId, b64u(unlockKey))
 //   admit-factor = ctx("admit-factor", mailboxId, factorId, kind, b64u(UTF-8(label)), b64u(factorKey),
@@ -68,8 +70,13 @@ function contractMessage(s: Statement): string {
   }
 }
 
-function opensslVerify(point: Uint8Array, message: string, signature: string): boolean {
-  const jwk = { kty: "EC", crv: "P-256", x: b64urlEncode(point.subarray(1, 33)), y: b64urlEncode(point.subarray(33)) };
+/** OpenSSL's verification: Ed25519 for a 32-byte factor key, ECDSA P-256 (IEEE P1363) for a 65-byte device key. */
+function opensslVerify(publicKey: Uint8Array, message: string, signature: string): boolean {
+  if (publicKey.length === 32) {
+    const key = createPublicKey({ key: { kty: "OKP", crv: "Ed25519", x: b64urlEncode(publicKey) }, format: "jwk" });
+    return nodeVerify(null, utf8(message), key, b64urlDecode(signature));
+  }
+  const jwk = { kty: "EC", crv: "P-256", x: b64urlEncode(publicKey.subarray(1, 33)), y: b64urlEncode(publicKey.subarray(33)) };
   return nodeVerify("sha256", utf8(message), { key: createPublicKey({ key: jwk, format: "jwk" }), dsaEncoding: "ieee-p1363" }, b64urlDecode(signature));
 }
 
@@ -90,8 +97,9 @@ const cases = [
 
 /** One changed value for each field of each statement (bytes of the right length, ids of the right shape). */
 async function changes(s: Statement): Promise<[string, Statement][]> {
-  const otherPoint = (await generateSigningKey()).publicKey;
+  const otherPoint = (await generateSigningKey()).publicKey; // a device key: 65 bytes
   const other32 = crypto.getRandomValues(new Uint8Array(32));
+  const otherFactorKey = factorSigningKey(outsider); // a factor signing key: 32 bytes
   switch (s.kind) {
     case "admit-device":
       return [
@@ -114,10 +122,10 @@ async function changes(s: Statement): Promise<[string, Statement][]> {
         ["factorKind", { ...s, factorKind: "passkey-prf" }],
         ["label", { ...s, label: "Recovery key 2" }],
         ["factorKey", { ...s, factorKey: other32 }],
-        ["signingKey", { ...s, signingKey: otherPoint }], // pragma: allowlist secret (public test keys, random test values)
+        ["signingKey", { ...s, signingKey: otherFactorKey }], // pragma: allowlist secret (public test keys, random test values)
         ["credentialId", { ...s, credentialId: b64urlEncode(crypto.getRandomValues(new Uint8Array(16))) }], // pragma: allowlist secret (public test keys, random test values)
         ["admitterId", { ...s, admitterId: newId("wrp") }],
-        ["admitterSigningKey", { ...s, admitterSigningKey: otherPoint }], // pragma: allowlist secret (public test keys, random test values)
+        ["admitterSigningKey", { ...s, admitterSigningKey: otherFactorKey }], // pragma: allowlist secret (public test keys, random test values)
       ];
     case "transition":
       return [
@@ -156,6 +164,14 @@ describe("A11 statements: the exact messages, signed and verified", () => {
         expect(await verifyStatement(signer.key, changed, signature), `${c.name}: ${field}`).toBe(false);
       }
     }
+  });
+
+  test("factor signatures are Ed25519 and device signatures ECDSA P-256: each verifies only under its own algorithm's key", async () => {
+    const factorSignature = await signStatement(admitter, admitDevice);
+    expect(opensslVerify(factorSigningKey(admitter), contractMessage(admitDevice), factorSignature)).toBe(true);
+    expect(factorSigningKey(admitter).length).toBe(32);
+    const deviceSignature = await signStatement(device.privateKey, unlockKey);
+    expect(opensslVerify(device.publicKey, contractMessage(unlockKey), deviceSignature)).toBe(true);
   });
 
   test("a signature verifies only with its signer's key, and not over a flipped bit", async () => {
@@ -224,7 +240,9 @@ describe("A11 inputs", () => {
     ["an empty label", { ...admitDevice, label: "" }],
     ["a label with a lone surrogate", { ...admitDevice, label: "Lap\ud800top" }],
     ["an id with the separator", { ...admitDevice, deviceId: "dev_a|b" }],
-    ["a signing key that is not a 65-byte point", { ...admitDevice, signingKey: new Uint8Array(65) }],
+    ["a device signing key that is not a 65-byte point", { ...admitDevice, signingKey: new Uint8Array(65) }],
+    ["a factor signing key that is not 32 bytes (a P-256 point)", { ...admitFactor, signingKey: device.publicKey }], // pragma: allowlist secret (a public test key)
+    ["an admitter signing key of 31 bytes", { ...admitFactor, admitterSigningKey: new Uint8Array(31) }],
     ["an unlock key of 64 bytes", { ...unlockKey, unlockKey: unlock.publicKey.subarray(1) }],
     ["a factor key of 33 bytes", { ...admitFactor, factorKey: new Uint8Array(33) }],
     ["an unknown factor kind", { ...admitFactor, factorKind: "password" }],
@@ -243,10 +261,14 @@ describe("A11 inputs", () => {
     for (const bad of ["", "*", signature.slice(0, 85), `${signature}A`, b64urlEncode(new Uint8Array(70)), 42 as unknown as string]) {
       expect(await verifyStatement(key, admitDevice, bad)).toBe(false);
     }
-    const offCurve = new Uint8Array(key);
-    offCurve[64] = offCurve[64]! ^ 1;
-    for (const badKey of [key.subarray(1), new Uint8Array(65), offCurve, "not bytes" as unknown as Uint8Array]) {
+    const flipped = new Uint8Array(key);
+    flipped[31] = flipped[31]! ^ 1;
+    for (const badKey of [key.subarray(1), new Uint8Array(65), device.publicKey, flipped, "not bytes" as unknown as Uint8Array]) {
       expect(await verifyStatement(badKey, admitDevice, signature)).toBe(false);
     }
+    // A device's unlock-key signature is ECDSA under a 65-byte point: a 32-byte key never verifies it.
+    const unlockSignature = await signStatement(device.privateKey, unlockKey);
+    expect(await verifyStatement(device.publicKey, unlockKey, unlockSignature)).toBe(true);
+    expect(await verifyStatement(device.publicKey.subarray(33), unlockKey, unlockSignature)).toBe(false);
   });
 });

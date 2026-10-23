@@ -4,7 +4,7 @@
 // a public label, so they are recognisably test values; ids, HPKE encapsulations, IVs, answers,
 // nonces and ECDSA signatures are fresh on each run, so regenerating changes the file.
 // test/device-vectors.test.ts checks whatever is committed.
-import { createECDH } from "node:crypto";
+import { createECDH, createPrivateKey, createPublicKey } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -75,25 +75,13 @@ async function factorScalars(secret: Uint8Array<ArrayBuffer>, mailboxId: string,
   return { ikm: hex(ikm), skF: hex(skF) };
 }
 
-/** ikmS and sS of a factor (A2b), from the contract's text with raw Web Crypto and BigInt: RFC 9180 §7.1.3 for P-256. */
-async function signingScalars(secret: Uint8Array<ArrayBuffer>, mailboxId: string, factorId: string, kind: string) { // pragma: allowlist secret (a parameter type)
+/** seedS and vS of a factor (A2b, Ed25519 by D44): seedS from the contract's text with raw Web Crypto; vS by OpenSSL. */
+async function signingSeed(secret: Uint8Array<ArrayBuffer>, mailboxId: string, factorId: string, kind: string) { // pragma: allowlist secret (a parameter type)
   const base = await crypto.subtle.importKey("raw", secret, "HKDF", false, ["deriveBits"]);
   const info = utf8(`proprietor-mail/v1/factor-signing-key|${mailboxId}|${factorId}|${kind}`);
-  const ikmS = new Uint8Array(await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: utf8(factorId), info }, base, 256)); // pragma: allowlist secret (HKDF parameter names)
-  const suiteId = new Uint8Array([0x4b, 0x45, 0x4d, 0x00, 0x10]);
-  const labeledIkm = new Uint8Array([...utf8("HPKE-v1"), ...suiteId, ...utf8("dkp_prk"), ...ikmS]);
-  const dkp = await crypto.subtle.importKey("raw", labeledIkm, "HKDF", false, ["deriveBits"]);
-  for (let counter = 0; counter < 256; counter++) {
-    const labeledInfo = new Uint8Array([0, 32, ...utf8("HPKE-v1"), ...suiteId, ...utf8("candidate"), counter]);
-    const sk = new Uint8Array(await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: labeledInfo }, dkp, 256)); // pragma: allowlist secret (HKDF parameter names)
-    const n = BigInt("0x" + hex(sk));
-    if (n > 0n && n < P256_N) {
-      const ecdh = createECDH("prime256v1");
-      ecdh.setPrivateKey(Buffer.from(sk));
-      return { ikmS: hex(ikmS), counter, sS: hex(sk), vS: hex(new Uint8Array(ecdh.getPublicKey())) };
-    }
-  }
-  throw new Error("no P-256 scalar in 256 candidates");
+  const seedS = new Uint8Array(await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: utf8(factorId), info }, base, 256)); // pragma: allowlist secret (HKDF parameter names)
+  const key = createPrivateKey({ key: Buffer.concat([Buffer.from("302e020100300506032b657004220420", "hex"), seedS]), format: "der", type: "pkcs8" });
+  return { seedS: hex(seedS), vS: Buffer.from(createPublicKey(key).export({ format: "jwk" }).x!, "base64url").toString("hex") };
 }
 
 async function p256Key(label: string) {
@@ -141,7 +129,7 @@ test("write contracts/device-v1.vectors.json", async () => {
       secret: hex(prfOutput), // pragma: allowlist secret (a test vector)
       ...(await factorScalars(prfOutput, mailboxId, passkeyId, "passkey-prf")),
       pkF: hex(factorPublicKey(passkey)),
-      signing: await signingScalars(prfOutput, mailboxId, passkeyId, "passkey-prf"),
+      signing: await signingSeed(prfOutput, mailboxId, passkeyId, "passkey-prf"),
     },
     {
       name: "recovery",
@@ -152,7 +140,7 @@ test("write contracts/device-v1.vectors.json", async () => {
       recoveryDisplay: recoveryDisplay(recoverySecret),
       ...(await factorScalars(recoverySecret, mailboxId, recoveryId, "recovery")),
       pkF: hex(factorPublicKey(recovery)),
-      signing: await signingScalars(recoverySecret, mailboxId, recoveryId, "recovery"),
+      signing: await signingSeed(recoverySecret, mailboxId, recoveryId, "recovery"),
     },
     {
       name: "outsider",
@@ -163,7 +151,7 @@ test("write contracts/device-v1.vectors.json", async () => {
       recoveryDisplay: recoveryDisplay(outsiderSecret),
       ...(await factorScalars(outsiderSecret, mailboxId, outsiderId, "recovery")),
       pkF: hex(factorPublicKey(outsider)),
-      signing: await signingScalars(outsiderSecret, mailboxId, outsiderId, "recovery"),
+      signing: await signingSeed(outsiderSecret, mailboxId, outsiderId, "recovery"),
     },
   ];
   for (const [f, handle] of [[factors[0]!, passkey], [factors[1]!, recovery], [factors[2]!, outsider]] as const) expect(hex(factorSigningKey(handle))).toBe(f.signing.vS);
@@ -440,10 +428,11 @@ test("write contracts/device-v1.vectors.json", async () => {
       "wrapped, descriptor) and the recipients' keys in tags, which are base64url without padding (RFC 4648 §5). The challenges and " +
       "the device proof were made by a sealer and a signer written from the contract; Mail's are src/proofs.ts. Round 3: the factor " +
       "and key challenges carry their action descriptor (contracts/action-descriptor-v1.md, as Mail issues it), the request it " +
-      "digests and its digest, and their associated data ends with that digest (A6). Each factor's `signing` holds ikmS, the " +
-      "candidate counter, sS and vS (A2b). `statements` holds one of each A11 statement (keys base64url) with its message, its " +
-      "signatures (the signer's public point in hex) and, under `changed`, values that each refuse every signature when they " +
-      "replace that one field. `graph` is the factor graph those statements make.",
+      "digests and its digest, and their associated data ends with that digest (A6). Each factor's `signing` holds seedS, its " +
+      "Ed25519 private key, and vS, its public key (A2b, D44). `statements` holds one of each A11 statement (keys base64url) with " +
+      "its message, its signatures (the signer's public key in hex: 32 bytes and Ed25519 for a factor, a 65-byte point and ECDSA " +
+      "P-256 for a device) and, under `changed`, values that each refuse every signature when they replace that one field. Ed25519 " +
+      "signatures may be randomized (Safari's are): verify them, never compare them. `graph` is the factor graph the statements make.",
     mailboxId,
     mailboxKey: { label: LABELS.mailboxKey, sk: hex(skK1), pk: hex(m1.publicKey), keyId: m1.keyId },
     successorKey: { label: LABELS.successorKey, sk: hex(skK2), pk: hex(m2.publicKey), keyId: m2.keyId },

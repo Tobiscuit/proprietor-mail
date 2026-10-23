@@ -68,8 +68,8 @@ describe("A2 DeriveKeyPair (RFC 9180 §7.1.3) for DHKEM(X25519, HKDF-SHA256)", (
 
     const callerSecret = new Uint8Array(secret);
     await deriveFactorKey({ mailboxId, factorId, kind: "recovery", secret: callerSecret }); // pragma: allowlist secret (a test variable)
-    // skF's PKCS #8 (48 bytes); round 3's signing key adds its own (test/factor-signing-keys.test.ts).
-    expect(imported.filter((p) => p.length === 48).length).toBe(1);
+    // skF's PKCS #8, then round 3's signing key sS twice (test/factor-signing-keys.test.ts); 48 bytes each.
+    expect(imported.map((p) => p.length)).toEqual([48, 48, 48]);
     for (const p of imported) expect(p.every((b) => b === 0)).toBe(true);
     expect(derived.length).toBeGreaterThanOrEqual(2); // ikm, then sk (and A2b's ikmS and candidate)
     for (const bits of derived) expect(new Uint8Array(bits).every((b) => b === 0)).toBe(true);

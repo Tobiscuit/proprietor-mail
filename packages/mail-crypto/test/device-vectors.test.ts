@@ -55,8 +55,8 @@ interface FactorVector {
   ikm: string;
   skF: string;
   pkF: string;
-  /** Round 3, A2b: ikmS, the RFC 9180 candidate counter that gave sS, sS and vS (hex). */
-  signing: { ikmS: string; counter: number; sS: string; vS: string };
+  /** Round 3, A2b (Ed25519, D44): seedS, the private key, and vS, its public key (hex). */
+  signing: { seedS: string; vS: string };
 }
 interface StatementVector {
   name: Statement["kind"];
@@ -425,7 +425,6 @@ describe("D1b vectors: every negative case is refused", () => {
 
 // ---- Round 3: factor signing keys (A2b), signed statements (A11) and the factor graph ----------------
 
-const P256_N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n;
 const STATEMENT_KEYS = new Set(["signingKey", "unlockKey", "factorKey", "admitterSigningKey", "toPublicKey"]);
 
 /** A statement from its JSON form (keys base64url, as a view holds them). */
@@ -450,10 +449,13 @@ function contractStatementMessage(s: Record<string, string | null>): string {
   }
 }
 
-/** ECDSA P-256 / SHA-256, IEEE P1363, verified by OpenSSL from the signer's 65-byte point (hex). */
+/** OpenSSL's verification from the signer's public key (hex): Ed25519 for a 32-byte factor key, ECDSA P-256 / SHA-256 (IEEE P1363) for a 65-byte device point. */
 function opensslVerifyStatement(publicKeyHex: string, message: string, signature: string): boolean {
-  const point = Buffer.from(publicKeyHex, "hex");
-  const jwk = { kty: "EC", crv: "P-256", x: point.subarray(1, 33).toString("base64url"), y: point.subarray(33).toString("base64url") };
+  const publicKey = Buffer.from(publicKeyHex, "hex");
+  if (publicKey.length === 32) {
+    return nodeVerify(null, utf8(message), createPublicKey({ key: { kty: "OKP", crv: "Ed25519", x: publicKey.toString("base64url") }, format: "jwk" }), b64urlDecode(signature));
+  }
+  const jwk = { kty: "EC", crv: "P-256", x: publicKey.subarray(1, 33).toString("base64url"), y: publicKey.subarray(33).toString("base64url") };
   return nodeVerify("sha256", utf8(message), { key: createPublicKey({ key: jwk, format: "jwk" }), dsaEncoding: "ieee-p1363" }, b64urlDecode(signature));
 }
 
@@ -465,7 +467,7 @@ function signerPoint(ref: string): string {
 
 describe("Round 3 vectors: A9's additions are all there", () => {
   test("each factor's signing key, one of each A11 statement, and a transition by a factor outside the graph", () => {
-    for (const f of vectors.factors) expect(f.signing.vS).toMatch(/^04[0-9a-f]{128}$/);
+    for (const f of vectors.factors) expect([f.signing.seedS, f.signing.vS].map((x) => x.length)).toEqual([64, 64]);
     expect(vectors.statements.map((s) => s.name)).toEqual(["admit-device", "unlock-key", "admit-factor", "transition"]);
     for (const s of vectors.statements) expect(s.changed.length, s.name).toBeGreaterThan(0);
     expect(vectors.statements.find((s) => s.name === "admit-factor")!.signatures.map((x) => x.role)).toEqual(["signature", "selfSignature"]);
@@ -473,29 +475,14 @@ describe("Round 3 vectors: A9's additions are all there", () => {
   });
 });
 
-describe("Round 3 vectors: factor signing keys (A2b)", () => {
-  test.each(vectors.factors.map((f) => [f.name, f] as const))("factor %s: ikmS from the contract; sS the first candidate below n (RFC 9180 §7.1.3); vS by OpenSSL and @hpke/core; the package derives the same", async (_, f) => {
+describe("Round 3 vectors: factor signing keys (A2b, Ed25519 by D44)", () => {
+  test.each(vectors.factors.map((f) => [f.name, f] as const))("factor %s: seedS from the contract; vS its Ed25519 public key by OpenSSL; the package derives the same", async (_, f) => {
     const base = await crypto.subtle.importKey("raw", fromHex(f.secret), "HKDF", false, ["deriveBits"]);
     const info = utf8(`proprietor-mail/v1/factor-signing-key|${mailboxId}|${f.factorId}|${f.kind}`);
-    const ikmS = new Uint8Array(await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: utf8(f.factorId), info }, base, 256)); // pragma: allowlist secret (HKDF parameter names)
-    expect(hex(ikmS)).toBe(f.signing.ikmS);
-    // The candidate loop, from the RFC's text: candidates before `counter` are 0 or at least n.
-    const suiteId = [0x4b, 0x45, 0x4d, 0x00, 0x10];
-    const dkp = await crypto.subtle.importKey("raw", new Uint8Array([...utf8("HPKE-v1"), ...suiteId, ...utf8("dkp_prk"), ...ikmS]), "HKDF", false, ["deriveBits"]);
-    for (let counter = 0; counter <= f.signing.counter; counter++) {
-      const labeledInfo = new Uint8Array([0, 32, ...utf8("HPKE-v1"), ...suiteId, ...utf8("candidate"), counter]);
-      const candidate = hex(new Uint8Array(await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: labeledInfo }, dkp, 256))); // pragma: allowlist secret (HKDF parameter names)
-      const n = BigInt("0x" + candidate);
-      if (counter < f.signing.counter) expect(n === 0n || n >= P256_N).toBe(true);
-      else expect(candidate).toBe(f.signing.sS);
-    }
-    const ecdh = createECDH("prime256v1");
-    ecdh.setPrivateKey(Buffer.from(f.signing.sS, "hex"));
-    expect(hex(new Uint8Array(ecdh.getPublicKey()))).toBe(f.signing.vS);
-    const kem = new DhkemP256HkdfSha256();
-    const pair = await kem.deriveKeyPair(fromHex(f.signing.ikmS));
-    expect(hex(new Uint8Array(await kem.serializePrivateKey(pair.privateKey)))).toBe(f.signing.sS);
-    expect(hex(new Uint8Array(await kem.serializePublicKey(pair.publicKey)))).toBe(f.signing.vS);
+    const seedS = new Uint8Array(await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: utf8(f.factorId), info }, base, 256)); // pragma: allowlist secret (HKDF parameter names)
+    expect(hex(seedS)).toBe(f.signing.seedS);
+    const privateKey = createPrivateKey({ key: Buffer.from("302e020100300506032b657004220420" + f.signing.seedS, "hex"), format: "der", type: "pkcs8" }); // pragma: allowlist secret (a test variable)
+    expect(Buffer.from(createPublicKey(privateKey).export({ format: "jwk" }).x!, "base64url").toString("hex")).toBe(f.signing.vS);
     expect(hex(factorSigningKey(factorKeys.get(f.name)!))).toBe(f.signing.vS);
   });
 });

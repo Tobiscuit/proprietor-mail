@@ -3,21 +3,22 @@
  * what a browser trusts, as pure functions over a view-like input (the
  * `mailbox()` view's `id`, `wraps` and `removedFactors`; keys base64url).
  *
- *   - Nodes: the factor records, removed ones included. A record is a node
- *     only when its own admission verifies: the `signature` with the listed
- *     signing key of the factor it names as admitter, the `selfSignature`
- *     with its own listed signing key, both over the admit-factor statement
- *     built from the listed records (so the admitter key inside it is the
- *     admitter's listed one). That admission is the edge between the factor
- *     and its admitter. Requiring it of every node means a trusted factor's
- *     listed factor key is always one its own signing key vouched for.
- *   - A factor id listed more than once (in wraps and removedFactors, or
- *     twice in one) is no node: a view that shows one factor two ways is not
- *     believed.
- *   - Trusted factors: the connected component of the start, a factor
- *     signing key (the factor just used, once K9 confirms its keys; or a
- *     kept device's trustRoot). The start nodes are the nodes that list that
- *     signing key; a node lists it only if that key signed its admission.
+ *   - Nodes (A11 as clarified 2026-10-22): a factor record, removed ones
+ *     included, is a node only when its own admission verifies (its
+ *     `signature` with the listed signing key of the factor it names as
+ *     admitter, its `selfSignature` with its own listed signing key, both
+ *     over the admit-factor statement built from the listed records, so the
+ *     admitter key inside it is the admitter's listed one) and its id is
+ *     listed once. That admission is the edge between the node and its
+ *     admitter. So a trusted factor's listed factor key is always one its
+ *     own signing key vouched for, and a view that shows one factor two ways
+ *     is not believed.
+ *   - Trusted factors: the connected component of the start nodes, the nodes
+ *     whose signing key is the start key (the factor just used, once K9
+ *     confirms its keys; or a kept device's trustRoot). A node lists a key
+ *     only if that key signed its admission.
+ *   - Factor signing keys are Ed25519 public keys, 32 bytes (A2b, D44);
+ *     device signing keys are P-256 points, 65 bytes (A3).
  *   - Trusted recipients: a device admitted by a trusted factor (removed or
  *     not) whose unlock key, while it has one, its own signing key signed; a
  *     factor that is trusted, keyed and not removed. Each must also pass its
@@ -48,7 +49,7 @@ export interface GraphFactor {
   credentialId: string | null;
   /** pkF, base64url of 32 bytes. */
   factorKey?: string | null;
-  /** vS, base64url of the 65-byte point. */
+  /** vS, base64url of the 32-byte Ed25519 public key. */
   signingKey?: string | null; // pragma: allowlist secret (a field type)
   admission?: FactorAdmission | null;
 }
@@ -111,9 +112,9 @@ function decodedPoint(value: unknown): Uint8Array<ArrayBuffer> | null {
   return bytes !== null && bytes[0] === 0x04 ? bytes : null;
 }
 
-function startPoint(start: Uint8Array | string): Uint8Array<ArrayBuffer> {
-  const bytes = typeof start === "string" ? decodedPoint(start) : start instanceof Uint8Array && start.length === 65 && start[0] === 0x04 ? new Uint8Array(start) : null;
-  if (bytes === null) throw new TypeError("a start is a factor signing key: a 65-byte uncompressed P-256 point (or its base64url)");
+function startKey(start: Uint8Array | string): Uint8Array<ArrayBuffer> {
+  const bytes = typeof start === "string" ? decoded(start, 32) : start instanceof Uint8Array && start.length === 32 ? new Uint8Array(start) : null;
+  if (bytes === null) throw new TypeError("a start is a factor signing key: a 32-byte Ed25519 public key (or its base64url)");
   return bytes;
 }
 
@@ -142,7 +143,7 @@ function candidates(view: FactorGraphView): Map<string, { record: GraphFactor; r
   const out = new Map<string, { record: GraphFactor; removed: boolean; signingKey: Uint8Array; factorKey: Uint8Array | null }>(); // pragma: allowlist secret (field names; public keys only)
   for (const { record, removed } of listed) {
     if (seen.get(record.id) !== 1) continue;
-    const signingKey = decodedPoint(record.signingKey); // pragma: allowlist secret (field names; public keys only)
+    const signingKey = decoded(record.signingKey, 32); // pragma: allowlist secret (field names; public keys only)
     const admission = record.admission;
     if (signingKey === null || typeof admission !== "object" || admission === null) continue;
     const factorKey = record.factorKey === null || record.factorKey === undefined ? null : decoded(record.factorKey, 32);
@@ -153,12 +154,13 @@ function candidates(view: FactorGraphView): Map<string, { record: GraphFactor; r
 }
 
 /**
- * The connected component of `start` (a factor signing key, 65 bytes or its
- * base64url) in the view's factor graph. A start that is no node gives an
- * empty component: nothing is trusted, and K2″ stops everything.
+ * The connected component of the start nodes, the nodes whose signing key is
+ * `start` (a factor signing key, 32 bytes or its base64url), in the view's
+ * factor graph. No such node gives an empty component: nothing is trusted,
+ * and K2″ stops everything.
  */
 export async function trustedFactors(view: FactorGraphView, start: Uint8Array | string): Promise<TrustedFactors> {
-  const startKey = startPoint(start);
+  const key = startKey(start);
   const mailboxId = typeof view === "object" && view !== null && typeof view.id === "string" ? view.id : null;
   const nodes = new Map<string, Node>();
   const edges = new Map<string, Set<string>>();
@@ -192,7 +194,7 @@ export async function trustedFactors(view: FactorGraphView, start: Uint8Array | 
   }
   // An edge counts only between two nodes; walk the component from every node that lists the start key.
   const trusted = new Map<string, Node>();
-  const queue = [...nodes.values()].filter((n) => sameBytes(n.signingKey, startKey)).map((n) => n.id);
+  const queue = [...nodes.values()].filter((n) => sameBytes(n.signingKey, key)).map((n) => n.id);
   while (queue.length > 0) {
     const id = queue.shift()!;
     const node = nodes.get(id);

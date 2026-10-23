@@ -129,6 +129,27 @@ describe("A11 bootstrapAdmitters", () => {
   });
 });
 
+describe("A11's node rule (clarified 2026-10-22)", () => {
+  test("a record is a node only when its own admission verifies and its id is listed once; the start nodes are the nodes whose signing key is the start key", async () => {
+    // M is admitted by N, N by P. N's own admission is broken (its selfSignature is another record's).
+    // M's admission by N still verifies with N's listed key, but N is no node, so the edge M-N does
+    // not count: neither N nor M joins P's component, and N's factor key is never trusted.
+    const M = await factor("recovery");
+    const recordM = await record(M, N);
+    const brokenN = { ...recordN, admission: { ...recordN.admission!, selfSignature: recordR.admission!.selfSignature } };
+    const withBroken = { ...view, wraps: [recordP, recordR, brokenN, recordM] };
+    expect([...(await trustedFactors(withBroken, vS(P))).ids].sort()).toEqual([P.factorId, R.factorId].sort());
+    // From M's own key, M is a start node and a component of its own: N is no node, so nothing joins it.
+    expect((await trustedFactors(withBroken, vS(M))).ids).toEqual([M.factorId]);
+    // From N's key: N lists that key but is no node, so it is no start and nothing is trusted.
+    expect((await trustedFactors(withBroken, vS(N))).ids).toEqual([]);
+    // With N's admission intact, all four are one component.
+    expect([...(await trustedFactors({ ...view, wraps: [recordP, recordR, recordN, recordM] }, vS(P))).ids].sort()).toEqual([P.factorId, R.factorId, N.factorId, M.factorId].sort());
+    // An id listed twice (once in wraps, once in removedFactors, both genuine) is no node.
+    expect((await trustedFactors({ ...view, wraps: [recordP, recordR, recordN], removedFactors: [recordN] }, vS(P))).ids).not.toContain(N.factorId);
+  });
+});
+
 describe("A11 trustedFactors: the connected component of the start", () => {
   test("from any of the three factors, all three are trusted: the cycle joins P and R, N's admission joins it to P", async () => {
     for (const start of [P, R, N]) {
@@ -230,8 +251,10 @@ describe("A11 trustedFactors: the connected component of the start", () => {
     expect((await trustedFactors({ ...view, id: newId("mbx") }, vS(P))).ids).toEqual([]);
   });
 
-  test("refuses a start that is not a 65-byte point (TypeError: a caller's mistake)", async () => {
-    await expect(trustedFactors(view, new Uint8Array(32))).rejects.toBeInstanceOf(TypeError);
+  test("refuses a start that is not a 32-byte Ed25519 key (TypeError: a caller's mistake)", async () => {
+    await expect(trustedFactors(view, new Uint8Array(65))).rejects.toBeInstanceOf(TypeError);
+    await expect(trustedFactors(view, new Uint8Array(31))).rejects.toBeInstanceOf(TypeError);
+    await expect(trustedFactors(view, "*")).rejects.toBeInstanceOf(TypeError);
   });
 
   test("the result is an opaque, frozen handle: a forged or edited one is refused", async () => {
@@ -341,7 +364,7 @@ describe("A11 trusted transitions", () => {
     // signStatement refuses to sign such a statement; sign its message with the factor's key directly.
     const k3 = (await generateMailboxKey()).publicKey;
     const message = statementMessage({ kind: "transition", mailboxId, fromKeyId: k1!.keyId, toKeyId: k2!.keyId, toPublicKey: k3.publicKey, signerId: P.factorId });
-    const signature = b64(new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, factorMaterialOf(P).signingKey, message)));
+    const signature = b64(new Uint8Array(await crypto.subtle.sign("Ed25519", factorMaterialOf(P).signingKey, message)));
     const trusted = await trustedFactors(view, vS(P));
     expect(await isTrustedTransition(trusted, { fromKeyId: k1!.keyId, toKeyId: k2!.keyId, toPublicKey: b64(k3.publicKey), signedBy: P.factorId, signature })).toBe(false);
   });

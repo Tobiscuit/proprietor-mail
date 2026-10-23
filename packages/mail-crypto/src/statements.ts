@@ -1,8 +1,13 @@
 /**
- * Signed statements (contracts/device-v1.md A11, round 3, D39). ECDSA P-256
- * with SHA-256, IEEE P1363 (r || s, 64 bytes), base64url, as device proofs
- * (A7). A factor signs with its signing key sS (A2b), through its
- * FactorPrivateKey handle; a device signs with its signing key (A3):
+ * Signed statements (contracts/device-v1.md A11, round 3, D39, D44). A factor
+ * signs with its signing key sS (A2b), through its FactorPrivateKey handle:
+ * Ed25519 (RFC 8032), 64 bytes, over a 32-byte public key. A device signs
+ * with its signing key (A3): ECDSA P-256 with SHA-256, IEEE P1363 (r || s,
+ * 64 bytes), as device proofs (A7). All base64url. Which algorithm verifies
+ * follows from the statement: an unlock key is the device's, everything
+ * else a factor's. Safari's Ed25519 signatures are randomized, so nothing
+ * here compares signature bytes; it verifies them.
+ *
  *
  *   admit-device = ctx("admit-device", mailboxId, deviceId, b64u(UTF-8(label)), b64u(signingKey), admitterId)
  *                  signed by the admitting factor
@@ -32,6 +37,7 @@ const KEY_ID = /^[0-9a-f]{32}$/;
 const SIGNATURE_BYTES = 64;
 const ECDSA_P256 = { name: "ECDSA", namedCurve: "P-256" };
 const ECDSA_SHA256 = { name: "ECDSA", hash: "SHA-256" };
+const ED25519 = { name: "Ed25519" };
 
 /** A statement of A11. Keys are raw bytes; the message holds them as base64url. */
 export type Statement =
@@ -59,12 +65,12 @@ export type Statement =
       label: string;
       /** pkF, 32 bytes (A2). */
       factorKey: Uint8Array;
-      /** vS, 65 bytes (A2b). */
+      /** vS, the factor's Ed25519 public key, 32 bytes (A2b). */
       signingKey: Uint8Array; // pragma: allowlist secret (a field type)
       /** The passkey's credential id (base64url), or null for the recovery key. */
       credentialId: string | null;
       admitterId: string;
-      /** The admitter's vS, 65 bytes. */
+      /** The admitter's vS, 32 bytes. */
       admitterSigningKey: Uint8Array; // pragma: allowlist secret (a field type)
     }
   | {
@@ -119,10 +125,10 @@ export function statementMessage(statement: Statement): Uint8Array<ArrayBuffer> 
         s.factorKind,
         label(s.label),
         bytes32(s.factorKey, "a factor key"),
-        point(s.signingKey, "a factor's signing key"),
+        bytes32(s.signingKey, "a factor's signing key (Ed25519)"),
         credentialId ?? "-",
         s.admitterId,
-        point(s.admitterSigningKey, "the admitter's signing key"),
+        bytes32(s.admitterSigningKey, "the admitter's signing key (Ed25519)"),
       );
     }
     case "transition":
@@ -168,44 +174,56 @@ function checkFactorSigner(factor: FactorPrivateKey, statement: Statement): void
   }
 }
 
+/** Statements a device signs (ECDSA P-256); a factor signs every other kind (Ed25519). */
+function signedByDevice(statement: Statement): boolean {
+  return statement.kind === "unlock-key";
+}
+
 /**
- * Signs `statement` as A11 says: a factor (its FactorPrivateKey handle) signs
- * admissions and transitions, a device (its signing CryptoKey) its own unlock
- * key. Returns base64url of the 64-byte signature.
+ * Signs `statement` as A11 says: a factor (its FactorPrivateKey handle, with
+ * Ed25519) signs admissions and transitions, a device (its signing CryptoKey,
+ * with ECDSA P-256) its own unlock key. Returns base64url of the 64 bytes.
  */
 export async function signStatement(signer: FactorPrivateKey | CryptoKey, statement: Statement): Promise<string> {
   const message = statementMessage(statement);
-  let key: CryptoKey;
+  let signature: Uint8Array;
   if (isFactorKey(signer)) {
+    if (signedByDevice(statement)) throw new TypeError("an unlock key is signed by its device, not by a factor");
     checkFactorSigner(signer, statement);
     if (statement.kind === "transition" && (await keyIdOf(statement.toPublicKey)) !== statement.toKeyId) {
       throw new TypeError("the transition's toKeyId is not its public key's keyId");
     }
-    key = factorMaterialOf(signer).signingKey;
+    signature = new Uint8Array(await crypto.subtle.sign(ED25519, factorMaterialOf(signer).signingKey, message));
   } else if (isDeviceSigningKey(signer)) {
-    if (statement.kind !== "unlock-key") throw new TypeError("a device signs only its own unlock key (and device proofs, A7)");
-    key = signer;
+    if (!signedByDevice(statement)) throw new TypeError("a device signs only its own unlock key (and device proofs, A7)");
+    signature = new Uint8Array(await crypto.subtle.sign(ECDSA_SHA256, signer, message));
   } else {
     throw new TypeError("a statement is signed with a FactorPrivateKey from this page or a device's signing key");
   }
-  const signature = new Uint8Array(await crypto.subtle.sign(ECDSA_SHA256, key, message));
-  if (signature.length !== SIGNATURE_BYTES) throw new Error("internal: an ECDSA P-256 signature in IEEE P1363 form is 64 bytes");
+  if (signature.length !== SIGNATURE_BYTES) throw new Error("internal: an Ed25519 signature, and an ECDSA P-256 one in IEEE P1363 form, are 64 bytes");
   return base64url(signature);
 }
 
 /**
  * True only when `signature` (base64url, 64 bytes) is a signature of
- * `statement` under `publicKey` (a 65-byte uncompressed P-256 point). Every
- * other input, including anything malformed from a view, is false.
+ * `statement` under `publicKey`: for an unlock key, the device's signing key
+ * (a 65-byte uncompressed P-256 point, ECDSA); for every other statement, a
+ * factor's signing key (32 bytes, Ed25519). Every other input, including
+ * anything malformed from a view, is false.
  */
 export async function verifyStatement(publicKey: Uint8Array, statement: Statement, signature: string): Promise<boolean> {
   try {
     const message = statementMessage(statement);
     const bytes = typeof signature === "string" ? fromBase64url(signature) : null;
-    if (bytes === null || bytes.length !== SIGNATURE_BYTES) return false;
-    if (!(publicKey instanceof Uint8Array) || publicKey.length !== 65 || publicKey[0] !== 0x04) return false;
-    const key = await crypto.subtle.importKey("raw", new Uint8Array(publicKey), ECDSA_P256, false, ["verify"]);
-    return await crypto.subtle.verify(ECDSA_SHA256, key, bytes, message);
+    if (bytes === null || bytes.length !== SIGNATURE_BYTES || !(publicKey instanceof Uint8Array)) return false;
+    if (signedByDevice(statement)) {
+      if (publicKey.length !== 65 || publicKey[0] !== 0x04) return false;
+      const key = await crypto.subtle.importKey("raw", new Uint8Array(publicKey), ECDSA_P256, false, ["verify"]);
+      return await crypto.subtle.verify(ECDSA_SHA256, key, bytes, message);
+    }
+    if (publicKey.length !== 32) return false;
+    const key = await crypto.subtle.importKey("raw", new Uint8Array(publicKey), ED25519, false, ["verify"]);
+    return await crypto.subtle.verify(ED25519, key, bytes, message);
   } catch {
     return false;
   }
