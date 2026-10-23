@@ -1,0 +1,666 @@
+{
+  "contract": "contracts/action-descriptor-v1.md",
+  "note": "utf8 is the descriptor as text; hex is the same bytes; sha256 is base64url (no padding) of SHA-256 over those bytes. Every valid vector was produced by two RFC 8785 canonicalizers that agree byte for byte.",
+  "fixed": {
+    "mailboxId": "mbx_1254r3efj59h9nmrb8dxv7v14b",
+    "nonce": "GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM",
+    "issuedAt": 1792627200
+  },
+  "valid": [
+    {
+      "name": "revoke one device",
+      "emailAllowed": true,
+      "object": {
+        "version": 1,
+        "kind": "revoke-device",
+        "mailboxId": "mbx_1254r3efj59h9nmrb8dxv7v14b",
+        "targets": [
+          {
+            "deviceId": "dev_1y8n656pk1d1qqczc4he99k857",
+            "label": "Laptop"
+          }
+        ],
+        "nonce": "GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM",
+        "issuedAt": 1792627200
+      },
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"Laptop\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a224c6170746f70227d5d2c2276657273696f6e223a317d",
+      "sha256": "yAsD42pLJ_e5mdhzbDegZcxtfzRenTDKMggl_cvNopA"
+    },
+    {
+      "name": "revoke two devices, targets sorted by deviceId",
+      "emailAllowed": true,
+      "object": {
+        "version": 1,
+        "kind": "revoke-device",
+        "mailboxId": "mbx_1254r3efj59h9nmrb8dxv7v14b",
+        "targets": [
+          {
+            "deviceId": "dev_2xchnq4yc0gy79b753narvhfy6",
+            "label": "Kitchen tablet"
+          },
+          {
+            "deviceId": "dev_3wge59364zmtpv9ey2s78dfqq5",
+            "label": "Old phone"
+          }
+        ],
+        "nonce": "GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM",
+        "issuedAt": 1792627200
+      },
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_2xchnq4yc0gy79b753narvhfy6\",\"label\":\"Kitchen tablet\"},{\"deviceId\":\"dev_3wge59364zmtpv9ey2s78dfqq5\",\"label\":\"Old phone\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f327863686e713479633067793739623735336e61727668667936222c226c6162656c223a224b69746368656e207461626c6574227d2c7b226465766963654964223a226465765f3377676535393336347a6d747076396579327337386466717135222c226c6162656c223a224f6c642070686f6e65227d5d2c2276657273696f6e223a317d",
+      "sha256": "LCIxWB1JRXa6zmjgx8AjMQRpjRSp7Qj3imCP9XJ3u7I"
+    },
+    {
+      "name": "labels outside ASCII, a quote and a backslash (escaped by RFC 8785, nothing else is)",
+      "emailAllowed": true,
+      "object": {
+        "version": 1,
+        "kind": "revoke-device",
+        "mailboxId": "mbx_1254r3efj59h9nmrb8dxv7v14b",
+        "targets": [
+          {
+            "deviceId": "dev_4vmamv1dxyrq6d7pq1x3qzdz84",
+            "label": "Büro-PC (alt)"
+          },
+          {
+            "deviceId": "dev_5tr74cznpxwknz5y800w71a713",
+            "label": "店のパソコン"
+          },
+          {
+            "deviceId": "dev_6sw3kyxxfw0c51260z4rpk8et2",
+            "label": "Truck 🚚 iPad"
+          },
+          {
+            "deviceId": "dev_7rzw30t50v48mk0dsy8n656pk1",
+            "label": "Front desk \"main\" \\ left"
+          }
+        ],
+        "nonce": "GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM",
+        "issuedAt": 1792627200
+      },
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_4vmamv1dxyrq6d7pq1x3qzdz84\",\"label\":\"Büro-PC (alt)\"},{\"deviceId\":\"dev_5tr74cznpxwknz5y800w71a713\",\"label\":\"店のパソコン\"},{\"deviceId\":\"dev_6sw3kyxxfw0c51260z4rpk8et2\",\"label\":\"Truck 🚚 iPad\"},{\"deviceId\":\"dev_7rzw30t50v48mk0dsy8n656pk1\",\"label\":\"Front desk \\\"main\\\" \\\\ left\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f34766d616d763164787972713664377071317833717a647a3834222c226c6162656c223a2242c3bc726f2d50432028616c7429227d2c7b226465766963654964223a226465765f3574723734637a6e7078776b6e7a357938303077373161373133222c226c6162656c223a22e5ba97e381aee38391e382bde382b3e383b3227d2c7b226465766963654964223a226465765f367377336b7978786677306335313236307a3472706b38657432222c226c6162656c223a22547275636b20f09f9a9a2069506164227d2c7b226465766963654964223a226465765f37727a7733307435307634386d6b30647379386e363536706b31222c226c6162656c223a2246726f6e74206465736b205c226d61696e5c22205c5c206c656674227d5d2c2276657273696f6e223a317d",
+      "sha256": "8Qva7R496QQvVNGIRXOly3T9d1Lnwi_NIphffbL51nQ"
+    },
+    {
+      "name": "a label of exactly 40 code points",
+      "emailAllowed": true,
+      "object": {
+        "version": 1,
+        "kind": "revoke-device",
+        "mailboxId": "mbx_1254r3efj59h9nmrb8dxv7v14b",
+        "targets": [
+          {
+            "deviceId": "dev_0q3rjjrcst8544ynjxchnq4yc0",
+            "label": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa🚚"
+          }
+        ],
+        "nonce": "GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM",
+        "issuedAt": 1792627200
+      },
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_0q3rjjrcst8544ynjxchnq4yc0\",\"label\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa🚚\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f307133726a6a7263737438353434796e6a7863686e7134796330222c226c6162656c223a22616161616161616161616161616161616161616161616161616161616161616161616161616161f09f9a9a227d5d2c2276657273696f6e223a317d",
+      "sha256": "KqujG8h2lq-BF7Ca6swmwmQ4WV6tqZeE-m98nxlXcko"
+    },
+    {
+      "name": "twenty devices, the most a descriptor names",
+      "emailAllowed": true,
+      "object": {
+        "version": 1,
+        "kind": "revoke-device",
+        "mailboxId": "mbx_1254r3efj59h9nmrb8dxv7v14b",
+        "targets": [
+          {
+            "deviceId": "dev_071rahr8sa64w3yhjdahdp4tbg",
+            "label": "Device 5"
+          },
+          {
+            "deviceId": "dev_0y4mp36ej1917ncqb4dds7k047",
+            "label": "Device 14"
+          },
+          {
+            "deviceId": "dev_165mt3pgj9a1bnwsbcedx8324f",
+            "label": "Device 6"
+          },
+          {
+            "deviceId": "dev_1x8h5n4pb0cxq7az43ha8sh7x6",
+            "label": "Device 15"
+          },
+          {
+            "deviceId": "dev_259h9nmrb8dxv7v14bjact19xe",
+            "label": "Device 7"
+          },
+          {
+            "deviceId": "dev_2wcdn72y3zgt6s96x2n6rbffp5",
+            "label": "Device 16"
+          },
+          {
+            "deviceId": "dev_34dds7k047htass8xap6wbzhpd",
+            "label": "Device 8"
+          },
+          {
+            "deviceId": "dev_3vga4s15wymppb7ep1s37xdqf4",
+            "label": "Device 17"
+          },
+          {
+            "deviceId": "dev_43ha8sh7x6nptbqgp9t3bxxsfc",
+            "label": "Device 9"
+          },
+          {
+            "deviceId": "dev_4bjact19xeppyc7jphv3fydvfm",
+            "label": "Device 1"
+          },
+          {
+            "deviceId": "dev_4tm6mazdnxrk5x5pf0wzqfbz03",
+            "label": "Device 18"
+          },
+          {
+            "deviceId": "dev_52n6rbffp5sk9xnrf8xzvft10b",
+            "label": "Device 10"
+          },
+          {
+            "deviceId": "dev_5ap6wbzhpdtkdy5tfgyzz0a30k",
+            "label": "Device 2"
+          },
+          {
+            "deviceId": "dev_5sr33wxnewwfnf3y7z0r6h86s2",
+            "label": "Device 19"
+          },
+          {
+            "deviceId": "dev_61s37xdqf4xfsfj0071rahr8sa",
+            "label": "Device 11"
+          },
+          {
+            "deviceId": "dev_69t3bxxsfcyfx0220f2rej8asj",
+            "label": "Device 3"
+          },
+          {
+            "deviceId": "dev_6rvzkevx7v084h05ry4mp36ej1",
+            "label": "Device 20"
+          },
+          {
+            "deviceId": "dev_70wzqfbz03188hg7s65mt3pgj9",
+            "label": "Device 12"
+          },
+          {
+            "deviceId": "dev_78xzvft10b28cj09se6my46jjh",
+            "label": "Device 4"
+          },
+          {
+            "deviceId": "dev_7z0r6h86s254r3efj59h9nmrb8",
+            "label": "Device 13"
+          }
+        ],
+        "nonce": "GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM",
+        "issuedAt": 1792627200
+      },
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_071rahr8sa64w3yhjdahdp4tbg\",\"label\":\"Device 5\"},{\"deviceId\":\"dev_0y4mp36ej1917ncqb4dds7k047\",\"label\":\"Device 14\"},{\"deviceId\":\"dev_165mt3pgj9a1bnwsbcedx8324f\",\"label\":\"Device 6\"},{\"deviceId\":\"dev_1x8h5n4pb0cxq7az43ha8sh7x6\",\"label\":\"Device 15\"},{\"deviceId\":\"dev_259h9nmrb8dxv7v14bjact19xe\",\"label\":\"Device 7\"},{\"deviceId\":\"dev_2wcdn72y3zgt6s96x2n6rbffp5\",\"label\":\"Device 16\"},{\"deviceId\":\"dev_34dds7k047htass8xap6wbzhpd\",\"label\":\"Device 8\"},{\"deviceId\":\"dev_3vga4s15wymppb7ep1s37xdqf4\",\"label\":\"Device 17\"},{\"deviceId\":\"dev_43ha8sh7x6nptbqgp9t3bxxsfc\",\"label\":\"Device 9\"},{\"deviceId\":\"dev_4bjact19xeppyc7jphv3fydvfm\",\"label\":\"Device 1\"},{\"deviceId\":\"dev_4tm6mazdnxrk5x5pf0wzqfbz03\",\"label\":\"Device 18\"},{\"deviceId\":\"dev_52n6rbffp5sk9xnrf8xzvft10b\",\"label\":\"Device 10\"},{\"deviceId\":\"dev_5ap6wbzhpdtkdy5tfgyzz0a30k\",\"label\":\"Device 2\"},{\"deviceId\":\"dev_5sr33wxnewwfnf3y7z0r6h86s2\",\"label\":\"Device 19\"},{\"deviceId\":\"dev_61s37xdqf4xfsfj0071rahr8sa\",\"label\":\"Device 11\"},{\"deviceId\":\"dev_69t3bxxsfcyfx0220f2rej8asj\",\"label\":\"Device 3\"},{\"deviceId\":\"dev_6rvzkevx7v084h05ry4mp36ej1\",\"label\":\"Device 20\"},{\"deviceId\":\"dev_70wzqfbz03188hg7s65mt3pgj9\",\"label\":\"Device 12\"},{\"deviceId\":\"dev_78xzvft10b28cj09se6my46jjh\",\"label\":\"Device 4\"},{\"deviceId\":\"dev_7z0r6h86s254r3efj59h9nmrb8\",\"label\":\"Device 13\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f303731726168723873613634773379686a646168647034746267222c226c6162656c223a224465766963652035227d2c7b226465766963654964223a226465765f3079346d703336656a313931376e63716234646473376b303437222c226c6162656c223a22446576696365203134227d2c7b226465766963654964223a226465765f3136356d743370676a396131626e777362636564783833323466222c226c6162656c223a224465766963652036227d2c7b226465766963654964223a226465765f31783868356e3470623063787137617a34336861387368377836222c226c6162656c223a22446576696365203135227d2c7b226465766963654964223a226465765f32353968396e6d72623864787637763134626a61637431397865222c226c6162656c223a224465766963652037227d2c7b226465766963654964223a226465765f327763646e373279337a67743673393678326e36726266667035222c226c6162656c223a22446576696365203136227d2c7b226465766963654964223a226465765f3334646473376b3034376874617373387861703677627a687064222c226c6162656c223a224465766963652038227d2c7b226465766963654964223a226465765f337667613473313577796d707062376570317333377864716634222c226c6162656c223a22446576696365203137227d2c7b226465766963654964223a226465765f343368613873683778366e707462716770397433627878736663222c226c6162656c223a224465766963652039227d2c7b226465766963654964223a226465765f34626a6163743139786570707963376a7068763366796476666d222c226c6162656c223a224465766963652031227d2c7b226465766963654964223a226465765f34746d366d617a646e78726b357835706630777a7166627a3033222c226c6162656c223a22446576696365203138227d2c7b226465766963654964223a226465765f35326e36726266667035736b39786e726638787a766674313062222c226c6162656c223a22446576696365203130227d2c7b226465766963654964223a226465765f3561703677627a687064746b647935746667797a7a306133306b222c226c6162656c223a224465766963652032227d2c7b226465766963654964223a226465765f357372333377786e657777666e663379377a3072366838367332222c226c6162656c223a22446576696365203139227d2c7b226465766963654964223a226465765f36317333377864716634786673666a3030373172616872387361222c226c6162656c223a22446576696365203131227d2c7b226465766963654964223a226465765f3639743362787873666379667830323230663272656a3861736a222c226c6162656c223a224465766963652033227d2c7b226465766963654964223a226465765f3672767a6b65767837763038346830357279346d703336656a31222c226c6162656c223a22446576696365203230227d2c7b226465766963654964223a226465765f3730777a7166627a30333138386867377336356d743370676a39222c226c6162656c223a22446576696365203132227d2c7b226465766963654964223a226465765f3738787a7666743130623238636a30397365366d7934366a6a68222c226c6162656c223a224465766963652034227d2c7b226465766963654964223a226465765f377a30723668383673323534723365666a353968396e6d726238222c226c6162656c223a22446576696365203133227d5d2c2276657273696f6e223a317d",
+      "sha256": "hIUItAtZozFQjANmBVNsfmBIjQHcFNc9kambX5I_BUQ"
+    },
+    {
+      "name": "the longest descriptor: twenty devices, each label 40 four-byte code points",
+      "emailAllowed": true,
+      "object": {
+        "version": 1,
+        "kind": "revoke-device",
+        "mailboxId": "mbx_1254r3efj59h9nmrb8dxv7v14b",
+        "targets": [
+          {
+            "deviceId": "dev_0n3ghjmc9r7x34tn2vc9mq0xvy",
+            "label": "🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚"
+          },
+          {
+            "deviceId": "dev_0x4gnk4ea08x75aq33d9rqgzw6",
+            "label": "🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚"
+          },
+          {
+            "deviceId": "dev_1m7d14jm2qbsjprwvtg648z5mx",
+            "label": "🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚"
+          },
+          {
+            "deviceId": "dev_1w8d552p2zcspq8yw2h689f7n5",
+            "label": "🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚"
+          },
+          {
+            "deviceId": "dev_2kb9gpgvvpfp28q4msm2ktxddw",
+            "label": "🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚"
+          },
+          {
+            "deviceId": "dev_2vc9mq0xvygp6976n1n2qvdfe4",
+            "label": "🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚"
+          },
+          {
+            "deviceId": "dev_33d9rqgzw6hpa9q8n9p2vvxhec",
+            "label": "🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚"
+          },
+          {
+            "deviceId": "dev_3jf608f3mnkjhtncdrqz3cvn6v",
+            "label": "🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚"
+          },
+          {
+            "deviceId": "dev_3tg648z5mxmjnv5ee0rz7dbq73",
+            "label": "🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚"
+          },
+          {
+            "deviceId": "dev_42h689f7n5njsvnge8szbdvs7b",
+            "label": "🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚"
+          },
+          {
+            "deviceId": "dev_4hk2ftdbdmqf1ckm6qvvjyswzt",
+            "label": "🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚"
+          },
+          {
+            "deviceId": "dev_4sm2ktxddwrf5d3p6zwvpz9yr2",
+            "label": "🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚"
+          },
+          {
+            "deviceId": "dev_51n2qvdfe4sf9dkr77xvtzr0ra",
+            "label": "🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚"
+          },
+          {
+            "deviceId": "dev_5gpyzcbk6kvbgyhvzpzm20p4gs",
+            "label": "🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚"
+          },
+          {
+            "deviceId": "dev_5rqz3cvn6vwbmz1xzy0m6166h1",
+            "label": "🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚"
+          },
+          {
+            "deviceId": "dev_60rz7dbq73xbrzhzr61ma1p8h9",
+            "label": "🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚"
+          },
+          {
+            "deviceId": "dev_6qvvjyswzt0440y5gx4gnk4ea0",
+            "label": "🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚"
+          },
+          {
+            "deviceId": "dev_6zwvpz9yr21481e7h55gskmga8",
+            "label": "🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚"
+          },
+          {
+            "deviceId": "dev_7pzm20p4gs40kjwd9w8d552p2z",
+            "label": "🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚"
+          },
+          {
+            "deviceId": "dev_7y0m6166h150qkcfa49d95jr37",
+            "label": "🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚"
+          }
+        ],
+        "nonce": "GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM",
+        "issuedAt": 1792627200
+      },
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_0n3ghjmc9r7x34tn2vc9mq0xvy\",\"label\":\"🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚\"},{\"deviceId\":\"dev_0x4gnk4ea08x75aq33d9rqgzw6\",\"label\":\"🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚\"},{\"deviceId\":\"dev_1m7d14jm2qbsjprwvtg648z5mx\",\"label\":\"🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚\"},{\"deviceId\":\"dev_1w8d552p2zcspq8yw2h689f7n5\",\"label\":\"🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚\"},{\"deviceId\":\"dev_2kb9gpgvvpfp28q4msm2ktxddw\",\"label\":\"🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚\"},{\"deviceId\":\"dev_2vc9mq0xvygp6976n1n2qvdfe4\",\"label\":\"🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚\"},{\"deviceId\":\"dev_33d9rqgzw6hpa9q8n9p2vvxhec\",\"label\":\"🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚\"},{\"deviceId\":\"dev_3jf608f3mnkjhtncdrqz3cvn6v\",\"label\":\"🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚\"},{\"deviceId\":\"dev_3tg648z5mxmjnv5ee0rz7dbq73\",\"label\":\"🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚\"},{\"deviceId\":\"dev_42h689f7n5njsvnge8szbdvs7b\",\"label\":\"🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚\"},{\"deviceId\":\"dev_4hk2ftdbdmqf1ckm6qvvjyswzt\",\"label\":\"🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚\"},{\"deviceId\":\"dev_4sm2ktxddwrf5d3p6zwvpz9yr2\",\"label\":\"🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚\"},{\"deviceId\":\"dev_51n2qvdfe4sf9dkr77xvtzr0ra\",\"label\":\"🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚\"},{\"deviceId\":\"dev_5gpyzcbk6kvbgyhvzpzm20p4gs\",\"label\":\"🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚\"},{\"deviceId\":\"dev_5rqz3cvn6vwbmz1xzy0m6166h1\",\"label\":\"🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚\"},{\"deviceId\":\"dev_60rz7dbq73xbrzhzr61ma1p8h9\",\"label\":\"🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚\"},{\"deviceId\":\"dev_6qvvjyswzt0440y5gx4gnk4ea0\",\"label\":\"🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚\"},{\"deviceId\":\"dev_6zwvpz9yr21481e7h55gskmga8\",\"label\":\"🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚\"},{\"deviceId\":\"dev_7pzm20p4gs40kjwd9w8d552p2z\",\"label\":\"🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚\"},{\"deviceId\":\"dev_7y0m6166h150qkcfa49d95jr37\",\"label\":\"🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚🚚\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f306e3367686a6d63397237783334746e327663396d7130787679222c226c6162656c223a22f09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9a227d2c7b226465766963654964223a226465765f307834676e6b34656130387837356171333364397271677a7736222c226c6162656c223a22f09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9a227d2c7b226465766963654964223a226465765f316d376431346a6d327162736a7072777674673634387a356d78222c226c6162656c223a22f09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9a227d2c7b226465766963654964223a226465765f3177386435353270327a63737071387977326836383966376e35222c226c6162656c223a22f09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9a227d2c7b226465766963654964223a226465765f326b62396770677676706670323871346d736d326b7478646477222c226c6162656c223a22f09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9a227d2c7b226465766963654964223a226465765f327663396d71307876796770363937366e316e32717664666534222c226c6162656c223a22f09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9a227d2c7b226465766963654964223a226465765f333364397271677a77366870613971386e397032767678686563222c226c6162656c223a22f09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9a227d2c7b226465766963654964223a226465765f336a6636303866336d6e6b6a68746e636472717a3363766e3676222c226c6162656c223a22f09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9a227d2c7b226465766963654964223a226465765f3374673634387a356d786d6a6e7635656530727a376462713733222c226c6162656c223a22f09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9a227d2c7b226465766963654964223a226465765f34326836383966376e356e6a73766e676538737a626476733762222c226c6162656c223a22f09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9a227d2c7b226465766963654964223a226465765f34686b3266746462646d716631636b6d367176766a7973777a74222c226c6162656c223a22f09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9a227d2c7b226465766963654964223a226465765f34736d326b7478646477726635643370367a7776707a39797232222c226c6162656c223a22f09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9a227d2c7b226465766963654964223a226465765f35316e32717664666534736639646b7237377876747a72307261222c226c6162656c223a22f09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9a227d2c7b226465766963654964223a226465765f356770797a63626b366b7662677968767a707a6d323070346773222c226c6162656c223a22f09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9a227d2c7b226465766963654964223a226465765f3572717a3363766e367677626d7a31787a79306d363136366831222c226c6162656c223a22f09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9a227d2c7b226465766963654964223a226465765f3630727a3764627137337862727a687a7236316d613170386839222c226c6162656c223a22f09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9a227d2c7b226465766963654964223a226465765f367176766a7973777a74303434307935677834676e6b34656130222c226c6162656c223a22f09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9a227d2c7b226465766963654964223a226465765f367a7776707a3979723231343831653768353567736b6d676138222c226c6162656c223a22f09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9a227d2c7b226465766963654964223a226465765f37707a6d32307034677334306b6a77643977386435353270327a222c226c6162656c223a22f09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9a227d2c7b226465766963654964223a226465765f3779306d3631363668313530716b63666134396439356a723337222c226c6162656c223a22f09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9af09f9a9a227d5d2c2276657273696f6e223a317d",
+      "sha256": "OlRphOybKno92R1mVl2ip_EtkNcCOqqUaExcFsGTsKQ"
+    },
+    {
+      "name": "remove-devices (a factor proof confirms it; never an email code)",
+      "emailAllowed": false,
+      "object": {
+        "version": 1,
+        "kind": "remove-devices",
+        "mailboxId": "mbx_1254r3efj59h9nmrb8dxv7v14b",
+        "targets": [
+          {
+            "deviceId": "dev_1y8n656pk1d1qqczc4he99k857",
+            "label": "Laptop"
+          }
+        ],
+        "nonce": "GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM",
+        "issuedAt": 1792627200,
+        "request": "QfxvygnH69mcQ34HyjeQdscDA0K9wC1-dqyw-LjyfFw"
+      },
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"remove-devices\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"request\":\"QfxvygnH69mcQ34HyjeQdscDA0K9wC1-dqyw-LjyfFw\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"Laptop\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a2272656d6f76652d64657669636573222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2272657175657374223a225166787679676e4836396d6351333448796a65516473634441304b397743312d647179772d4c6a79664677222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a224c6170746f70227d5d2c2276657273696f6e223a317d",
+      "sha256": "zKHh7tEiS-zSMtXIsc_ZpSZ3Zb-Jo0akjZXT5nxRK88"
+    },
+    {
+      "name": "remove-devices with no targets: finishing a rotation that is due",
+      "emailAllowed": false,
+      "object": {
+        "version": 1,
+        "kind": "remove-devices",
+        "mailboxId": "mbx_1254r3efj59h9nmrb8dxv7v14b",
+        "targets": [],
+        "nonce": "GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM",
+        "issuedAt": 1792627200,
+        "request": "0Xp9roU6y0X4je_KM78F1PUQm_bofUnNHZ1UH3sPWAU"
+      },
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"remove-devices\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"request\":\"0Xp9roU6y0X4je_KM78F1PUQm_bofUnNHZ1UH3sPWAU\",\"targets\":[],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a2272656d6f76652d64657669636573222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2272657175657374223a2230587039726f5536793058346a655f4b4d373846315055516d5f626f66556e4e485a315548337350574155222c2274617267657473223a5b5d2c2276657273696f6e223a317d",
+      "sha256": "wTOHTA3q2CVkmquq0Q7fvVNaxOWKzNRkZvKbGe4Y8OY"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "whitespace between tokens",
+      "utf8": "{ \"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"Laptop\"}],\"version\":1}",
+      "hex": "7b20226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a224c6170746f70227d5d2c2276657273696f6e223a317d",
+      "why": "not the canonical form (RFC 8785 emits no whitespace)"
+    },
+    {
+      "name": "a trailing newline",
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"Laptop\"}],\"version\":1}\n",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a224c6170746f70227d5d2c2276657273696f6e223a317d0a",
+      "why": "not the canonical form"
+    },
+    {
+      "name": "a byte order mark",
+      "utf8": "﻿{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"Laptop\"}],\"version\":1}",
+      "hex": "efbbbf7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a224c6170746f70227d5d2c2276657273696f6e223a317d",
+      "why": "not the canonical form"
+    },
+    {
+      "name": "members out of order",
+      "utf8": "{\"kind\":\"revoke-device\",\"issuedAt\":1792627200,\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"Laptop\"}],\"version\":1}",
+      "hex": "7b226b696e64223a227265766f6b652d646576696365222c226973737565644174223a313739323632373230302c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a224c6170746f70227d5d2c2276657273696f6e223a317d",
+      "why": "not the canonical form (members sorted by UTF-16 code units)"
+    },
+    {
+      "name": "a duplicate member",
+      "utf8": "{\"issuedAt\":1792627201,\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"Laptop\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230312c226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a224c6170746f70227d5d2c2276657273696f6e223a317d",
+      "why": "a duplicate member (I-JSON); its re-serialization differs"
+    },
+    {
+      "name": "an escape RFC 8785 does not produce",
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"L\\u0061ptop\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a224c5c753030363170746f70227d5d2c2276657273696f6e223a317d",
+      "why": "not the canonical form"
+    },
+    {
+      "name": "an unknown member",
+      "utf8": "{\"extra\":\"x\",\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"Laptop\"}],\"version\":1}",
+      "hex": "7b226578747261223a2278222c226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a224c6170746f70227d5d2c2276657273696f6e223a317d",
+      "why": "an unknown member"
+    },
+    {
+      "name": "a missing member (nonce)",
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"Laptop\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a224c6170746f70227d5d2c2276657273696f6e223a317d",
+      "why": "a missing member"
+    },
+    {
+      "name": "version 2",
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"Laptop\"}],\"version\":2}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a224c6170746f70227d5d2c2276657273696f6e223a327d",
+      "why": "an unknown version"
+    },
+    {
+      "name": "version as a string",
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"Laptop\"}],\"version\":\"1\"}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a224c6170746f70227d5d2c2276657273696f6e223a2231227d",
+      "why": "version must be the number 1"
+    },
+    {
+      "name": "an unknown kind",
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"revoke-everything\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"Laptop\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d65766572797468696e67222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a224c6170746f70227d5d2c2276657273696f6e223a317d",
+      "why": "an unknown kind"
+    },
+    {
+      "name": "request on revoke-device",
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"request\":\"LXEWQrcmsEQBYnyp-6wy9chTD7GQPMTbAiWHF5IaSIE\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"Laptop\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2272657175657374223a224c5845575172636d73455142596e79702d3677793963685444374751504d54624169574846354961534945222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a224c6170746f70227d5d2c2276657273696f6e223a317d",
+      "why": "revoke-device carries no request"
+    },
+    {
+      "name": "remove-devices without request",
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"remove-devices\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"Laptop\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a2272656d6f76652d64657669636573222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a224c6170746f70227d5d2c2276657273696f6e223a317d",
+      "why": "remove-devices needs its request digest"
+    },
+    {
+      "name": "no targets for revoke-device",
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b5d2c2276657273696f6e223a317d",
+      "why": "revoke-device names 1 to 20 devices"
+    },
+    {
+      "name": "twenty-one targets",
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_0920bhw99c6cx42j2fasep8tvj\",\"label\":\"D14\"},{\"deviceId\":\"dev_0h30fjcb9m7d14jm2qbsjprwvt\",\"label\":\"D6\"},{\"deviceId\":\"dev_185wv3th2ba9cp0sveeny872mh\",\"label\":\"D15\"},{\"deviceId\":\"dev_1g6wz4ak2kb9gpgvvpfp28q4ms\",\"label\":\"D7\"},{\"deviceId\":\"dev_279sanrrvae5w7z1mdjjdt5adg\",\"label\":\"D16\"},{\"deviceId\":\"dev_2fasep8tvjf608f3mnkjhtncdr\",\"label\":\"D8\"},{\"deviceId\":\"dev_2qbsjprwvtg648z5mxmjnv5ee0\",\"label\":\"D0\"},{\"deviceId\":\"dev_36dnt7q0m9j2bsx9dcpexc3j6f\",\"label\":\"D17\"},{\"deviceId\":\"dev_3eeny872mhk2ftdbdmqf1ckm6q\",\"label\":\"D9\"},{\"deviceId\":\"dev_3pfp28q4msm2ktxddwrf5d3p6z\",\"label\":\"D1\"},{\"deviceId\":\"dev_45hj9sn8d8nyvbvh6btbcy1sze\",\"label\":\"D18\"},{\"deviceId\":\"dev_4djjdt5adgpyzcbk6kvbgyhvzp\",\"label\":\"D10\"},{\"deviceId\":\"dev_4nkjhtncdrqz3cvn6vwbmz1xzy\",\"label\":\"D2\"},{\"deviceId\":\"dev_54nesbkg67svaxsrzay7wfy1gd\",\"label\":\"D19\"},{\"deviceId\":\"dev_5cpexc3j6ftvey9tzjz400e3gn\",\"label\":\"D11\"},{\"deviceId\":\"dev_5mqf1ckm6qvvjyswzt0440y5gx\",\"label\":\"D3\"},{\"deviceId\":\"dev_63sb8xhqz6xqtfp0g920bhw99c\",\"label\":\"D20\"},{\"deviceId\":\"dev_6btbcy1szeyqy062gh30fjcb9m\",\"label\":\"D12\"},{\"deviceId\":\"dev_6kvbgyhvzpzm20p4gs40kjwd9w\",\"label\":\"D4\"},{\"deviceId\":\"dev_7ay7wfy1gd2gdj4a9g6wz4ak2k\",\"label\":\"D13\"},{\"deviceId\":\"dev_7jz400e3gn3ghjmc9r7x34tn2v\",\"label\":\"D5\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f3039323062687739396336637834326a3266617365703874766a222c226c6162656c223a22443134227d2c7b226465766963654964223a226465765f30683330666a6362396d376431346a6d327162736a7072777674222c226c6162656c223a224436227d2c7b226465766963654964223a226465765f313835777633746832626139637030737665656e793837326d68222c226c6162656c223a22443135227d2c7b226465766963654964223a226465765f316736777a34616b326b62396770677676706670323871346d73222c226c6162656c223a224437227d2c7b226465766963654964223a226465765f32373973616e72727661653577377a316d646a6a647435616467222c226c6162656c223a22443136227d2c7b226465766963654964223a226465765f3266617365703874766a6636303866336d6e6b6a68746e636472222c226c6162656c223a224438227d2c7b226465766963654964223a226465765f327162736a7072777674673634387a356d786d6a6e7635656530222c226c6162656c223a224430227d2c7b226465766963654964223a226465765f3336646e743771306d396a3262737839646370657863336a3666222c226c6162656c223a22443137227d2c7b226465766963654964223a226465765f3365656e793837326d686b3266746462646d716631636b6d3671222c226c6162656c223a224439227d2c7b226465766963654964223a226465765f33706670323871346d736d326b7478646477726635643370367a222c226c6162656c223a224431227d2c7b226465766963654964223a226465765f3435686a39736e3864386e797662766836627462637931737a65222c226c6162656c223a22443138227d2c7b226465766963654964223a226465765f34646a6a64743561646770797a63626b366b7662677968767a70222c226c6162656c223a22443130227d2c7b226465766963654964223a226465765f346e6b6a68746e636472717a3363766e367677626d7a31787a79222c226c6162656c223a224432227d2c7b226465766963654964223a226465765f35346e6573626b6736377376617873727a617937776679316764222c226c6162656c223a22443139227d2c7b226465766963654964223a226465765f356370657863336a36667476657939747a6a7a3430306533676e222c226c6162656c223a22443131227d2c7b226465766963654964223a226465765f356d716631636b6d367176766a7973777a743034343079356778222c226c6162656c223a224433227d2c7b226465766963654964223a226465765f36337362387868717a3678717466703067393230626877393963222c226c6162656c223a22443230227d2c7b226465766963654964223a226465765f36627462637931737a6579717930363267683330666a6362396d222c226c6162656c223a22443132227d2c7b226465766963654964223a226465765f366b7662677968767a707a6d32307034677334306b6a77643977222c226c6162656c223a224434227d2c7b226465766963654964223a226465765f376179377766793167643267646a3461396736777a34616b326b222c226c6162656c223a22443133227d2c7b226465766963654964223a226465765f376a7a3430306533676e3367686a6d63397237783334746e3276222c226c6162656c223a224435227d5d2c2276657273696f6e223a317d",
+      "why": "at most 20 devices"
+    },
+    {
+      "name": "targets not sorted",
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_3wge59364zmtpv9ey2s78dfqq5\",\"label\":\"Old phone\"},{\"deviceId\":\"dev_2xchnq4yc0gy79b753narvhfy6\",\"label\":\"Kitchen tablet\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f3377676535393336347a6d747076396579327337386466717135222c226c6162656c223a224f6c642070686f6e65227d2c7b226465766963654964223a226465765f327863686e713479633067793739623735336e61727668667936222c226c6162656c223a224b69746368656e207461626c6574227d5d2c2276657273696f6e223a317d",
+      "why": "targets are sorted by deviceId"
+    },
+    {
+      "name": "the same device twice",
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"Laptop\"},{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"Laptop again\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a224c6170746f70227d2c7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a224c6170746f7020616761696e227d5d2c2276657273696f6e223a317d",
+      "why": "a device appears once"
+    },
+    {
+      "name": "a target with an extra member",
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"Laptop\",\"seen\":\"yesterday\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a224c6170746f70222c227365656e223a22796573746572646179227d5d2c2276657273696f6e223a317d",
+      "why": "a target is exactly { deviceId, label }"
+    },
+    {
+      "name": "a device id with the wrong prefix",
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"wrp_4ymppb7ep1s37xdqf4xfsfj007\",\"label\":\"Laptop\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a227772705f34796d707062376570317333377864716634786673666a303037222c226c6162656c223a224c6170746f70227d5d2c2276657273696f6e223a317d",
+      "why": "deviceId is dev_ and 26 Crockford symbols"
+    },
+    {
+      "name": "a device id in upper case",
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_1Y8N656PK1D1QQCZC4HE99K857\",\"label\":\"Laptop\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f3159384e363536504b3144315151435a4334484539394b383537222c226c6162656c223a224c6170746f70227d5d2c2276657273696f6e223a317d",
+      "why": "ids are lower case"
+    },
+    {
+      "name": "a mailbox id that is not one",
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_short\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"Laptop\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f73686f7274222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a224c6170746f70227d5d2c2276657273696f6e223a317d",
+      "why": "mailboxId is mbx_ and 26 Crockford symbols"
+    },
+    {
+      "name": "an empty label",
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a22227d5d2c2276657273696f6e223a317d",
+      "why": "a label has 1 to 40 code points"
+    },
+    {
+      "name": "a label of 41 code points",
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a226161616161616161616161616161616161616161616161616161616161616161616161616161616161227d5d2c2276657273696f6e223a317d",
+      "why": "a label has 1 to 40 code points"
+    },
+    {
+      "name": "a label with a control character",
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"Lap\\u0007top\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a224c61705c7530303037746f70227d5d2c2276657273696f6e223a317d",
+      "why": "no U+0000-U+001F or U+007F-U+009F"
+    },
+    {
+      "name": "a label with U+0085",
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"Laptop\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a224c6170c285746f70227d5d2c2276657273696f6e223a317d",
+      "why": "no U+0000-U+001F or U+007F-U+009F"
+    },
+    {
+      "name": "a label with a line separator",
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"Lap top\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a224c6170e280a8746f70227d5d2c2276657273696f6e223a317d",
+      "why": "no U+2028 or U+2029"
+    },
+    {
+      "name": "a label with a lone surrogate (written as an escape)",
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"Lap\\ud800top\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a224c61705c7564383030746f70227d5d2c2276657273696f6e223a317d",
+      "why": "a lone surrogate (RFC 8785 refuses it; the bytes are not canonical either)"
+    },
+    {
+      "name": "a nonce of 31 bytes",
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7A\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"Laptop\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c3741222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a224c6170746f70227d5d2c2276657273696f6e223a317d",
+      "why": "nonce is base64url of 32 bytes (43 characters)"
+    },
+    {
+      "name": "a nonce with padding",
+      "utf8": "{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM=\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"Laptop\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d3d222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a224c6170746f70227d5d2c2276657273696f6e223a317d",
+      "why": "nonce is unpadded base64url"
+    },
+    {
+      "name": "issuedAt with a fraction",
+      "utf8": "{\"issuedAt\":1792627200.5,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"Laptop\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a313739323632373230302e352c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a224c6170746f70227d5d2c2276657273696f6e223a317d",
+      "why": "issuedAt is a whole number of seconds"
+    },
+    {
+      "name": "issuedAt as a string",
+      "utf8": "{\"issuedAt\":\"1792627200\",\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"Laptop\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a2231373932363237323030222c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a224c6170746f70227d5d2c2276657273696f6e223a317d",
+      "why": "issuedAt is a number"
+    },
+    {
+      "name": "issuedAt negative",
+      "utf8": "{\"issuedAt\":-1,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"Laptop\"}],\"version\":1}",
+      "hex": "7b226973737565644174223a2d312c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a224c6170746f70227d5d2c2276657273696f6e223a317d",
+      "why": "issuedAt is at least 0"
+    },
+    {
+      "name": "an array at the top",
+      "utf8": "[{\"issuedAt\":1792627200,\"kind\":\"revoke-device\",\"mailboxId\":\"mbx_1254r3efj59h9nmrb8dxv7v14b\",\"nonce\":\"GiEoLzY9REtSWWBnbnV8g4qRmJ-mrbS7wsnQ197l7PM\",\"targets\":[{\"deviceId\":\"dev_1y8n656pk1d1qqczc4he99k857\",\"label\":\"Laptop\"}],\"version\":1}]",
+      "hex": "5b7b226973737565644174223a313739323632373230302c226b696e64223a227265766f6b652d646576696365222c226d61696c626f784964223a226d62785f31323534723365666a353968396e6d7262386478763776313462222c226e6f6e6365223a224769456f4c7a5939524574535757426e626e5638673471526d4a2d6d7262533777736e513139376c37504d222c2274617267657473223a5b7b226465766963654964223a226465765f3179386e363536706b3164317171637a6334686539396b383537222c226c6162656c223a224c6170746f70227d5d2c2276657273696f6e223a317d5d",
+      "why": "a descriptor is an object"
+    }
+  ],
+  "attestations": {
+    "note": "Mail's checks, with the capability's sub and Mail's clock as given. `descriptor` names the valid vector whose digest Mail holds for its pending challenge.",
+    "sub": "acct_example_owner",
+    "now": 1792627400,
+    "descriptor": "revoke one device",
+    "accepted": [
+      {
+        "name": "the code was confirmed 50 seconds ago",
+        "attestation": {
+          "method": "email-code",
+          "accountId": "acct_example_owner",
+          "actionKind": "revoke-device",
+          "actionDigest": "yAsD42pLJ_e5mdhzbDegZcxtfzRenTDKMggl_cvNopA",
+          "at": 1792627350,
+          "codeId": "code_example_1"
+        }
+      }
+    ],
+    "refused": [
+      {
+        "name": "another account",
+        "attestation": {
+          "method": "email-code",
+          "accountId": "acct_example_other",
+          "actionKind": "revoke-device",
+          "actionDigest": "yAsD42pLJ_e5mdhzbDegZcxtfzRenTDKMggl_cvNopA",
+          "at": 1792627350,
+          "codeId": "code_example_1"
+        },
+        "why": "accountId must equal the capability's sub"
+      },
+      {
+        "name": "another method",
+        "attestation": {
+          "method": "passkey",
+          "accountId": "acct_example_owner",
+          "actionKind": "revoke-device",
+          "actionDigest": "yAsD42pLJ_e5mdhzbDegZcxtfzRenTDKMggl_cvNopA",
+          "at": 1792627350,
+          "codeId": "code_example_1"
+        },
+        "why": "method is exactly email-code"
+      },
+      {
+        "name": "a kind an email code may not confirm",
+        "attestation": {
+          "method": "email-code",
+          "accountId": "acct_example_owner",
+          "actionKind": "remove-devices",
+          "actionDigest": "yAsD42pLJ_e5mdhzbDegZcxtfzRenTDKMggl_cvNopA",
+          "at": 1792627350,
+          "codeId": "code_example_1"
+        },
+        "why": "an email code confirms only revoke-device"
+      },
+      {
+        "name": "another digest",
+        "attestation": {
+          "method": "email-code",
+          "accountId": "acct_example_owner",
+          "actionKind": "revoke-device",
+          "actionDigest": "LCIxWB1JRXa6zmjgx8AjMQRpjRSp7Qj3imCP9XJ3u7I",
+          "at": 1792627350,
+          "codeId": "code_example_1"
+        },
+        "why": "actionDigest must be the digest of the descriptor of Mail's pending challenge"
+      },
+      {
+        "name": "confirmed 301 seconds ago",
+        "attestation": {
+          "method": "email-code",
+          "accountId": "acct_example_owner",
+          "actionKind": "revoke-device",
+          "actionDigest": "yAsD42pLJ_e5mdhzbDegZcxtfzRenTDKMggl_cvNopA",
+          "at": 1792627099,
+          "codeId": "code_example_1"
+        },
+        "why": "at is at most 300 seconds old"
+      },
+      {
+        "name": "confirmed in the future",
+        "attestation": {
+          "method": "email-code",
+          "accountId": "acct_example_owner",
+          "actionKind": "revoke-device",
+          "actionDigest": "yAsD42pLJ_e5mdhzbDegZcxtfzRenTDKMggl_cvNopA",
+          "at": 1792627406,
+          "codeId": "code_example_1"
+        },
+        "why": "at is at most 5 seconds ahead of Mail's clock"
+      },
+      {
+        "name": "confirmed before the descriptor was issued",
+        "attestation": {
+          "method": "email-code",
+          "accountId": "acct_example_owner",
+          "actionKind": "revoke-device",
+          "actionDigest": "yAsD42pLJ_e5mdhzbDegZcxtfzRenTDKMggl_cvNopA",
+          "at": 1792627199,
+          "codeId": "code_example_1"
+        },
+        "why": "at is not before the descriptor's issuedAt"
+      },
+      {
+        "name": "an extra member",
+        "attestation": {
+          "method": "email-code",
+          "accountId": "acct_example_owner",
+          "actionKind": "revoke-device",
+          "actionDigest": "yAsD42pLJ_e5mdhzbDegZcxtfzRenTDKMggl_cvNopA",
+          "at": 1792627350,
+          "codeId": "code_example_1",
+          "extra": true
+        },
+        "why": "exactly six members"
+      },
+      {
+        "name": "at as a string",
+        "attestation": {
+          "method": "email-code",
+          "accountId": "acct_example_owner",
+          "actionKind": "revoke-device",
+          "actionDigest": "yAsD42pLJ_e5mdhzbDegZcxtfzRenTDKMggl_cvNopA",
+          "at": "1792627350",
+          "codeId": "code_example_1"
+        },
+        "why": "at is a whole number of seconds"
+      }
+    ]
+  }
+}

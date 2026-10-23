@@ -13,6 +13,14 @@ request), and three error names (`SessionRequired`, `DeviceRevoked`,
 `ProofRejected`). They are specified in `device-v1.md` Part B, which is part
 of this contract. Everything below still holds.
 
+**Amended 2026-10-22 (spec 002 round 3):** `removeDevice` becomes
+`removeDevices` (0 to 20 devices), `revokeDevices` is added (it takes no
+`auth`: an email code attested in the capability's `confirmation` claim
+stands for its confirmation), `challenge` gains the `key` and `email`
+purposes and returns an action descriptor (`action-descriptor-v1.md`), and
+`Forbidden` also answers a device of another account. `device-v1.md` Part B
+has the details.
+
 ## Every answer is a value; expected refusals are never thrown
 
 ```ts
