@@ -208,7 +208,7 @@ unlock) is part of K2″.
 | **Kept device** | A device the owner said is theirs, with keys in its browser | Any browser that unlocked once |
 | **Shared computer** | A browser that keeps nothing | A device |
 | **Factor** | The person's passkey (with PRF), or the recovery key | A device |
-| **Factor signing key** | The P-256 signing key derived from a factor's secret; Mail holds its public half (round 3) | The factor key, which receives seals |
+| **Factor signing key** | The Ed25519 signing key derived from a factor's secret (D44); Mail holds its public half (round 3) | The factor key, which receives seals |
 | **Admission** | A factor's signature saying "this device (or factor) is the owner's" (round 3) | A binding tag |
 | **Transition** | A factor's signature saying "this key's successor is that key" (round 3) | A successor seal |
 | **Action descriptor** | The bytes Mail issues naming one action to confirm, with a nonce spent once (round 3) | A request |
