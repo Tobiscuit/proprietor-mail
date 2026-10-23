@@ -3,19 +3,26 @@ import { env, exports } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import worker from "../src/index";
 import {
+  type Action,
   activeKeyId,
+  actionInput,
   challenge,
-  deviceInput,
-  factorProof,
   fakeSeal,
   fakeTag,
   keepDevice,
   mailboxKeyPair,
   newDevice,
   openChallenge,
-  openSession,
+  openSessionAction,
+  emailCode,
+  plainSession,
+  registerAction,
+  registerRequest,
+  removeDevicesAction,
   rotationFor,
   signProof,
+  signUnlockKey,
+  type TestFactor,
   type Upgraded,
   upgradedMailbox,
 } from "./support/browser";
@@ -78,34 +85,40 @@ class Bearers {
 async function everyFlow(bearers: Bearers): Promise<{ u: Upgraded; submitted: Record<string, Uint8Array> }> {
   const u = await upgradedMailbox();
   const submitted: Record<string, Uint8Array> = {};
-  const proveWith = async (factor: Upgraded["recovery"]) => {
-    const c = (await challenge(u.mb, { purpose: "factor", factorId: factor.id }));
+  const proveWith = async (factor: TestFactor, action: Action) => {
+    const c = await challenge(u.mb, { purpose: "factor", factorId: factor.id, action: await actionInput(action) });
     return { challengeId: c.id, answer: bearers.add("answer", await openChallenge(u.mb.id, c, factor.pair)) };
   };
   const sessionFor = async (key: CryptoKeyPair, device?: Awaited<ReturnType<typeof newDevice>>) => {
-    const c = (await challenge(u.mb, { purpose: "session" }));
+    const c = await challenge(u.mb, { purpose: "session" });
     const answer = bearers.add("answer", await openChallenge(u.mb.id, c, key));
-    const signed = device === undefined ? {} : { device: { id: device.id, signature: await signProof(u.mb.id, device, c) } };
-    return bearers.add("session", valueOf(await mail().openSession(await capFor(u.mb), { challengeId: c.id, answer, ...signed })).session);
+    // D38: a device's signature, or a factor proof bound to this session challenge.
+    const second = device === undefined ? { factorProof: await proveWith(u.passkey, openSessionAction(c.id)) } : { device: { id: device.id, signature: await signProof(u.mb.id, device, c) } };
+    return bearers.add("session", valueOf(await mail().openSession(await capFor(u.mb), { challengeId: c.id, answer, ...second })).session);
   };
   bearers.add("session", u.session);
 
   // F1: keep a device.
   const device = await newDevice({ label: "Office laptop" });
-  const input = deviceInput(device, u.mb.key!.keyId);
-  const seal = fakeSeal(142);
-  submitted.deviceSeal = bytesFromBase64url(seal);
+  const request = await registerRequest(u, device, u.recovery);
+  submitted.deviceSeal = bytesFromBase64url(request.seal!);
   submitted.signingKey = device.signingKey; // pragma: allowlist secret (a public P-256 point)
   submitted.unlockKey = device.unlockKey!;
-  valueOf(await mail().registerDevice(await capFor(u.mb), { device: input, seal }, { session: u.session, factorProof: await proveWith(u.recovery) }));
+  valueOf(await mail().registerDevice(await capFor(u.mb), request, { session: u.session, factorProof: await proveWith(u.recovery, registerAction(request)) }));
   // F2: the device opens its own session; F3: it locks; F4: it unlocks again.
   const deviceSession = await sessionFor(u.mailboxKey, device);
-  valueOf(await mail().updateDevice(await capFor(u.mb), { unlockKey: null, tag: fakeTag(), tagKeyId: u.mb.key!.keyId, seal: null }, { session: deviceSession }));
+  valueOf(await mail().updateDevice(await capFor(u.mb), { unlockKey: null, unlockSignature: null, tag: fakeTag(), tagKeyId: u.mb.key!.keyId, seal: null }, { session: deviceSession }));
   const deviceSession2 = await sessionFor(u.mailboxKey, device);
   valueOf(
     await mail().updateDevice(
       await capFor(u.mb),
-      { unlockKey: base64urlFromBytes(device.unlockKey!), tag: fakeTag(), tagKeyId: u.mb.key!.keyId, seal: fakeSeal(142) },
+      {
+        unlockKey: base64urlFromBytes(device.unlockKey!),
+        unlockSignature: await signUnlockKey(u.mb.id, device, device.unlockKey!),
+        tag: fakeTag(),
+        tagKeyId: u.mb.key!.keyId,
+        seal: fakeSeal(142),
+      },
       { session: deviceSession2 },
     ),
   );
@@ -114,15 +127,16 @@ async function everyFlow(bearers: Bearers): Promise<{ u: Upgraded; submitted: Re
   valueOf(await mail().send(await capFor(u.mb), { idempotencyKey: "m1-devices", to: [{ address: "ana@example.com" }], subject: "s", text: "t", session: deviceSession2 }));
   valueOf(await mail().list(await capFor(u.mb), { folder: "inbox" }, { session: deviceSession2 }));
   // A wrong answer, so a refused proof is in the audit too.
-  const refused = (await challenge(u.mb, { purpose: "session" }));
+  const refused = await challenge(u.mb, { purpose: "session" });
   const wrong = bearers.add("answer", base64urlFromBytes(crypto.getRandomValues(new Uint8Array(32))));
-  refusalOf(await mail().openSession(await capFor(u.mb), { challengeId: refused.id, answer: wrong }));
+  expect(refusalOf(await mail().openSession(await capFor(u.mb), { challengeId: refused.id, answer: wrong, device: { id: device.id, signature: await signProof(u.mb.id, device, refused) } })).name).toBe("ProofRejected");
   // F6: a plain session (R5) removes the device; the key rotates.
   const remover = await sessionFor(u.mailboxKey);
-  const { next, rotation } = await rotationFor(u.mb, device.id);
+  const { next, rotation } = await rotationFor(u.mb, device.id, u.passkey);
   submitted.successorSeal = bytesFromBase64url(rotation.successorSeal);
   submitted.newPublicKey = next.publicKey;
-  valueOf(await mail().removeDevice(await capFor(u.mb), { deviceId: device.id, rotation }, { session: remover, factorProof: await proveWith(u.passkey) }));
+  const removal = { deviceIds: [device.id], rotation };
+  valueOf(await mail().removeDevices(await capFor(u.mb), removal, { session: remover, factorProof: await proveWith(u.passkey, removeDevicesAction(removal)) }));
   // Under the new key: a session, and the audit read.
   const after = await sessionFor(await mailboxKeyPair(next));
   valueOf(await mail().audit(await capFor(u.mb), {}, { session: after }));
@@ -169,27 +183,31 @@ describe("audit rows (B9): ids, kinds, counts and labels; never a token, an answ
 describe("the daily housekeeping deletes expired challenges and sessions (B9)", () => {
   it("deletes each once it has expired, keeps the live ones, and answers as before", async () => {
     const u = await upgradedMailbox();
+    const device = await keepDevice(u);
     const used = await challenge(u.mb, { purpose: "session" });
-    valueOf(await mail().openSession(await capFor(u.mb), { challengeId: used.id, answer: await openChallenge(u.mb.id, used, u.mailboxKey) }));
-    await challenge(u.mb, { purpose: "factor", factorId: u.recovery.id });
+    valueOf(await mail().openSession(await capFor(u.mb), { challengeId: used.id, answer: await openChallenge(u.mb.id, used, u.mailboxKey), device: { id: device.id, signature: await signProof(u.mb.id, device, used) } }));
+    await challenge(u.mb, { purpose: "factor", factorId: u.recovery.id, action: await actionInput(openSessionAction(used.id)) });
+    const email = await challenge(u.mb, { purpose: "email", action: { kind: "revoke-device", deviceIds: [device.id] } });
     u.mb.ports.clock.advance(2 * MINUTE - 1);
     const young = await challenge(u.mb, { purpose: "session" });
-    const youngSession = (await openSession(u.mb, u.mailboxKey)).session;
+    const youngSession = valueOf(
+      await mail().openSession(await capFor(u.mb), { challengeId: young.id, answer: await openChallenge(u.mb.id, young, u.mailboxKey), device: { id: device.id, signature: await signProof(u.mb.id, device, young) } }),
+    ).session;
+    const youngest = await challenge(u.mb, { purpose: "session" });
     u.mb.ports.clock.advance(1);
-    // At 2 minutes the upgrade's challenge, `used` and the factor challenge have expired; the young one and its session's have not.
+    // At 2 minutes every challenge from before has expired but the email one (10 minutes, B6); the youngest and the young one's have not.
     expect(await u.mb.stub.dailyHousekeeping()).toEqual({ trash: 0, sends: 0, audit: 0, suppression: 0 });
     const left = await sql<{ id: string }>(u.mb, "SELECT id FROM challenges");
-    expect(left.map((c) => c.id)).not.toContain(used.id);
-    expect(left).toHaveLength(2);
-    expect(left.map((c) => c.id)).toContain(young.id);
+    expect(left.map((c) => c.id).sort()).toEqual([email.id, young.id, youngest.id].sort());
     const lines = () => captured.lines.map((l) => JSON.parse(l) as Record<string, unknown>).filter((l) => l.event === "housekeeping");
-    expect(lines().at(-1)).toMatchObject({ challenges: 3, sessions: 0 });
+    // The first session's, the upgrade's key challenge, the registration's factor challenge, `used`, and the factor challenge.
+    expect(lines().at(-1)).toMatchObject({ challenges: 5, sessions: 0 });
 
-    // Sessions: the two opened at the start live 60 minutes; a millisecond before, all three are kept.
+    // Sessions: the upgrade's (now the device's), the registration's and `used`'s live 60 minutes; a millisecond before, all four are kept.
     u.mb.ports.clock.advance(58 * MINUTE - 1);
     await u.mb.stub.dailyHousekeeping();
     expect(await sql(u.mb, "SELECT COUNT(*) AS n FROM mail_sessions")).toEqual([{ n: 3 }]);
-    expect(lines().at(-1)).toMatchObject({ challenges: 2, sessions: 0 });
+    expect(lines().at(-1)).toMatchObject({ challenges: 3, sessions: 0 });
     u.mb.ports.clock.advance(1);
     await u.mb.stub.dailyHousekeeping();
     expect(lines().at(-1)).toMatchObject({ challenges: 0, sessions: 2 });
@@ -207,7 +225,8 @@ describe("answers are values from every new method (contracts/mail-service-v1.md
       ["upgrade", () => mail().upgrade(cap, {}, {})],
       ["registerDevice", () => mail().registerDevice(cap, {}, {})],
       ["updateDevice", () => mail().updateDevice(cap, {}, {})],
-      ["removeDevice", () => mail().removeDevice(cap, {}, {})],
+      ["removeDevices", () => mail().removeDevices(cap, {}, {})],
+      ["revokeDevices", () => mail().revokeDevices(cap, {})],
     ];
   }
 
@@ -227,7 +246,7 @@ describe("answers are values from every new method (contracts/mail-service-v1.md
 
   it("logs one line per call with the method, the jti and the outcome, and never a token", async () => {
     const u = await upgradedMailbox();
-    const { session } = await openSession(u.mb, u.mailboxKey);
+    const session = await plainSession(u);
     await mail().list(await capFor(u.mb, { jti: "trace-jti-session" }), { folder: "inbox" }, { session });
     await mail().list(await capFor(u.mb, { jti: "trace-jti-no-session" }), { folder: "inbox" });
     const lines = captured.lines.filter((l) => l.includes('"mail-service"')).map((l) => JSON.parse(l) as Record<string, unknown>);
@@ -240,11 +259,17 @@ describe("answers are values from every new method (contracts/mail-service-v1.md
 
   it("refuses a request that sends a private key or a token under any other name to a new method", async () => {
     const u = await upgradedMailbox();
-    await keepDevice(u); // the upgrade's session becomes this device's, for updateDevice
+    const device = await keepDevice(u); // the upgrade's session becomes this device's, for updateDevice
     const keyId = u.mb.key!.keyId;
+    const leaky = await registerRequest(u, await newDevice(), u.recovery, { privateKey: "x" });
+    const leakyProof = await (async () => {
+      const c = await challenge(u.mb, { purpose: "factor", factorId: u.recovery.id, action: await actionInput(registerAction(leaky)) });
+      return { challengeId: c.id, answer: await openChallenge(u.mb.id, c, u.recovery.pair) };
+    })();
     for (const [method, answer] of [
-      ["registerDevice", await mail().registerDevice(await capFor(u.mb), { device: deviceInput(await newDevice(), keyId, { privateKey: "x" }), seal: fakeSeal(142) }, { session: u.session, factorProof: await factorProof(u.mb, u.recovery) })],
-      ["updateDevice", await mail().updateDevice(await capFor(u.mb), { unlockKey: null, tag: fakeTag(), tagKeyId: keyId, seal: null, privateKey: "x" }, { session: u.session })],
+      ["registerDevice", await mail().registerDevice(await capFor(u.mb), leaky, { session: u.session, factorProof: leakyProof })],
+      ["updateDevice", await mail().updateDevice(await capFor(u.mb), { unlockKey: null, unlockSignature: null, tag: fakeTag(), tagKeyId: keyId, seal: null, privateKey: "x" }, { session: u.session })],
+      ["revokeDevices", await mail().revokeDevices(await emailCode(u, [device.id]), { deviceIds: [device.id], privateKey: "x" })],
       ["challenge", await mail().challenge(await capFor(u.mb), { purpose: "session", answer: "x" })],
       ["openSession", await mail().openSession(await capFor(u.mb), { challengeId: testId("wrp").replace("wrp", "chl"), answer: base64urlFromBytes(new Uint8Array(32)), session: "x" })],
     ] as const) {

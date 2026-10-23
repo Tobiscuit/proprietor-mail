@@ -22,6 +22,8 @@ const MAILBOX_TABLES = [
   "devices",
   "challenges",
   "mail_sessions",
+  "removed_factors",
+  "rotation_due",
   "key_wraps",
   "messages",
   "drafts",

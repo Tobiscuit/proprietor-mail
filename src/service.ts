@@ -39,9 +39,11 @@ import type {
  * the outcome, so the dashboard's log of the same jti finds it. Never content.
  *
  * Spec 002 (contracts/device-v1.md Part B): every mailbox call but
- * `mailboxes`, `mailbox`, `unread`, `enroll`, `challenge` and `openSession`
- * takes a last argument `auth` (B1), the mail session and, where it is
- * needed, a factor proof; `send` carries its session inside the request (D29).
+ * `mailboxes`, `mailbox`, `unread`, `enroll`, `challenge`, `openSession` and
+ * (round 3) `revokeDevices` takes a last argument `auth` (B1), the mail
+ * session and, where it is needed, a factor proof or (`upgrade`) a key
+ * proof; `send` carries its session inside the request (D29); `revokeDevices`
+ * is confirmed by an email code the dashboard attests in the capability.
  * Each answer's need is SESSION_NEEDS's (src/mailbox/sessions.ts), applied in
  * the Mailbox. Every public method of this class is an RPC method; its
  * helpers are `#private`, so the runtime does not serve them.
@@ -51,8 +53,10 @@ import type {
 export interface Auth {
   /** The token from openSession(). */
   session?: string;
-  /** A fresh factor proof, for the methods that need one. */
+  /** A fresh factor proof, for the methods that need one; its challenge's descriptor names the call (round 3). */
   factorProof?: { challengeId: string; answer: string };
+  /** Round 3: a key proof bound to the call, for `upgrade`. */
+  keyProof?: { challengeId: string; answer: string };
 }
 
 let keyCache: { json: string | undefined; keys: CapabilityKeys } | undefined;
@@ -77,7 +81,8 @@ export type MailboxRpc = Pick<
   | "upgrade"
   | "registerDevice"
   | "updateDevice"
-  | "removeDevice"
+  | "removeDevices"
+  | "revokeDevices"
   | "enroll"
   | "addWrap"
   | "removeWrap"
@@ -142,17 +147,21 @@ export class MailService extends WorkerEntrypoint<Env> {
     });
   }
 
-  /** B6: a challenge sealed to the active key (`purpose: "session"`) or to a factor's key. No session needed. */
+  /**
+   * B6: a challenge sealed to the active key (`purpose: "session"`, or `"key"` for the upgrade), to a factor's key
+   * (`"factor"`), or none (`"email"`); every purpose but a session's names its action and gets its descriptor (A10).
+   * No session needed.
+   */
   async challenge(cap: string, request: unknown): Promise<MailResult<ChallengeView>> {
     return this.#withMailbox("challenge", cap, undefined, (stub, ctx) => stub.createChallenge(ctx, request));
   }
 
-  /** B6: a 60-minute mail session from a key proof (and a kept device's signature). */
+  /** B6: a 60-minute mail session from a key proof and, while sessions are required, a kept device's signature or a factor proof (D38). */
   async openSession(cap: string, request: unknown): Promise<MailResult<SessionView>> {
     return this.#withMailbox("openSession", cap, undefined, (stub, ctx) => stub.openSession(ctx, request));
   }
 
-  /** B5: an existing mailbox learns its factors' keys, and sessions become required, once. */
+  /** B5: an existing mailbox learns its factors' keys, and sessions become required, once (a session and a key proof bound to the request). */
   async upgrade(cap: string, request: unknown, auth?: Auth): Promise<MailResult<null>> {
     return this.#withMailbox("upgrade", cap, auth, (stub, ctx) => stub.upgrade(ctx, request));
   }
@@ -168,12 +177,24 @@ export class MailService extends WorkerEntrypoint<Env> {
   }
 
   /**
-   * B7, F6: removes a kept device and rotates the mailbox key in one step: the
-   * new key sealed to every remaining recipient, the old one retired with its
-   * successor seal, every other session ended. Answers the new key's id.
+   * B7, F6, F14 (round 3: replaces removeDevice): removes 0 to 20 kept devices
+   * and rotates the mailbox key in one step: the new key sealed to every
+   * remaining recipient, the old one retired with its successor seal and the
+   * transition the proof's factor signed, every other session ended, no
+   * rotation due. 0 devices only while a rotation is due. Answers the new key's id.
    */
-  async removeDevice(cap: string, request: unknown, auth?: Auth): Promise<MailResult<{ keyId: string }>> {
-    return this.#withMailbox("removeDevice", cap, auth, (stub, ctx) => stub.removeDevice(ctx, request));
+  async removeDevices(cap: string, request: unknown, auth?: Auth): Promise<MailResult<{ keyId: string }>> {
+    return this.#withMailbox("removeDevices", cap, auth, (stub, ctx) => stub.removeDevices(ctx, request));
+  }
+
+  /**
+   * B7a (round 3): an email code, which the dashboard checked and attested in
+   * this capability's `confirmation` claim, revokes devices and does nothing
+   * else: they, their seals and their sessions go, and a rotation is due. No
+   * session and no `auth`. This is the only method that reads the claim.
+   */
+  async revokeDevices(cap: string, request: unknown): Promise<MailResult<{ revoked: string[] }>> {
+    return this.#withMailbox("revokeDevices", cap, undefined, (stub, ctx) => stub.revokeDevices(ctx, request));
   }
 
   async addWrap(cap: string, wrap: unknown, auth?: Auth): Promise<MailResult<null>> {
@@ -263,6 +284,8 @@ export class MailService extends WorkerEntrypoint<Env> {
         mailbox: entry,
         actor: { accountId: capability.sub, role: capability.role },
         auth: auth === undefined ? NO_AUTH : parseAuth(auth),
+        // B7a, M22: the attestation reaches revokeDevices and nothing else (#call reads it only for that method).
+        ...(capability.confirmation === undefined ? {} : { confirmation: capability.confirmation }),
       };
       const stub = await mailboxRpc(this.env, entry.id);
       return fn(stub, ctx);
@@ -280,7 +303,8 @@ export class MailService extends WorkerEntrypoint<Env> {
     let capability: Capability;
     try {
       if (typeof cap !== "string") throw new CapabilityRejected("invalid");
-      capability = await verifyCapability(cap, capabilityKeys(this.env), Math.floor(Date.now() / 1000));
+      // capability-v1: the `confirmation` claim is read (strictly) for revokeDevices only; every other method ignores it.
+      capability = await verifyCapability(cap, capabilityKeys(this.env), Math.floor(Date.now() / 1000), { confirmation: method === "revokeDevices" });
     } catch (err) {
       const rejected = err instanceof CapabilityRejected ? err : new CapabilityRejected("invalid");
       logEvent("mail-service", { method, jti, outcome: "rejected", reason: rejected.reason });

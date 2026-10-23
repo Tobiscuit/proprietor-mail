@@ -15,7 +15,31 @@ function rpcMethods(cls: { prototype: object }): string[] {
 describe("what the Mail Worker serves over RPC", () => {
   it("MailService: the contract's methods (contracts/mail-service-v1.md and device-v1.md Part B), and no helper", () => {
     expect(rpcMethods(MailService).sort()).toEqual(
-      ["addWrap", "audit", "body", "challenge", "deleteDraft", "drafts", "enroll", "list", "mailbox", "mailboxes", "openSession", "purge", "registerDevice", "removeDevice", "removeWrap", "saveDraft", "send", "setPolicy", "unread", "update", "updateDevice", "upgrade"],
+      [
+        "addWrap",
+        "audit",
+        "body",
+        "challenge",
+        "deleteDraft",
+        "drafts",
+        "enroll",
+        "list",
+        "mailbox",
+        "mailboxes",
+        "openSession",
+        "purge",
+        "registerDevice",
+        "removeDevices",
+        "removeWrap",
+        "revokeDevices",
+        "saveDraft",
+        "send",
+        "setPolicy",
+        "unread",
+        "update",
+        "updateDevice",
+        "upgrade",
+      ],
     );
   });
 

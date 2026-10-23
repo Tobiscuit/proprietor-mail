@@ -1,17 +1,32 @@
-import { DeviceRevoked, InvalidRequest, MailboxNotActive, NotFound, ProofRejected, RateLimited, SessionRequired } from "../errors";
-import { type DeviceRow, deviceRow, type SessionsMode, sessionsMode, wrapRow } from "./keyring";
+import { actionDigest } from "@proprietor/mail-crypto";
+import { DeviceRevoked, Forbidden, InvalidRequest, MailboxNotActive, NotFound, ProofRejected, RateLimited, SessionRequired } from "../errors";
+import { type BoundChallenge, type Bound, bindingProblem, describeAction, type PreparedBinding, prepareBinding } from "./confirmations";
+import { type DeviceRow, deviceRow, keyedFactor, type SessionsMode, sessionsMode } from "./keyring";
 import { type MailboxStore, rows } from "./store";
 import type { CallAuth, CallContext, ChallengeView, SessionView } from "./types";
 import * as v from "./validate";
 
 /**
  * Mail sessions, challenges and proofs (contracts/device-v1.md B1-B3, B6;
- * domain-model M13-M17). Mail learns from a challenge's answer that the
+ * domain-model M13-M17′). Mail learns from a challenge's answer that the
  * caller holds the mailbox key now (a key proof) or just used a factor (a
  * factor proof), and from a signature that the call comes from a kept device.
  * It stores the SHA-256 of every answer and token, so nothing at rest opens
  * a session (M1). A challenge's nonce is stored as it is: it is not a
  * secret (Mail sends it with the challenge, for the device to sign).
+ *
+ * Round 3: every factor and key proof answers a challenge whose action
+ * descriptor names the call that carries it (confirmations.ts, M17′); a
+ * session needs a device's signature or a factor proof besides the key proof
+ * while sessions are required (M15′); another account's device is Forbidden
+ * (M21′).
+ *
+ * TAKE FIRST. Whatever is spent once or counted against a cap is taken in
+ * one SQL statement before anything about it is compared, and nothing awaits
+ * between reading it and taking it: a challenge is marked used by
+ * `UPDATE … RETURNING` (takeChallenge), and a new challenge takes its place
+ * under the 20-live cap by being inserted in the same synchronous step that
+ * counts (issueChallenge), before it is sealed.
  */
 
 /**
@@ -19,10 +34,14 @@ import * as v from "./validate";
  * - "bootstrap": nothing; it shows the mailbox before an unlock, or opens a session;
  * - "session": a live session of the calling account once sessions are
  *   required (while optional, none is asked, but one that is sent must be live);
- * - "factor": that, and a fresh factor proof, spent by the call, once required;
- * - "device-session": a live session of a kept device, always.
+ * - "factor": that, and a fresh factor proof bound to the call, spent by the call, once required;
+ * - "key": a live session (even while optional) and a key proof bound to the call (round 3: `upgrade`);
+ * - "device-session": a live session of a kept device, always;
+ * - "email-confirmation": no session and no proof: an email code the dashboard
+ *   attested in the capability's `confirmation` claim, which the method itself
+ *   checks and spends (round 3: `revokeDevices`, B7a).
  */
-export type Need = "bootstrap" | "session" | "device-session" | "factor";
+export type Need = "bootstrap" | "session" | "device-session" | "factor" | "key" | "email-confirmation";
 
 /**
  * Every MailService method and what it needs: the one table, enforced in one
@@ -36,7 +55,7 @@ export const SESSION_NEEDS = {
   enroll: "bootstrap",
   challenge: "bootstrap",
   openSession: "bootstrap",
-  upgrade: "session",
+  upgrade: "key",
   list: "session",
   body: "session",
   update: "session",
@@ -51,41 +70,45 @@ export const SESSION_NEEDS = {
   removeWrap: "factor",
   registerDevice: "factor",
   updateDevice: "device-session",
-  removeDevice: "factor",
+  removeDevices: "factor",
+  revokeDevices: "email-confirmation",
 } as const satisfies Record<string, Need>;
 
 export type MailServiceMethod = keyof typeof SESSION_NEEDS;
 
-/** B6: a challenge lives 2 minutes, at most 20 are live per mailbox, a session lives 60 minutes. */
+/** B6: a challenge lives 2 minutes (purpose "email": 10, for the email to arrive), at most 20 are live per mailbox, a session lives 60 minutes. */
 export const CHALLENGE_LIFETIME_MS = 2 * 60 * 1000;
+export const EMAIL_CHALLENGE_LIFETIME_MS = 10 * 60 * 1000;
 export const LIVE_CHALLENGES = 20;
 export const SESSION_LIFETIME_MS = 60 * 60 * 1000;
 
 /** A session as sent: 32 random bytes, base64url without padding (A8). */
 const SESSION_SHAPE = /^[A-Za-z0-9_-]{43}$/;
 
-export const NO_AUTH: CallAuth = Object.freeze({ session: null, factorProof: null });
+export const NO_AUTH: CallAuth = Object.freeze({ session: null, factorProof: null, keyProof: null });
+
+function proofShape(value: unknown, what: string): { challengeId: string; answer: string } {
+  const p = v.object(value, what, ["challengeId", "answer"]);
+  if (typeof p.challengeId !== "string" || typeof p.answer !== "string") throw new InvalidRequest(`a ${what} names a challenge and its answer`);
+  return { challengeId: p.challengeId, answer: p.answer };
+}
 
 /**
  * B1's `auth`, in shape only: MailService calls this on the method's last
  * argument (for `send`, on `{ session: request.session }`). What the token and
- * the proof are worth, the Mailbox decides (`checkAccess`).
+ * the proofs are worth, the Mailbox decides (`checkAccess`).
  */
 export function parseAuth(value: unknown): CallAuth {
   if (value === undefined || value === null) return NO_AUTH;
-  const a = v.object(value, "auth", ["session", "factorProof"]);
+  const a = v.object(value, "auth", ["session", "factorProof", "keyProof"]);
   let session: string | null = null;
   if (a.session !== undefined && a.session !== null) {
     if (typeof a.session !== "string") throw new InvalidRequest("auth session must be a string");
     session = a.session;
   }
-  let factorProof: CallAuth["factorProof"] = null;
-  if (a.factorProof !== undefined && a.factorProof !== null) {
-    const p = v.object(a.factorProof, "factor proof", ["challengeId", "answer"]);
-    if (typeof p.challengeId !== "string" || typeof p.answer !== "string") throw new InvalidRequest("a factor proof names a challenge and its answer");
-    factorProof = { challengeId: p.challengeId, answer: p.answer };
-  }
-  return { session, factorProof };
+  const factorProof = a.factorProof === undefined || a.factorProof === null ? null : proofShape(a.factorProof, "factor proof");
+  const keyProof = a.keyProof === undefined || a.keyProof === null ? null : proofShape(a.keyProof, "key proof");
+  return { session, factorProof, keyProof };
 }
 
 /** What a call may do, once `checkAccess` let it in. */
@@ -93,17 +116,18 @@ export interface Access {
   sessions: SessionsMode;
   /** The live session the call carried; null only where none is needed (bootstrap, or while sessions are optional). */
   session: { hash: string; accountId: string; deviceId: string | null } | null;
-  /** The factor whose proof the call carried and spent; null when it needed none. */
-  factor: { id: string; kind: "passkey-prf" | "recovery" } | null;
+  /** The factor whose proof the call carried and spent, with its signing key (A2b) for the statements it signed (M25); null when it needed none. */
+  factor: { id: string; kind: "passkey-prf" | "recovery"; signingKey: Uint8Array } | null; // pragma: allowlist secret (a type: a public Ed25519 key)
 }
 
-interface ChallengeRow {
+export interface ChallengeRow extends BoundChallenge {
   id: string;
-  purpose: "session" | "factor";
+  purpose: "session" | "factor" | "key" | "email";
   target_id: string;
-  answer_hash: string;
+  answer_hash: string | null;
   nonce: string;
   account_id: string;
+  action_digest: string | null;
   created_at: string;
   expires_at: string;
   used_at: string | null;
@@ -119,24 +143,32 @@ interface SessionRow {
 }
 
 /**
- * The session and factor checks every MailService method gets (B2, B3; M14,
- * M17), after its identity and role. Every hash is computed first; from then
- * on nothing awaits, so the session is read and the factor proof spent
+ * The session and proof checks every MailService method gets (B2, B3; M14,
+ * M17′), after its identity and role. `bound` is the action the call's proof
+ * must confirm (methods that need a factor or a key proof pass it). Every
+ * hash, the request's digest included, is computed first; from then on
+ * nothing awaits, so the session is read and the proof taken, then compared,
  * against one state, with no other call in between.
  */
-export async function checkAccess(store: MailboxStore, ctx: CallContext, method: MailServiceMethod): Promise<Access> {
+export async function checkAccess(store: MailboxStore, ctx: CallContext, method: MailServiceMethod, bound?: Bound): Promise<Access> {
   const need = SESSION_NEEDS[method] as Need;
   const mode = sessionsMode(store.sql);
-  if (need === "bootstrap") return { sessions: mode, session: null, factor: null };
+  // An email confirmation is the method's own to check and spend (B7a): it needs no session and no proof here.
+  if (need === "bootstrap" || need === "email-confirmation") return { sessions: mode, session: null, factor: null };
   const auth = ctx.auth ?? NO_AUTH;
   if (need !== "factor" && auth.factorProof !== null) throw new InvalidRequest("this call takes no factor proof");
+  if (need !== "key" && auth.keyProof !== null) throw new InvalidRequest("this call takes no key proof");
+  if ((need === "factor" || need === "key") && bound === undefined) throw new Error("internal: a call that takes a proof names the action it confirms");
   const sessionHash = auth.session !== null && SESSION_SHAPE.test(auth.session) ? await sha256(v.decodeBase64url(auth.session)) : null;
-  const proof = need === "factor" && auth.factorProof !== null ? await preparedProof(auth.factorProof) : null;
+  const factorProof = need === "factor" && auth.factorProof !== null ? await preparedProof(auth.factorProof, "factor proof") : null;
+  const keyProof = need === "key" && auth.keyProof !== null ? await preparedProof(auth.keyProof, "key proof") : null;
+  const binding = factorProof !== null || keyProof !== null ? await prepareBinding(bound!) : null;
 
+  // From here on, nothing awaits.
   const now = store.now();
   let session: Access["session"] = null;
   if (auth.session === null) {
-    if (mode === "required" || need === "device-session") throw new SessionRequired();
+    if (mode === "required" || need === "device-session" || need === "key") throw new SessionRequired();
   } else {
     // A token that is sent is checked, even while sessions are optional: it is never silently ignored (B2).
     session = liveSession(store, ctx, sessionHash, now);
@@ -144,8 +176,12 @@ export async function checkAccess(store: MailboxStore, ctx: CallContext, method:
   }
   let factor: Access["factor"] = null;
   if (need === "factor") {
-    if (proof !== null) factor = spendFactorProof(store, ctx, proof, now);
+    if (factorProof !== null) factor = checkFactorChallenge(store, ctx, takeChallenge(store, ctx, factorProof.challengeId, now), factorProof, binding!);
     else if (mode === "required") throw new ProofRejected();
+  }
+  if (need === "key") {
+    if (keyProof === null) throw new ProofRejected();
+    checkKeyChallenge(store, ctx, takeChallenge(store, ctx, keyProof.challengeId, now), keyProof, binding!);
   }
   return { sessions: mode, session, factor };
 }
@@ -166,38 +202,67 @@ interface PreparedProof {
   answerHash: string;
 }
 
-async function preparedProof(proof: { challengeId: string; answer: string }): Promise<PreparedProof> {
-  const challengeId = v.id(proof.challengeId, "factor proof challenge", "chl");
-  const answer = v.decodeBase64url(v.base64url(proof.answer, "factor proof answer", { bytes: 32 }));
+async function preparedProof(proof: { challengeId: string; answer: string }, what: string): Promise<PreparedProof> {
+  const challengeId = v.id(proof.challengeId, `${what} challenge`, "chl");
+  const answer = v.decodeBase64url(v.base64url(proof.answer, `${what} answer`, { bytes: 32 }));
   return { challengeId, answerHash: await sha256(answer) };
 }
 
-/** M17: a live factor challenge of this account, answered, for a factor that has a factor key; spent here, whatever the call then does. */
-function spendFactorProof(store: MailboxStore, ctx: CallContext, proof: PreparedProof, now: Date): NonNullable<Access["factor"]> {
-  const c = takeChallenge(store, ctx, proof.challengeId, now);
+/**
+ * M17′ for a factor proof whose challenge was just taken (spent): a factor
+ * challenge, answered right, for a factor with a factor key and a signing
+ * key that is not removed (M24), whose descriptor names this very call.
+ * Synchronous: the caller took the challenge in the same step.
+ */
+function checkFactorChallenge(store: MailboxStore, ctx: CallContext, c: ChallengeRow, proof: PreparedProof, binding: PreparedBinding): NonNullable<Access["factor"]> {
   if (c.purpose !== "factor") rejectProof(store, ctx, c, "purpose");
   if (!sameHash(proof.answerHash, c.answer_hash)) rejectProof(store, ctx, c, "answer");
-  const factor = wrapRow(store.sql, c.target_id);
-  if (factor === null || factor.factor_key === null) rejectProof(store, ctx, c, "factor");
-  return { id: factor.id, kind: factor.kind };
+  const factor = keyedFactor(store.sql, c.target_id);
+  if (factor === null) rejectProof(store, ctx, c, "factor");
+  checkBinding(store, ctx, c, binding);
+  return { id: factor.id, kind: factor.kind, signingKey: new Uint8Array(factor.signing_key) };
+}
+
+/** M17′ for the upgrade's key proof (B5): a key challenge of the active key, answered right, whose descriptor names this very call. */
+function checkKeyChallenge(store: MailboxStore, ctx: CallContext, c: ChallengeRow, proof: PreparedProof, binding: PreparedBinding): void {
+  if (c.purpose !== "key") rejectProof(store, ctx, c, "purpose");
+  if (!sameHash(proof.answerHash, c.answer_hash)) rejectProof(store, ctx, c, "answer");
+  if (store.activeKey()?.keyId !== c.target_id) rejectProof(store, ctx, c, "key");
+  checkBinding(store, ctx, c, binding);
+}
+
+/** D36: the spent challenge's descriptor is this call's; a request that does not serialize (A10) is InvalidRequest. */
+function checkBinding(store: MailboxStore, ctx: CallContext, c: ChallengeRow, binding: PreparedBinding): void {
+  const problem = bindingProblem(c, binding);
+  if (problem === "request") throw new InvalidRequest("the request holds a value A10 does not serialize");
+  if (problem === "action") rejectProof(store, ctx, c, "action");
 }
 
 /**
- * A challenge presented by this account, live, and consumed now (M16): before
- * its answer is looked at, so a wrong answer spends it too. Another account's
- * challenge is refused and left alone: it is not this account's to spend.
- * That refusal, and the one for a challenge that does not exist, spend
- * nothing and write nothing, not even an audit row: one caller could repeat
- * either without end, and each try would be another row.
+ * Takes a challenge presented by this account (M16): one statement marks it
+ * used, if it is live, unused and this account's, and only then is anything
+ * about it compared, so a wrong answer spends it too, and two calls with one
+ * challenge cannot both pass. Another account's challenge is refused and left
+ * alone: it is not this account's to spend. That refusal, and the one for a
+ * challenge that does not exist, spend nothing and write nothing, not even an
+ * audit row: one caller could repeat either without end, and each try would
+ * be another row. A plain write, outside any transaction, so the refusals
+ * that may follow cannot roll it back.
  */
-function takeChallenge(store: MailboxStore, ctx: CallContext, id: string, now: Date): ChallengeRow {
+export function takeChallenge(store: MailboxStore, ctx: CallContext, id: string, now: Date): ChallengeRow {
+  const at = now.toISOString();
+  const taken = rows<ChallengeRow>(
+    store.sql,
+    "UPDATE challenges SET used_at = ? WHERE id = ? AND account_id = ? AND used_at IS NULL AND expires_at > ? RETURNING *",
+    at,
+    id,
+    ctx.actor.accountId,
+    at,
+  )[0];
+  if (taken !== undefined) return taken;
   const c = rows<ChallengeRow>(store.sql, "SELECT * FROM challenges WHERE id = ?", id)[0];
   if (c === undefined || c.account_id !== ctx.actor.accountId) throw new ProofRejected();
-  if (c.used_at !== null) refuseSpent(store, ctx, c, "used", now);
-  if (c.expires_at <= now.toISOString()) refuseSpent(store, ctx, c, "expired", now);
-  // A plain write, outside any transaction, so the refusals that may follow cannot roll it back.
-  store.sql.exec("UPDATE challenges SET used_at = ? WHERE id = ?", now.toISOString(), id);
-  return c;
+  refuseSpent(store, ctx, c, c.used_at !== null ? "used" : "expired", now);
 }
 
 /**
@@ -206,7 +271,7 @@ function takeChallenge(store: MailboxStore, ctx: CallContext, id: string, now: D
  * thousand times is not, so `refused_at` records that the row was written,
  * and later refusals of that challenge write nothing.
  */
-function refuseSpent(store: MailboxStore, ctx: CallContext, c: ChallengeRow, reason: "used" | "expired", now: Date): never {
+export function refuseSpent(store: MailboxStore, ctx: CallContext, c: { id: string; purpose: string; refused_at: string | null }, reason: "used" | "expired", now: Date): never {
   if (c.refused_at !== null) throw new ProofRejected();
   // Plain writes, outside any transaction: the refusal below does not undo them.
   store.sql.exec("UPDATE challenges SET refused_at = ? WHERE id = ?", now.toISOString(), c.id);
@@ -214,56 +279,90 @@ function refuseSpent(store: MailboxStore, ctx: CallContext, c: ChallengeRow, rea
 }
 
 /** B6: ProofRejected, audited as proof-rejected with the reason (the caller is told none). */
-function rejectProof(store: MailboxStore, ctx: CallContext, c: { id: string; purpose: string }, reason: string): never {
+export function rejectProof(store: MailboxStore, ctx: CallContext, c: { id: string; purpose: string }, reason: string): never {
   store.audit(ctx.actor.accountId, "proof-rejected", { challenge: c.id, purpose: c.purpose, reason });
   throw new ProofRejected();
 }
 
 // ---- challenge() and openSession() --------------------------------------------------------
 
-/** B6: a challenge sealed to the active key ("session") or to a factor's key ("factor"). */
+type Purpose = ChallengeRow["purpose"];
+
+/**
+ * B6: a challenge sealed to the active key ("session"; "key", for the
+ * upgrade), to a factor's key ("factor"), or not sealed at all ("email": the
+ * dashboard's attestation of a code stands for its answer). Every purpose but
+ * "session" carries an action descriptor (A10), and "factor" and "key" are
+ * sealed with its digest in the associated data (A6).
+ *
+ * Take first: the challenge's place under the cap is taken (its row
+ * inserted, with no answer yet) in the same synchronous step that counts the
+ * live ones, before anything is sealed; the sealing then fills the row in, or
+ * gives the place back when it fails. So twenty-one requests at once issue
+ * twenty challenges, and the twenty-first seals nothing.
+ */
 export async function issueChallenge(store: MailboxStore, ctx: CallContext, request: unknown): Promise<ChallengeView> {
-  const r = v.object(request, "challenge request", ["purpose", "factorId"]);
-  const purpose = v.oneOf(r.purpose, "purpose", ["session", "factor"] as const);
-  let target: { keyId: string | null; factorId: string | null; targetId: string; publicKey: Uint8Array };
-  if (purpose === "session") {
-    if (r.factorId !== undefined) throw new InvalidRequest("a session challenge names no factor");
+  const r = v.object(request, "challenge request", ["purpose", "factorId", "action"]);
+  const purpose = v.oneOf(r.purpose, "purpose", ["session", "factor", "key", "email"] as const);
+  // B3: purposes "email" and "key", and any action (every "factor" challenge has one), need the owner.
+  if (purpose !== "session" && ctx.actor.role !== "owner") throw new Forbidden();
+  if (purpose !== "factor" && r.factorId !== undefined) throw new InvalidRequest(`a ${purpose} challenge names no factor`);
+  if (purpose === "session" && r.action !== undefined) throw new InvalidRequest("a session challenge names no action");
+  if (purpose !== "session" && r.action === undefined) throw new InvalidRequest(`a ${purpose} challenge names its action`);
+  let target: { keyId: string | null; factorId: string | null; targetId: string; publicKey: Uint8Array | null };
+  if (purpose === "session" || purpose === "key") {
     const key = store.activeKey();
     if (key === null) throw new MailboxNotActive();
     target = { keyId: key.keyId, factorId: null, targetId: key.keyId, publicKey: key.publicKey };
-  } else {
+  } else if (purpose === "factor") {
     const factorId = v.id(r.factorId, "factor id", "wrp");
-    const factor = wrapRow(store.sql, factorId);
-    if (factor === null || factor.factor_key === null) throw new NotFound();
+    const factor = keyedFactor(store.sql, factorId);
+    if (factor === null) throw new NotFound();
     target = { keyId: null, factorId, targetId: factorId, publicKey: new Uint8Array(factor.factor_key) };
+  } else {
+    target = { keyId: null, factorId: null, targetId: "", publicKey: null };
   }
+
+  // One synchronous step: the descriptor (labels read from Mail's records), the cap counted, the place taken.
   const now = store.now();
-  ensureRoomForChallenge(store, now);
-
+  const nonce = v.encodeBase64url(crypto.getRandomValues(new Uint8Array(32)));
+  const described = purpose === "session" ? null : describeAction(store, purpose, r.action, { nonce, issuedAt: Math.floor(now.getTime() / 1000) });
+  const descriptor = described === null ? null : v.encodeBase64url(described.bytes);
   const id = store.newChallengeId();
-  const { sealed, answer } = await store.proofs.sealChallenge(
-    { publicKey: target.publicKey },
-    { mailboxId: store.mailboxId, challengeId: id, purpose, targetId: target.targetId },
-  );
-  const nonce = crypto.getRandomValues(new Uint8Array(32));
-  const answerHash = await sha256(answer);
-  answer.fill(0);
-
-  // Other challenges may have been made during those awaits: the limit is checked again, then the row written.
+  const lifetime = purpose === "email" ? EMAIL_CHALLENGE_LIFETIME_MS : CHALLENGE_LIFETIME_MS;
+  const expiresAt = new Date(now.getTime() + lifetime).toISOString();
   ensureRoomForChallenge(store, now);
-  const expiresAt = new Date(now.getTime() + CHALLENGE_LIFETIME_MS).toISOString();
   store.sql.exec(
-    "INSERT INTO challenges (id, purpose, target_id, answer_hash, nonce, account_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO challenges (id, purpose, target_id, answer_hash, nonce, account_id, kind, descriptor, created_at, expires_at) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)",
     id,
     purpose,
     target.targetId,
-    answerHash,
-    v.encodeBase64url(nonce),
+    nonce,
     ctx.actor.accountId,
+    described?.kind ?? null,
+    descriptor,
     now.toISOString(),
     expiresAt,
   );
-  return { id, purpose, keyId: target.keyId, factorId: target.factorId, nonce: v.encodeBase64url(nonce), sealed, expiresAt };
+
+  let sealed: string | null = null;
+  try {
+    const digest = described === null ? null : await actionDigest(described.bytes);
+    let answerHash: string | null = null;
+    if (target.publicKey !== null) {
+      const ids = { mailboxId: store.mailboxId, challengeId: id, purpose: purpose as Exclude<Purpose, "email">, targetId: target.targetId };
+      const result = await store.proofs.sealChallenge({ publicKey: target.publicKey }, digest === null ? ids : { ...ids, actionDigest: digest });
+      sealed = result.sealed;
+      answerHash = await sha256(result.answer);
+      result.answer.fill(0);
+    }
+    store.sql.exec("UPDATE challenges SET answer_hash = ?, action_digest = ? WHERE id = ?", answerHash, digest, id);
+  } catch (err) {
+    // The place is given back: a challenge that could not be sealed is not live.
+    store.sql.exec("DELETE FROM challenges WHERE id = ?", id);
+    throw err;
+  }
+  return { id, purpose, keyId: target.keyId, factorId: target.factorId, nonce, sealed, descriptor, expiresAt };
 }
 
 function ensureRoomForChallenge(store: MailboxStore, now: Date): void {
@@ -279,34 +378,56 @@ function ensureRoomForChallenge(store: MailboxStore, now: Date): void {
 }
 
 /**
- * B6, M15: a session from a key proof, and for a kept device its signature
- * (A7). The challenge is spent whether or not the answer is right. A session
+ * B6, M15′: a session from a key proof and, while sessions are required,
+ * exactly one of a kept device's signature (A7) and a factor proof bound to
+ * `open-session` for this session challenge (D38). While optional, a key
+ * proof alone opens one, as before, and a factor proof is refused. A device
+ * of another account is Forbidden, and nothing is spent or written (M21′).
+ * The challenges (both, with a factor proof) are taken before any answer is
+ * compared, so each is spent whether or not its answer is right. A session
  * lives 60 minutes, records its device, and is stored as SHA-256(token).
  */
 export async function openMailSession(store: MailboxStore, ctx: CallContext, request: unknown): Promise<SessionView> {
-  const r = v.object(request, "session request", ["challengeId", "answer", "device"]);
+  const r = v.object(request, "session request", ["challengeId", "answer", "device", "factorProof"]);
   const challengeId = v.id(r.challengeId, "challenge id", "chl");
   const answer = v.decodeBase64url(v.base64url(r.answer, "answer", { bytes: 32 }));
   const device = v.optional(r.device, (d) => {
     const x = v.object(d, "device proof", ["id", "signature"]);
     return { id: v.id(x.id, "device id", "dev"), signature: v.decodeBase64url(v.base64url(x.signature, "device signature", { bytes: 64 })) };
   });
+  const factorProof = v.optional(r.factorProof, (p) => proofShape(p, "factor proof"));
+  const mode = sessionsMode(store.sql);
+  if (mode === "required" && (device === undefined) === (factorProof === undefined)) {
+    throw new InvalidRequest("while sessions are required, a session needs a kept device's signature or a factor proof, exactly one (D38)");
+  }
+  if (mode === "optional" && factorProof !== undefined) throw new InvalidRequest("a factor proof opens no session while sessions are optional");
+  // M21′, D37: a device of another account is Forbidden, never DeviceRevoked, and spends and writes nothing.
+  if (device !== undefined) {
+    const kept = deviceRow(store.sql, device.id);
+    if (kept !== null && kept.account_id !== ctx.actor.accountId) throw new Forbidden();
+  }
+
   // Every hash first, as in checkAccess; the session is drawn now and kept only as its hash.
   const answerHash = await sha256(answer);
+  const factor = factorProof === undefined ? null : await preparedProof(factorProof, "factor proof");
+  const binding = factor === null ? null : await prepareBinding({ kind: "open-session", request: { challengeId } });
   const sessionBytes = crypto.getRandomValues(new Uint8Array(32));
   const sessionHash = await sha256(sessionBytes);
   const now = store.now();
 
+  // Take first: the session challenge and the factor challenge are both spent before either answer is looked at.
   const c = takeChallenge(store, ctx, challengeId, now);
+  const fc = factor === null ? null : takeChallenge(store, ctx, factor.challengeId, now);
   if (c.purpose !== "session") rejectProof(store, ctx, c, "purpose");
   if (!sameHash(answerHash, c.answer_hash)) rejectProof(store, ctx, c, "answer");
   // A proof of a key that is no longer active proves nothing now: the rotation ended every session opened with it.
   if (store.activeKey()?.keyId !== c.target_id) rejectProof(store, ctx, c, "key");
+  if (fc !== null) checkFactorChallenge(store, ctx, fc, factor!, binding!);
   let signer: DeviceRow | null = null;
   if (device !== undefined) {
-    // M21: a device works only for the account that kept it; for anyone else it is not in the mailbox (G42).
     signer = deviceRow(store.sql, device.id);
-    if (signer === null || signer.account_id !== ctx.actor.accountId) throw new DeviceRevoked();
+    if (signer === null) throw new DeviceRevoked();
+    if (signer.account_id !== ctx.actor.accountId) throw new Forbidden();
     const nonce = v.decodeBase64url(c.nonce);
     const signed = await store.proofs.verifyDeviceProof(
       new Uint8Array(signer.signing_key),
@@ -352,9 +473,9 @@ async function sha256(bytes: Uint8Array): Promise<string> {
   return v.encodeBase64url(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
 }
 
-/** Equal-length hashes compared without an early exit. */
-function sameHash(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
+/** Equal-length hashes compared without an early exit; a challenge with no answer (one being sealed, or an email's) matches nothing. */
+function sameHash(a: string, b: string | null): boolean {
+  if (b === null || a.length !== b.length) return false;
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;

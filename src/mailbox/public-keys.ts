@@ -45,3 +45,18 @@ export async function x25519Key(value: unknown, what: string): Promise<Uint8Arra
   }
   return bytes;
 }
+
+/**
+ * A factor's signing key (A2b, D44): an Ed25519 public key, 32 bytes, that
+ * Web Crypto imports for `verify`. Mail verifies the factor's admissions and
+ * transitions with it (A11, M25).
+ */
+export async function ed25519Key(value: unknown, what: string): Promise<Uint8Array> {
+  const bytes = v.decodeBase64url(v.base64url(value, what, { bytes: 32 }));
+  try {
+    await crypto.subtle.importKey("raw", bytes, { name: "Ed25519" }, false, ["verify"]);
+  } catch {
+    throw new InvalidRequest(`${what} must be an Ed25519 public key`);
+  }
+  return bytes;
+}

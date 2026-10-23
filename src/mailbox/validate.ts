@@ -96,8 +96,10 @@ const IDS = {
   drf: CROCKFORD_ID("drf"),
   wrp: CROCKFORD_ID("wrp"),
   mbx: CROCKFORD_ID("mbx"),
-  // contracts/device-v1.md A1: a kept device (made by the browser) and a challenge (made by Mail).
-  dev: CROCKFORD_ID("dev"),
+  // contracts/device-v1.md A1: a kept device (made by the browser) and a challenge (made by Mail). A device id
+  // follows envelope v1's rule exactly, its first symbol 0-7 (16 bytes in 26 symbols), as
+  // action-descriptor-v1 reads it: a device Mail kept must be one a descriptor can name (round 3).
+  dev: /^dev_[0-7][0-9abcdefghjkmnpqrstvwxyz]{25}$/,
   chl: CROCKFORD_ID("chl"),
 };
 
