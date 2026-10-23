@@ -1,57 +1,37 @@
 /*
- * Spec 002 (unlock once per device, with revocation): Tamarin model.
+ * Spec 002 (unlock once per device, with revocation): Tamarin model, round 3.
  *
- * Generated from formal/002/ir.md. Every rule names its IR step (E1, U1, …)
- * and the contract section it comes from (contracts/device-v1.md: A2…A7,
- * B3…B7, K2′…K4; domain-model.md: M16, M18, G40; spec.md: D25, §4).
- * The lemmas are ir.md §7, in the same order, with the same names.
+ * Generated from formal/002/ir.md, §10 (round 3) on top of §1–§9 (round 2).
+ * Every rule names its IR step (E1, U1, …, R1–R9 of §10.1) and the contract
+ * section it comes from (contracts/device-v1.md A2…A11, B3…B7a, K2″…K4;
+ * domain-model.md M15′…M25; spec.md D35–D39). The round 2 model is commit
+ * 0e82dc2; its findings are what round 3 answers.
  *
- * Why plain multiset rewriting and not SAPIC+: the protocol is a set of
- * independent state machines (pages, device records, Mail's pointer and
- * challenges) that interleave freely, and every message is relayed by the
- * attacker. That maps one-to-one onto rules with state facts; the contract
- * sections can be cited rule by rule, and the sources analysis stays
- * readable. SAPIC+ would add a translation layer between what the operator
- * reviews (the IR) and what Tamarin proves, for no gain here.
+ * Variants (ir.md §10.2), each removing one round 3 mechanism:
+ *   -D=NO_TRANSITION_SIG  the walk takes a successor step on the seal alone
+ *   -D=NO_ADMISSION       recipients are sealed to on a tag under the old key
+ *   -D=MAIL_UNCHECKED     Mail applies a rotation on an unbound factor proof,
+ *                         without the transition; the owner answers any
+ *                         factor challenge
+ *   -D=EMAIL_ROTATES      Mail also applies a rotation an email code confirms
+ *   -D=KEY_ONLY_SESSION   a session without a device opens on a key proof alone
+ *   -D=ORACLE_MUTANT      message keys sealed under the challenge `info` (K4)
  *
- * Variants, selected on the command line:
- *   -D=BOUND_PROOFS   a factor challenge carries h(request) and is answered
- *                     only for that request (the fix proposed for finding C)
- *   -D=ORACLE_MUTANT  message keys are sealed under the challenge `info`
- *                     (K4 removed): shows what the domain separation buys
+ * Symbolic abstractions (ir.md §4, §10.1): HPKE base-mode seal =
+ * aenc(<tag, …>, pk) where the tag stands for `info`; the factor's X25519 key
+ * is fkey(fs, 'f1') and its signing key fsk(fs, 'f1') (A2, A2b); the envelope
+ * v1 wrap is senc(sk, kek(fs, 'f1')); keyId is the public key; a binding tag
+ * is mac(…, bindkey(sk)) (kept for the NO_ADMISSION variant only).
  *
- * Symbolic abstractions (ir.md §4): HPKE base-mode seal = aenc(<tag, …>, pk)
- * where the tag stands for `info`; the binding key is bindkey(sk),
- * computable by holders of sk only (A5's Square-DH argument is outside this
- * model); the factor's X25519 key is fkey(fs, 'f1') (A2); the envelope v1
- * wrap is senc(sk, kek(fs, 'f1')); keyId is the public key.
- *
- * Choices made for the prover (ir.md §4, "choices made for the prover"):
- *  - every key, id and secret is a fresh-sort variable (~x) in every fact
- *    and pattern, and a mailbox private key is the term mkey(~x): a fresh
- *    name under a free constructor, so the prover never confuses a key with
- *    a secret, an id or an answer (the attacker can still build mkey(y) for
- *    any y it knows, so attacker-made keys remain possible);
- *  - a page is a persistent fact (!PageS, !PageD): a page holds every key
- *    it ever accepted (G40); a device's keys leak through its pages (X2);
- *  - the device record, the walks and a prepared rotation carry a fresh id
- *    in first position (Kept, WalkS, WalkD, PreparingS/D): injective facts;
- *  - rules are named A00…A28 in the order Tamarin should try them as case
- *    sources (base rules before loop rules, all before the intruder's);
- *  - values that are public the moment they exist, or redundant under
- *    symbolic analysis, are not modelled as fresh names: the challenge nonce
- *    (the challenge id is fresh already), the session token (a bearer secret
- *    the attacker holds anyway: a session is simply "open"), the factor id
- *    (one factor: 'f1'), and ids inside encrypted payloads (the recipient's
- *    key binds them). oracle.py orders goals so that knowledge of fresh names
- *    is solved last.
- *
- * What Mail stores honestly and what the attacker controls (ir.md P4a/P4b):
- * the verifier's own records are honest — the active-key pointer
- * (MailActive), the factor public key registered at enrollment
- * (!MailFactorKey), challenges and sessions. Everything the browser reads as
- * its view — seals, successor seals, tags, device records, wraps — comes from
- * the attacker (In), as does every request Mail receives.
+ * Choices made for the prover (ir.md §4): keys, ids and secrets are fresh
+ * names; a mailbox private key is mkey(~x); pages are persistent facts;
+ * records, walks and prepared rotations carry a fresh id in first position;
+ * rules are named A00… in the order they should be tried as sources, the
+ * attacker's injections Z…; honest messages travel on named channels the
+ * attacker may also write to. A signature is checked by pattern: a page or
+ * Mail takes `sign(msg, fsk(~fs, 'f1'))` where it would verify with the
+ * factor's public signing key; the handle ~fs in a page's, a record's or
+ * Mail's state stands for "the factor this party trusts" and is never sent.
  */
 
 theory Device002
@@ -59,381 +39,468 @@ begin
 
 builtins: asymmetric-encryption, signing, symmetric-encryption, hashing
 
-functions: bindkey/1, mac/2, fkey/2, kek/2, mkey/1
+functions: bindkey/1, mac/2, fkey/2, fsk/2, kek/2, mkey/1
 
-/* The removed device is never sealed to (B7 step 2, K7); the rotating
- * device does not remove itself here (that case keeps nothing, K7). */
 restriction Neq:
   "All x #i. Neq(x, x) @ i ==> F"
 
 /* ======================================================================
- * E1 — Enrollment (B5, envelope v1). IR §5 E1.
- * One mailbox m, its first key K0 (mkey(~sk)), one factor 'f1' with secret ~fs.
- * The wrap, the factor's public key and its tag under bindkey(K0) are
- * published. Mail's pointer starts at pk(K0) and Mail registers pkF
- * (assumption: the request reaches Mail unmodified, IR E1). The enrolling
- * page is unlocked with K0.
+ * E1 — Enrollment (B5, A2, A2b, A11). One mailbox, its first key K0, one
+ * factor 'f1' with secret ~fs. Published: the wrap, the factor key, the
+ * factor's signing key, its admission (one factor admits itself, A11) and
+ * its tag. Mail's honest records: the pointer and the factor's keys.
  * ====================================================================== */
 rule A00_E1_Enroll:
   let pkM  = pk(mkey(~sk))
       pkF  = pk(fkey(~fs, 'f1'))
+      vS   = pk(fsk(~fs, 'f1'))
       wrap = senc(mkey(~sk), kek(~fs, 'f1'))
+      fadm = sign(<'admit-factor', ~m, pkF, vS>, fsk(~fs, 'f1'))
       ftag = mac(<'factor', ~m, 'f1', pkF>, bindkey(mkey(~sk)))
   in
   [ Fr(~m), Fr(~sk), Fr(~fs) ]
-  --[ Enrolled(~m, pkM), KeyMade(~m, mkey(~sk)), FactorMade(~m, 'f1', ~fs), RecipientMade(~m, pkF) ]->
+  --[ Enrolled(~m, pkM), KeyMade(~m, mkey(~sk)), FactorMade(~m, 'f1', ~fs), RecipientMade(~m, pkF), PageKey(~m, mkey(~sk)) ]->
   [ !Factor(~m, ~fs)
   , MailActive(~m, pkM)
-  , !MailFactorKey(~m, pkF)
+  , !MailFactorKey(~m, pkF, ~fs)
   , !PageS(~m, mkey(~sk))
-  , !FactorRecord(~m, pkF, ftag)
-  , Out(<~m, pkM, wrap, pkF, ftag>) ]
+  , !FactorRecord(~m, pkF, fadm, ftag)
+  , Out(<~m, pkM, wrap, pkF, vS, fadm, ftag>) ]
 
 /* ======================================================================
- * K1 — "This device is mine" (B7 registerDevice, K5, A3, A5). IR K1.
- * After a factor (D25: the factor's presence is required here; Mail's own
- * check of the registration proof is not modelled, ir.md §8 item 10).
- * The page publishes the device record, the active key sealed to the
- * unlock key, and the record's tag under bindkey(active key). (The key is
- * matched as mkey(~sk) in a state fact, on purpose: no_derivcheck.)
+ * K1 — "This device is mine" (B7 registerDevice, A3, A11, D36). The page
+ * draws the device's keys and announces the digest of its registration
+ * request (K1a); with the factor it answers the factor challenge bound to
+ * that digest and publishes the record: the admission signed by the factor,
+ * the unlock key signed by the device, and the tag (K1b). The record trusts
+ * the factor it was kept with (~fs).
  * ====================================================================== */
-rule A01_K1_KeepDevice [no_derivcheck]:
+rule A01_K1a_PrepareKeep:
+  [ !PageS(~m, mkey(~sk)), Fr(~did), Fr(~dsk), Fr(~dss), Fr(~rid) ]
+  -->
+  [ Keeping(~did, ~m, mkey(~sk), ~dsk, ~dss, ~rid), Out(<~did, pk(~dss), ~rid>) ]
+
+rule A02_K1b_Keep [no_derivcheck]:
   let pkU  = pk(~dsk)
       pkS  = pk(~dss)
+      req  = <'register', ~m, ~rid>
       seal = aenc(<'keyseal', mkey(~sk), 'device'>, pkU)
+      adm  = sign(<'admit-device', ~m, ~did, pkS>, fsk(~fs, 'f1'))
+      usig = sign(<'unlock-key', ~m, ~did, pkU>, ~dss)
       dtag = mac(<'device', ~m, ~did, pkS, pkU>, bindkey(mkey(~sk)))
   in
-  [ !PageS(~m, mkey(~sk)), !Factor(~m, ~fs), Fr(~did), Fr(~dsk), Fr(~dss) ]
-  --[ Registered(~m, ~did, pkS, pkU), RecipientMade(~m, pkU), HeldKey(~m, ~did, mkey(~sk)) ]->
-  [ Kept(~did, ~m, pk(mkey(~sk)))
+  [ Keeping(~did, ~m, mkey(~sk), ~dsk, ~dss, ~rid)
+  , !Factor(~m, ~fs)
+  , In(aenc(<'challenge', 'factor', ~chid, h(req), ~ans>, pk(fkey(~fs, 'f1')))) ]
+  --[ Registered(~m, ~did, pkS, pkU), RecipientMade(~m, pkU), HeldKey(~m, ~did, mkey(~sk))
+    , AnsweredFactorFor(~m, ~chid, h(req)), KeptAt(~did, ~m, pk(mkey(~sk))) ]->
+  [ Kept(~did, ~m, pk(mkey(~sk)), ~fs)
   , !DevKeys(~m, ~did, ~dsk, ~dss)
   , !PageD(~m, ~did, mkey(~sk))
-  , !DeviceRecord(~m, ~did, pkS, pkU, dtag)
-  , Out(<~did, pkS, pkU, seal, dtag>) ]
+  , !DeviceRecord(~m, ~did, pkS, pkU, adm, usig, dtag)
+  , FactorAnswer(~chid, ~ans)
+  , RegisterRequest(~m, ~rid, ~did, pkS, adm)
+  , Out(<~did, pkS, pkU, seal, adm, usig, dtag>) ]
 
 /* ======================================================================
- * C1/C2 — Mail issues a challenge (A6, B6). IR C1/C2.
- * A session challenge is sealed to the pointer's key, a factor challenge
- * to the factor key registered at enrollment. The answer is kept (in the
- * system: its hash) and the challenge is single-use (M16).
+ * C1/C2 — Mail issues a challenge (A6, B6). A factor challenge carries the
+ * digest of the request it confirms, from the network (D36; R5).
  * ====================================================================== */
-rule A02_C1_SessionChallenge:
+rule A03_C1_SessionChallenge:
   [ Fr(~chid), Fr(~ans), MailActive(~m, pka) ]
   --[ Challenged(~chid) ]->
   [ MailActive(~m, pka)
   , MailSessionChallenge(~chid, ~m, pka, ~ans)
   , Out(<~chid, aenc(<'challenge', 'session', ~chid, ~ans>, pka)>) ]
 
-#ifdef BOUND_PROOFS
-/* Proposed change: the challenge carries the digest of the request it will
- * authorise; Mail stores it with the challenge (IR C2, M3). The digest is
- * matched as h(req) on purpose, so Tamarin's derivation check is told so. */
-rule A03_C2_FactorChallenge [no_derivcheck]:
-  [ Fr(~chid), Fr(~ans), !MailFactorKey(~m, pkF), In(h(req)) ]
+/* One rule per kind of request a factor proof confirms (A10). A request is
+ * named by a fresh id its page draws (~rid), and the challenge carries the
+ * digest of <kind, mailbox, id>; what the request says is bound by the
+ * factor's own signature on it (the transition, the admission), which Mail
+ * checks too (R5, R6, M25): the system's two layers. (A digest over arbitrary
+ * terms, or over the keys themselves, made Tamarin's precomputation diverge:
+ * the rule is then an encryption oracle under the factor key.) */
+rule A04a_C2_FactorChallengeRotate:
+  let d = h(<'rotate', ~m, ~rid>) in
+  [ Fr(~chid), Fr(~ans), !MailFactorKey(~m, pkF, ~fs), In(~rid) ]
   --[ Challenged(~chid) ]->
-  [ MailFactorChallenge(~chid, ~m, pkF, h(req), ~ans)
-  , Out(<~chid, aenc(<'challenge', 'factor', ~chid, h(req), ~ans>, pkF)>) ]
-#else
-rule A03_C2_FactorChallenge:
-  [ Fr(~chid), Fr(~ans), !MailFactorKey(~m, pkF) ]
+  [ MailFactorChallenge(~chid, ~m, pkF, d, ~ans)
+  , Out(<~chid, aenc(<'challenge', 'factor', ~chid, d, ~ans>, pkF)>) ]
+
+rule A04b_C2_FactorChallengeRegister:
+  let d = h(<'register', ~m, ~rid>) in
+  [ Fr(~chid), Fr(~ans), !MailFactorKey(~m, pkF, ~fs), In(~rid) ]
   --[ Challenged(~chid) ]->
-  [ MailFactorChallenge(~chid, ~m, pkF, ~ans)
-  , Out(<~chid, aenc(<'challenge', 'factor', ~chid, ~ans>, pkF)>) ]
-#endif
+  [ MailFactorChallenge(~chid, ~m, pkF, d, ~ans)
+  , Out(<~chid, aenc(<'challenge', 'factor', ~chid, d, ~ans>, pkF)>) ]
+
+rule A04c_C2_FactorChallengeOpenSession:
+  let d = h(<'open-session', ~sch>) in
+  [ Fr(~chid), Fr(~ans), !MailFactorKey(~m, pkF, ~fs), In(~sch) ]
+  --[ Challenged(~chid) ]->
+  [ MailFactorChallenge(~chid, ~m, pkF, d, ~ans)
+  , Out(<~chid, aenc(<'challenge', 'factor', ~chid, d, ~ans>, pkF)>) ]
 
 /* ======================================================================
- * P1/P2 — The key proof (A6, D27). IR P1/P2.
- * K4: a page opens only what is tagged as a challenge, and only for a key
- * it holds. A kept device adds its signature over the challenge id (A7;
- * the nonce is redundant once the id is fresh). The answer goes on its
- * channel, which the attacker fully controls (it can hold it back, replay
- * it, or pair it with a request of its own: everything a relay can do with
- * the bytes), but the model does not add the bytes to the attacker's
- * knowledge: that knowledge buys nothing more, and modelling it lets the
- * prover re-derive the challenge from the answer in an endless circle.
+ * M4 — Mail registers a device (B7, R7): only with a factor proof bound to
+ * that registration. The registry entry is a linear fact: a revocation
+ * consumes it (R9), a device session reads and keeps it.
  * ====================================================================== */
-rule A04_P1_AnswerSessionStateless:
+rule A05_M4_RegisterDevice [no_derivcheck]:
+  [ MailFactorChallenge(~chid, ~m, pkF, h(<'register', ~m, ~rid>), ~ans)
+  , !MailFactorKey(~m, pkF, ~fs)
+  , FactorAnswer(~chid, ~ans)
+  , RegisterRequest(~m, ~rid, ~did, pkS, sign(<'admit-device', ~m, ~did, pkS>, fsk(~fs, 'f1'))) ]
+  --[ ProofAccepted(~chid), FactorProofAccepted(~m, ~chid, h(<'register', ~m, ~rid>)), MailRegistered(~m, ~did, pkS) ]->
+  [ MailDevice(~m, ~did, pkS) ]
+
+/* ======================================================================
+ * P1/P2 — The key proof (A6, D27, D38). A page without a device answers a
+ * session challenge only together with the owner's factor answer bound to
+ * that session challenge (R8). A kept device signs the challenge id (A7).
+ * Answers go on their channels, which the attacker controls (ir.md §4).
+ * ====================================================================== */
+#ifdef KEY_ONLY_SESSION
+rule A06_P1_AnswerSessionStateless:
   [ !PageS(~m, mkey(~sk)), In(aenc(<'challenge', 'session', ~chid, ~ans>, pk(mkey(~sk)))) ]
   --[ AnsweredSession(~m, ~chid) ]->
   [ SessionAnswer(~chid, ~ans) ]
+#else
+rule A06_P1_AnswerSessionStateless:
+  let req = <'open-session', ~chid> in
+  [ !PageS(~m, mkey(~sk))
+  , !Factor(~m, ~fs)
+  , In(aenc(<'challenge', 'session', ~chid, ~ans>, pk(mkey(~sk))))
+  , In(aenc(<'challenge', 'factor', ~fch, h(req), ~fans>, pk(fkey(~fs, 'f1')))) ]
+  --[ AnsweredSession(~m, ~chid), AnsweredFactorFor(~m, ~fch, h(req)), OwnerOpenedSession(~m, ~chid) ]->
+  [ SessionAnswer(~chid, ~ans), FactorAnswer(~fch, ~fans) ]
+#endif
 
-rule A05_P2_AnswerSessionKept:
+rule A07_P2_AnswerSessionKept:
   [ !PageD(~m, ~did, mkey(~sk))
   , !DevKeys(~m, ~did, ~dsk, ~dss)
   , In(aenc(<'challenge', 'session', ~chid, ~ans>, pk(mkey(~sk)))) ]
   --[ AnsweredSession(~m, ~chid), DeviceSigned(~m, ~did, ~chid) ]->
   [ DeviceAnswer(~chid, ~did, ~ans, sign(<'proof', ~did, ~chid>, ~dss), pk(~dss)) ]
 
-#ifdef BOUND_PROOFS
-/* With bound proofs a factor challenge is answered only inside T2, for the
- * request the page is about to send. */
-#else
-/* P3 — The factor proof (A6, D25). IR P3. The owner answers any factor
- * challenge for its factor, at any time (more willing than the code's
- * two-minute FreshFactor, K1′: whatever holds here holds there). */
-rule A06_P3_AnswerFactor:
-  [ !Factor(~m, ~fs), In(aenc(<'challenge', 'factor', ~chid, ~ans>, pk(fkey(~fs, 'f1')))) ]
-  --[ AnsweredFactor(~m, 'f1', ~chid) ]->
+#ifdef MAIL_UNCHECKED
+/* Round 2: the owner answers any factor challenge, whatever it confirms. */
+rule A08_P3_AnswerAnyFactor:
+  [ !Factor(~m, ~fs), In(aenc(<'challenge', 'factor', ~chid, d, ~ans>, pk(fkey(~fs, 'f1')))) ]
+  --[ AnsweredFactorFor(~m, ~chid, d) ]->
   [ FactorAnswer(~chid, ~ans) ]
 #endif
 
 /* ======================================================================
- * M1/M2 — Mail opens a session (B6, M15). IR M1/M2.
- * The challenge is consumed. The session token is a bearer secret that
- * passes through the dashboard (A8), so the attacker always holds it: a
- * session is modelled as simply open, named by its challenge.
- * M2: the device's public signing key is read from the store (B6 "the
- * device exists" is the store's word); the signature must verify under it,
- * written as a pattern (a signature under the key whose public half was
- * sent), which is what verify() would check; the pattern is on purpose
- * (no_derivcheck).
+ * M1/M2 — Mail opens a session (B6, M15′). M1, without a device: the key
+ * proof and a factor proof bound to this session challenge (R8). M2, a
+ * device: its signature, and the device in Mail's registry (R7).
  * ====================================================================== */
-rule A07_M1_OpenSession:
+#ifdef KEY_ONLY_SESSION
+rule A09_M1_OpenSession:
   [ MailSessionChallenge(~chid, ~m, pka, ~ans), SessionAnswer(~chid, ~ans) ]
-  --[ SessionOpened(~chid, pka), ProofAccepted(~chid) ]->
+  --[ SessionOpened(~chid, pka), DevicelessSessionOpened(~m, ~chid, pka), ProofAccepted(~chid) ]->
   [ !MailSession(~chid, pka, 'none') ]
-
-rule A08_M2_OpenDeviceSession [no_derivcheck]:
+#else
+rule A09_M1_OpenSession:
   [ MailSessionChallenge(~chid, ~m, pka, ~ans)
-  , DeviceAnswer(~chid, ~did, ~ans, sign(<'proof', ~did, ~chid>, dss), pk(dss)) ]
+  , SessionAnswer(~chid, ~ans)
+  , MailFactorChallenge(~fch, ~m, pkF, h(<'open-session', ~chid>), ~fans)
+  , FactorAnswer(~fch, ~fans) ]
+  --[ SessionOpened(~chid, pka), DevicelessSessionOpened(~m, ~chid, pka), ProofAccepted(~chid), ProofAccepted(~fch)
+    , FactorProofAccepted(~m, ~fch, h(<'open-session', ~chid>)) ]->
+  [ !MailSession(~chid, pka, 'none') ]
+#endif
+
+rule A10_M2_OpenDeviceSession [no_derivcheck]:
+  [ MailSessionChallenge(~chid, ~m, pka, ~ans)
+  , DeviceAnswer(~chid, ~did, ~ans, sign(<'proof', ~did, ~chid>, dss), pk(dss))
+  , MailDevice(~m, ~did, pk(dss)) ]
   --[ SessionOpened(~chid, pka), DeviceSessionOpened(~m, ~chid, pka, ~did, pk(dss)), ProofAccepted(~chid) ]->
-  [ !MailSession(~chid, pka, ~did) ]
+  [ !MailSession(~chid, pka, ~did), MailDevice(~m, ~did, pk(dss)) ]
 
 /* ======================================================================
- * M3 — Mail applies a rotation (B3 removeDevice: session + factor proof;
- * B7 step 1: `from` is the active key; M18). IR M3.
- * Mail cannot check a seal's or a tag's content (B7), so what it accepts
- * is the pair (pk_old, pk_new) with an open session for pk_old and a spent
- * factor proof. The request comes from the network (the relay).
+ * R9 — Revocation by an email code (B7a, D35, M22). The email-only actor
+ * is the attacker: it may revoke any registered device at any time. It
+ * consumes the registry entry and writes no key.
  * ====================================================================== */
-#ifdef BOUND_PROOFS
-rule A09_M3_ApplyRotation:
-  [ MailFactorChallenge(~chid, ~m, pkF, h(<'rotate', ~m, pkold, pknew>), ~ans)
+rule A11_R9_RevokeByEmail:
+  [ MailDevice(~m, ~did, pkS) ]
+  --[ Revoked(~m, ~did) ]->
+  [ ]
+
+/* ======================================================================
+ * M3 — Mail applies a rotation (B7 removeDevices, M18′, M23). It needs an
+ * open session for the old key, a factor proof bound to this exact pair of
+ * keys (R5), and the transition signed by the registered factor (R6).
+ * ====================================================================== */
+#ifdef MAIL_UNCHECKED
+rule A12_M3_ApplyRotation:
+  [ MailFactorChallenge(~chid, ~m, pkF, d, ~ans)
   , !MailSession(~sch, pkold, who)
   , MailActive(~m, pkold)
   , FactorAnswer(~chid, ~ans)
-  , RotationRequest(~m, pkold, pknew) ]
-  --[ FactorProofAccepted(~chid, 'f1', pkF), ProofAccepted(~chid), Applied(~m, pkold, pknew) ]->
+  , RotationRequest(~m, rid, pkold, pknew, tr) ]
+  --[ FactorProofAccepted(~m, ~chid, d), ProofAccepted(~chid), Applied(~m, pkold, pknew) ]->
   [ MailActive(~m, pknew) ]
 #else
-rule A09_M3_ApplyRotation:
-  [ MailFactorChallenge(~chid, ~m, pkF, ~ans)
+rule A12_M3_ApplyRotation [no_derivcheck]:
+  [ MailFactorChallenge(~chid, ~m, pkF, h(<'rotate', ~m, ~rid>), ~ans)
+  , !MailFactorKey(~m, pkF, ~fs)
   , !MailSession(~sch, pkold, who)
   , MailActive(~m, pkold)
   , FactorAnswer(~chid, ~ans)
-  , RotationRequest(~m, pkold, pknew) ]
-  --[ FactorProofAccepted(~chid, 'f1', pkF), ProofAccepted(~chid), Applied(~m, pkold, pknew) ]->
+  , RotationRequest(~m, ~rid, pkold, pknew, sign(<'transition', ~m, pkold, pknew>, fsk(~fs, 'f1'))) ]
+  --[ FactorProofAccepted(~m, ~chid, h(<'rotate', ~m, ~rid>)), ProofAccepted(~chid), Applied(~m, pkold, pknew) ]->
+  [ MailActive(~m, pknew) ]
+#endif
+
+#ifdef EMAIL_ROTATES
+/* D35 removed: Mail applies a rotation an email code confirms. Whoever
+ * reads the owner's email (the attacker) can produce the code. */
+rule A13_M3e_ApplyEmailRotation:
+  [ !MailSession(~sch, pkold, who), MailActive(~m, pkold), In(<'email-rotate', ~m, pknew>) ]
+  --[ Applied(~m, pkold, pknew), EmailRotated(~m) ]->
   [ MailActive(~m, pknew) ]
 #endif
 
 /* ======================================================================
- * T1/T2 — Remove a device: the rotation (B7 removeDevice, M18, K8, D25).
- * IR T1/T2. T1 draws the new key and announces the request digest (used
- * by the bound variant). T2 needs the factor; it publishes the new public
- * key and the successor seal (A4), moves the page (and a device's record)
- * to the new key, and opens the sealing phase (T3/T4).
+ * T1/T2 — Remove a device: the rotation (B7, M18′, K8, K12). T1 draws the
+ * new key and announces the request digest; T2, with the factor, answers
+ * the factor challenge bound to that digest, signs the transition (A11),
+ * publishes the new key, the successor seal and the transition, and opens
+ * the sealing phase. FactorAuthorized marks the factor holder's consent.
  * ====================================================================== */
-rule A10_T1_PrepareRotationStateless:
-  [ !PageS(~m, mkey(~skold)), Fr(~sknew), In(didrm) ]
+rule A14_T1_PrepareRotationStateless:
+  [ !PageS(~m, mkey(~skold)), Fr(~sknew), Fr(~rid), In(didrm) ]
   --[ Prepared(~m, pk(mkey(~skold)), pk(mkey(~sknew))) ]->
-  [ PreparingS(mkey(~sknew), ~m, mkey(~skold), didrm), Out(h(<'rotate', ~m, pk(mkey(~skold)), pk(mkey(~sknew))>)) ]
+  [ PreparingS(mkey(~sknew), ~m, mkey(~skold), didrm, ~rid), Out(~rid) ]
 
-rule A11_T1_PrepareRotationKept:
-  [ !PageD(~m, ~did, mkey(~skold)), Fr(~sknew), In(didrm) ]
+rule A15_T1_PrepareRotationKept:
+  [ !PageD(~m, ~did, mkey(~skold)), Fr(~sknew), Fr(~rid), In(didrm) ]
   --[ Neq(~did, didrm), Prepared(~m, pk(mkey(~skold)), pk(mkey(~sknew))) ]->
-  [ PreparingD(mkey(~sknew), ~m, ~did, mkey(~skold), didrm), Out(h(<'rotate', ~m, pk(mkey(~skold)), pk(mkey(~sknew))>)) ]
+  [ PreparingD(mkey(~sknew), ~m, ~did, mkey(~skold), didrm, ~rid), Out(~rid) ]
 
-#ifdef BOUND_PROOFS
-rule A12_T2_CommitRotationStateless:
-  let pknew = pk(mkey(~sknew))
-      req   = <'rotate', ~m, pk(mkey(~skold)), pknew>
+rule A16_T2_CommitRotationStateless:
+  let pkold = pk(mkey(~skold))
+      pknew = pk(mkey(~sknew))
+      req   = <'rotate', ~m, ~rid>
+      tr    = sign(<'transition', ~m, pkold, pknew>, fsk(~fs, 'f1'))
   in
-  [ PreparingS(mkey(~sknew), ~m, mkey(~skold), didrm)
+  [ PreparingS(mkey(~sknew), ~m, mkey(~skold), didrm, ~rid)
   , !Factor(~m, ~fs)
   , In(aenc(<'challenge', 'factor', ~chid, h(req), ~ans>, pk(fkey(~fs, 'f1')))) ]
-  --[ Rotated(~m, didrm, pk(mkey(~skold)), pknew), KeyMade(~m, mkey(~sknew)), Removed(~m, didrm), AnsweredFactor(~m, 'f1', ~chid) ]->
+  --[ Rotated(~m, didrm, pkold, pknew), KeyMade(~m, mkey(~sknew)), FactorAuthorized(~m, pkold, pknew)
+    , AnsweredFactorFor(~m, ~chid, h(req)), PageKey(~m, mkey(~sknew)) ]->
   [ !PageS(~m, mkey(~sknew))
-  , !Rotating(~m, mkey(~skold), mkey(~sknew), didrm)
+  , !Rotating(~m, mkey(~skold), mkey(~sknew), didrm, ~fs)
   , FactorAnswer(~chid, ~ans)
-  , RotationRequest(~m, pk(mkey(~skold)), pknew)
-  , Out(<pknew, aenc(<'succ', mkey(~skold)>, pknew)>) ]
+  , RotationRequest(~m, ~rid, pkold, pknew, tr)
+  , Out(<pknew, aenc(<'succ', mkey(~skold)>, pknew), tr>) ]
 
-rule A13_T2_CommitRotationKept:
-  let pknew = pk(mkey(~sknew))
-      req   = <'rotate', ~m, pk(mkey(~skold)), pknew>
+rule A17_T2_CommitRotationKept:
+  let pkold = pk(mkey(~skold))
+      pknew = pk(mkey(~sknew))
+      req   = <'rotate', ~m, ~rid>
+      tr    = sign(<'transition', ~m, pkold, pknew>, fsk(~fs, 'f1'))
   in
-  [ PreparingD(mkey(~sknew), ~m, ~did, mkey(~skold), didrm)
+  [ PreparingD(mkey(~sknew), ~m, ~did, mkey(~skold), didrm, ~rid)
   , !Factor(~m, ~fs)
-  , Kept(~did, ~m, pk(mkey(~skold)))
+  , Kept(~did, ~m, pkold, ~fs)
   , In(aenc(<'challenge', 'factor', ~chid, h(req), ~ans>, pk(fkey(~fs, 'f1')))) ]
-  --[ Rotated(~m, didrm, pk(mkey(~skold)), pknew), KeyMade(~m, mkey(~sknew)), Removed(~m, didrm), AnsweredFactor(~m, 'f1', ~chid)
-    , AcceptD(~m, ~did, mkey(~sknew)), HeldKey(~m, ~did, mkey(~sknew)) ]->
+  --[ Rotated(~m, didrm, pkold, pknew), KeyMade(~m, mkey(~sknew)), FactorAuthorized(~m, pkold, pknew)
+    , AnsweredFactorFor(~m, ~chid, h(req))
+    , AcceptD(~m, ~did, mkey(~sknew)), HeldKey(~m, ~did, mkey(~sknew)), KeptAt(~did, ~m, pknew) ]->
   [ !PageD(~m, ~did, mkey(~sknew))
-  , Kept(~did, ~m, pknew)
-  , !Rotating(~m, mkey(~skold), mkey(~sknew), didrm)
+  , Kept(~did, ~m, pknew, ~fs)
+  , !Rotating(~m, mkey(~skold), mkey(~sknew), didrm, ~fs)
   , FactorAnswer(~chid, ~ans)
-  , RotationRequest(~m, pk(mkey(~skold)), pknew)
-  , Out(<pknew, aenc(<'succ', mkey(~skold)>, pknew)>) ]
+  , RotationRequest(~m, ~rid, pkold, pknew, tr)
+  , Out(<pknew, aenc(<'succ', mkey(~skold)>, pknew), tr>) ]
+
+/* ======================================================================
+ * T3/T4 — Seal the new key to each remaining recipient (B7, K3′, R4). A
+ * device record is used only with the factor's admission and the device's
+ * own unlock-key signature; a factor record only with its admission. The
+ * removed device is skipped (Neq). NO_ADMISSION: round 2's tag check.
+ * ====================================================================== */
+#ifdef NO_ADMISSION
+rule A18_T3_SealToDevice:
+  [ !Rotating(~m, mkey(~skold), mkey(~sknew), didrm, ~fs)
+  , !DeviceRecord(~m, ~did, pkS, pkU, adm, usig, mac(<'device', ~m, ~did, pkS, pkU>, bindkey(mkey(~skold)))) ]
+  --[ Neq(~did, didrm), SealedKeyTo(~m, pk(mkey(~sknew)), pkU, ~did) ]->
+  [ Out(aenc(<'keyseal', mkey(~sknew), 'device'>, pkU)) ]
+
+rule A19_T4_SealToFactor:
+  [ !Rotating(~m, mkey(~skold), mkey(~sknew), didrm, ~fs)
+  , !FactorRecord(~m, pkF, fadm, mac(<'factor', ~m, 'f1', pkF>, bindkey(mkey(~skold)))) ]
+  --[ SealedKeyTo(~m, pk(mkey(~sknew)), pkF, 'factor') ]->
+  [ Out(aenc(<'keyseal', mkey(~sknew), 'factor'>, pkF)) ]
 #else
-rule A12_T2_CommitRotationStateless:
-  let pknew = pk(mkey(~sknew)) in
-  [ PreparingS(mkey(~sknew), ~m, mkey(~skold), didrm), !Factor(~m, ~fs) ]
-  --[ Rotated(~m, didrm, pk(mkey(~skold)), pknew), KeyMade(~m, mkey(~sknew)), Removed(~m, didrm) ]->
-  [ !PageS(~m, mkey(~sknew))
-  , !Rotating(~m, mkey(~skold), mkey(~sknew), didrm)
-  , RotationRequest(~m, pk(mkey(~skold)), pknew)
-  , Out(<pknew, aenc(<'succ', mkey(~skold)>, pknew)>) ]
+rule A18_T3_SealToDevice [no_derivcheck]:
+  [ !Rotating(~m, mkey(~skold), mkey(~sknew), didrm, ~fs)
+  , !DeviceRecord(~m, ~did, pk(dss), pkU, sign(<'admit-device', ~m, ~did, pk(dss)>, fsk(~fs, 'f1')),
+                  sign(<'unlock-key', ~m, ~did, pkU>, dss), dtag) ]
+  --[ Neq(~did, didrm), SealedKeyTo(~m, pk(mkey(~sknew)), pkU, ~did) ]->
+  [ Out(aenc(<'keyseal', mkey(~sknew), 'device'>, pkU)) ]
 
-rule A13_T2_CommitRotationKept:
-  let pknew = pk(mkey(~sknew)) in
-  [ PreparingD(mkey(~sknew), ~m, ~did, mkey(~skold), didrm), !Factor(~m, ~fs), Kept(~did, ~m, pk(mkey(~skold))) ]
-  --[ Rotated(~m, didrm, pk(mkey(~skold)), pknew), KeyMade(~m, mkey(~sknew)), Removed(~m, didrm)
-    , AcceptD(~m, ~did, mkey(~sknew)), HeldKey(~m, ~did, mkey(~sknew)) ]->
-  [ !PageD(~m, ~did, mkey(~sknew))
-  , Kept(~did, ~m, pknew)
-  , !Rotating(~m, mkey(~skold), mkey(~sknew), didrm)
-  , RotationRequest(~m, pk(mkey(~skold)), pknew)
-  , Out(<pknew, aenc(<'succ', mkey(~skold)>, pknew)>) ]
+rule A19_T4_SealToFactor [no_derivcheck]:
+  [ !Rotating(~m, mkey(~skold), mkey(~sknew), didrm, ~fs)
+  , !FactorRecord(~m, pkF, sign(<'admit-factor', ~m, pkF, pk(fsk(~fs, 'f1'))>, fsk(~fs, 'f1')), ftag) ]
+  --[ SealedKeyTo(~m, pk(mkey(~sknew)), pkF, 'factor') ]->
+  [ Out(aenc(<'keyseal', mkey(~sknew), 'factor'>, pkF)) ]
 #endif
 
 /* ======================================================================
- * T3/T4 — Seal the new key to each remaining recipient (B7 steps 2–3, K3,
- * A4, A5). IR T3/T4. A recipient record comes from the store; it is used
- * only if its tag verifies under bindkey(old key) — which only a holder of
- * the old key can make. The removed device is skipped (Neq). Each sealed
- * recipient is tagged again under bindkey(new key); the new tag is
- * published, and the record returns to the store through the attacker
- * (Z04/Z05), which is where the browser reads it from anyway.
- * ====================================================================== */
-rule A14_T3_SealToDevice:
-  [ !Rotating(~m, mkey(~skold), mkey(~sknew), didrm)
-  , !DeviceRecord(~m, ~did, pkS, pkU, mac(<'device', ~m, ~did, pkS, pkU>, bindkey(mkey(~skold)))) ]
-  --[ Neq(~did, didrm), SealedKeyTo(~m, pk(mkey(~sknew)), pkU) ]->
-  [ Out(<aenc(<'keyseal', mkey(~sknew), 'device'>, pkU), mac(<'device', ~m, ~did, pkS, pkU>, bindkey(mkey(~sknew)))>) ]
-
-rule A15_T4_SealToFactor:
-  [ !Rotating(~m, mkey(~skold), mkey(~sknew), didrm)
-  , !FactorRecord(~m, pkF, mac(<'factor', ~m, 'f1', pkF>, bindkey(mkey(~skold)))) ]
-  --[ SealedKeyTo(~m, pk(mkey(~sknew)), pkF) ]->
-  [ Out(<aenc(<'keyseal', mkey(~sknew), 'factor'>, pkF), mac(<'factor', ~m, 'f1', pkF>, bindkey(mkey(~sknew)))>) ]
-
-/* ======================================================================
- * H1/H2 — Inbound mail is sealed (envelope v1 key envelope; B7 step 6).
- * IR H1/H2. H1: to the key the honest pointer names. H2: to a key the
- * store hands the sealer (finding A).
- * ORACLE_MUTANT: the envelope is made under the challenge `info` (K4
- * removed), to show what the domain separation buys.
+ * H1/H2 — Inbound mail is sealed (envelope v1). H1: to the honest
+ * pointer's key. H2: to a key the store hands the sealer (finding A).
  * ====================================================================== */
 #ifdef ORACLE_MUTANT
-rule A16_H1_SealInboundHonestPointer:
+rule A20_H1_SealInboundHonestPointer:
   [ Fr(~dek), MailActive(~m, pka) ]
   --[ SealedHonest(~m, pka, ~dek), SealedAny(~m, pka, ~dek) ]->
   [ MailActive(~m, pka), Out(aenc(<'challenge', 'session', ~m, ~dek>, pka)) ]
 
-rule A17_H2_SealInboundStoreKey:
+rule A21_H2_SealInboundStoreKey:
   [ Fr(~dek), In(<~m, pka>) ]
   --[ SealedStore(~m, pka, ~dek), SealedAny(~m, pka, ~dek) ]->
   [ Out(aenc(<'challenge', 'session', ~m, ~dek>, pka)) ]
 #else
-rule A16_H1_SealInboundHonestPointer:
+rule A20_H1_SealInboundHonestPointer:
   [ Fr(~dek), MailActive(~m, pka) ]
   --[ SealedHonest(~m, pka, ~dek), SealedAny(~m, pka, ~dek) ]->
   [ MailActive(~m, pka), Out(aenc(<'msgkey', ~dek>, pka)) ]
 
-rule A17_H2_SealInboundStoreKey:
+rule A21_H2_SealInboundStoreKey:
   [ Fr(~dek), In(<~m, pka>) ]
   --[ SealedStore(~m, pka, ~dek), SealedAny(~m, pka, ~dek) ]->
   [ Out(aenc(<'msgkey', ~dek>, pka)) ]
 #endif
 
 /* ======================================================================
- * U1 — Unlock in a stateless browser with the factor (K2′ (a)/(b)). IR U1.
- * The wrap opens to K0: the anchor. U1a: K0 is the active key. U1b: the
- * active key arrives sealed to the factor key (A4, toKind "factor").
- * Either way a walk starts from the active key towards the anchor.
+ * U1/U2/R1 — Start a walk (K2″). U1: a stateless page with the factor; the
+ * wrap's key is the anchor, the active key is that key (U1a) or one sealed
+ * to the factor key (U1b). U2: a kept device after a lock, anchored at the
+ * key it last accepted. R1: a kept device resumes through its seal. Every
+ * walk carries the factor it trusts (~fs).
  * ====================================================================== */
-rule A18_U1a_UnlockStateless_WrapKeyIsActive:
+rule A22_U1a_UnlockStateless_WrapKeyIsActive:
   [ !Factor(~m, ~fs), In(senc(mkey(~sk0), kek(~fs, 'f1'))), Fr(~wid) ]
   --[ UsedFactor(~m, 'f1') ]->
-  [ WalkS(~wid, ~m, pk(mkey(~sk0)), mkey(~sk0), mkey(~sk0)) ]
+  [ WalkS(~wid, ~m, ~fs, pk(mkey(~sk0)), mkey(~sk0), mkey(~sk0)) ]
 
-rule A19_U1b_UnlockStateless_ViaFactorSeal:
+rule A23_U1b_UnlockStateless_ViaFactorSeal:
   [ !Factor(~m, ~fs)
   , In(senc(mkey(~sk0), kek(~fs, 'f1')))
   , In(aenc(<'keyseal', mkey(~skact), 'factor'>, pk(fkey(~fs, 'f1'))))
   , Fr(~wid) ]
   --[ UsedFactor(~m, 'f1') ]->
-  [ WalkS(~wid, ~m, pk(mkey(~sk0)), mkey(~skact), mkey(~skact)) ]
+  [ WalkS(~wid, ~m, ~fs, pk(mkey(~sk0)), mkey(~skact), mkey(~skact)) ]
 
-/* ======================================================================
- * U2 — A kept device unlocks with the factor after a lock (F4, K2′). IR U2.
- * The anchor is the key the record last accepted (lastpk), the stricter of
- * K2′'s two anchors. The record is read, not changed, until A2.
- * ====================================================================== */
-rule A20_U2a_UnlockKept_WrapKeyIsActive:
-  [ Kept(~did, ~m, lastpk), !Factor(~m, ~fs), In(senc(mkey(~sk0), kek(~fs, 'f1'))), Fr(~wid) ]
-  --[ UsedFactor(~m, 'f1') ]->
-  [ Kept(~did, ~m, lastpk), WalkD(~wid, ~m, ~did, lastpk, mkey(~sk0), mkey(~sk0)) ]
+rule A24_U2a_UnlockKept_WrapKeyIsActive:
+  [ Kept(~did, ~m, lastpk, ~fs), !Factor(~m, ~fs), In(senc(mkey(~sk0), kek(~fs, 'f1'))), Fr(~wid) ]
+  --[ UsedFactor(~m, 'f1'), KeptAt(~did, ~m, lastpk) ]->
+  [ Kept(~did, ~m, lastpk, ~fs), WalkD(~wid, ~m, ~did, ~fs, lastpk, mkey(~sk0), mkey(~sk0)) ]
 
-rule A21_U2b_UnlockKept_ViaFactorSeal:
-  [ Kept(~did, ~m, lastpk)
+rule A25_U2b_UnlockKept_ViaFactorSeal:
+  [ Kept(~did, ~m, lastpk, ~fs)
   , !Factor(~m, ~fs)
   , In(senc(mkey(~sk0), kek(~fs, 'f1')))
   , In(aenc(<'keyseal', mkey(~skact), 'factor'>, pk(fkey(~fs, 'f1'))))
   , Fr(~wid) ]
-  --[ UsedFactor(~m, 'f1') ]->
-  [ Kept(~did, ~m, lastpk), WalkD(~wid, ~m, ~did, lastpk, mkey(~skact), mkey(~skact)) ]
+  --[ UsedFactor(~m, 'f1'), KeptAt(~did, ~m, lastpk) ]->
+  [ Kept(~did, ~m, lastpk, ~fs), WalkD(~wid, ~m, ~did, ~fs, lastpk, mkey(~skact), mkey(~skact)) ]
 
-/* ======================================================================
- * R1 — A kept device resumes without a prompt (F2, K2′, K5). IR R1.
- * The seal of the active key to the device's unlock key (A4, toKind
- * "device") opens with dsk; the walk must reach lastpk.
- * ====================================================================== */
-rule A22_R1_Resume:
-  [ Kept(~did, ~m, lastpk)
+rule A26_R1_Resume:
+  [ Kept(~did, ~m, lastpk, ~fs)
   , !DevKeys(~m, ~did, ~dsk, ~dss)
   , In(aenc(<'keyseal', mkey(~skact), 'device'>, pk(~dsk)))
   , Fr(~wid) ]
-  --[ Resumed(~m, ~did) ]->
-  [ Kept(~did, ~m, lastpk), WalkD(~wid, ~m, ~did, lastpk, mkey(~skact), mkey(~skact)) ]
+  --[ Resumed(~m, ~did), KeptAt(~did, ~m, lastpk) ]->
+  [ Kept(~did, ~m, lastpk, ~fs), WalkD(~wid, ~m, ~did, ~fs, lastpk, mkey(~skact), mkey(~skact)) ]
 
 /* ======================================================================
- * W1 — One step of the chain walk (K2′, G40). IR W1.
- * A successor seal is the retired private key sealed to its successor's
- * public key (A4, toKind "successor"); only a holder of the retired key can
- * make one.
+ * W1 — One step of the walk (K2″, A4, A11). The successor seal opens with
+ * the current key, and (round 3) the transition into the current key is
+ * signed by the trusted factor. NO_TRANSITION_SIG: round 2's step.
  * ====================================================================== */
-rule A23_W1_WalkStepStateless:
-  [ WalkS(~wid, ~m, anchor, mkey(~skact), mkey(~skcur)), In(aenc(<'succ', mkey(~skprev)>, pk(mkey(~skcur)))) ]
+#ifdef NO_TRANSITION_SIG
+rule A27_W1_WalkStepStateless:
+  [ WalkS(~wid, ~m, ~fs, anchor, mkey(~skact), mkey(~skcur)), In(aenc(<'succ', mkey(~skprev)>, pk(mkey(~skcur)))) ]
   --[ Walked(~m, pk(mkey(~skcur)), pk(mkey(~skprev))) ]->
-  [ WalkS(~wid, ~m, anchor, mkey(~skact), mkey(~skprev)) ]
+  [ WalkS(~wid, ~m, ~fs, anchor, mkey(~skact), mkey(~skprev)) ]
 
-rule A24_W1_WalkStepKept:
-  [ WalkD(~wid, ~m, ~did, anchor, mkey(~skact), mkey(~skcur)), In(aenc(<'succ', mkey(~skprev)>, pk(mkey(~skcur)))) ]
+rule A28_W1_WalkStepKept:
+  [ WalkD(~wid, ~m, ~did, ~fs, anchor, mkey(~skact), mkey(~skcur)), In(aenc(<'succ', mkey(~skprev)>, pk(mkey(~skcur)))) ]
   --[ Walked(~m, pk(mkey(~skcur)), pk(mkey(~skprev))) ]->
-  [ WalkD(~wid, ~m, ~did, anchor, mkey(~skact), mkey(~skprev)) ]
+  [ WalkD(~wid, ~m, ~did, ~fs, anchor, mkey(~skact), mkey(~skprev)) ]
+#else
+rule A27_W1_WalkStepStateless:
+  [ WalkS(~wid, ~m, ~fs, anchor, mkey(~skact), mkey(~skcur))
+  , In(aenc(<'succ', mkey(~skprev)>, pk(mkey(~skcur))))
+  , In(sign(<'transition', ~m, pk(mkey(~skprev)), pk(mkey(~skcur))>, fsk(~fs, 'f1'))) ]
+  --[ Walked(~m, pk(mkey(~skcur)), pk(mkey(~skprev))) ]->
+  [ WalkS(~wid, ~m, ~fs, anchor, mkey(~skact), mkey(~skprev)) ]
+
+rule A28_W1_WalkStepKept:
+  [ WalkD(~wid, ~m, ~did, ~fs, anchor, mkey(~skact), mkey(~skcur))
+  , In(aenc(<'succ', mkey(~skprev)>, pk(mkey(~skcur))))
+  , In(sign(<'transition', ~m, pk(mkey(~skprev)), pk(mkey(~skcur))>, fsk(~fs, 'f1'))) ]
+  --[ Walked(~m, pk(mkey(~skcur)), pk(mkey(~skprev))) ]->
+  [ WalkD(~wid, ~m, ~did, ~fs, anchor, mkey(~skact), mkey(~skprev)) ]
+#endif
 
 /* ======================================================================
- * A1/A2 — Accept the active key once the walk reached the anchor (K2′).
- * IR A1/A2. A2 writes lastpk only if the record still holds the walk's
- * anchor (compare-and-swap; the code overwrites, ir.md §8 item 9).
+ * A1/A2 — Accept the active key once the walk reached the anchor (K2″).
+ * The accept step re-reads two things the walk already checked and the
+ * view still holds: the anchor's provenance (a stateless page: the factor's
+ * own wrap of the anchor; a kept device: its record's last key), and, when
+ * the active key is not the anchor, the transition into the active key
+ * signed by the trusted factor (the walk's first step). Same verdicts, and
+ * no induction over the walk for the prover (ir.md §10.1, R3).
+ * A2 writes the record's last key only if it still holds the walk's anchor
+ * (compare-and-swap, K11). NO_TRANSITION_SIG: round 2's accept.
  * ====================================================================== */
-rule A25_A1_AcceptStateless:
-  [ WalkS(~wid, ~m, pk(mkey(~skA)), mkey(~skact), mkey(~skA)) ]
-  --[ AcceptS(~m, mkey(~skact)) ]->
+rule A29_A1a_AcceptStatelessAnchor:
+  [ WalkS(~wid, ~m, ~fs, pk(mkey(~skA)), mkey(~skA), mkey(~skA)), In(senc(mkey(~skA), kek(~fs, 'f1'))) ]
+  --[ AcceptS(~m, mkey(~skA)), PageKey(~m, mkey(~skA)) ]->
+  [ !PageS(~m, mkey(~skA)) ]
+
+#ifdef NO_TRANSITION_SIG
+rule A30_A1b_AcceptStatelessWalked:
+  [ WalkS(~wid, ~m, ~fs, pk(mkey(~skA)), mkey(~skact), mkey(~skA)), In(senc(mkey(~skA), kek(~fs, 'f1'))) ]
+  --[ AcceptS(~m, mkey(~skact)), PageKey(~m, mkey(~skact)) ]->
   [ !PageS(~m, mkey(~skact)) ]
+#else
+rule A30_A1b_AcceptStatelessWalked:
+  [ WalkS(~wid, ~m, ~fs, pk(mkey(~skA)), mkey(~skact), mkey(~skA))
+  , In(senc(mkey(~skA), kek(~fs, 'f1')))
+  , In(sign(<'transition', ~m, pkp, pk(mkey(~skact))>, fsk(~fs, 'f1'))) ]
+  --[ AcceptS(~m, mkey(~skact)), PageKey(~m, mkey(~skact)) ]->
+  [ !PageS(~m, mkey(~skact)) ]
+#endif
 
-rule A26_A2_AcceptKept:
-  [ WalkD(~wid, ~m, ~did, pk(mkey(~skA)), mkey(~skact), mkey(~skA)), Kept(~did, ~m, pk(mkey(~skA))) ]
-  --[ AcceptD(~m, ~did, mkey(~skact)), HeldKey(~m, ~did, mkey(~skact)) ]->
-  [ Kept(~did, ~m, pk(mkey(~skact))), !PageD(~m, ~did, mkey(~skact)) ]
+rule A31_A2a_AcceptKeptAnchor:
+  [ WalkD(~wid, ~m, ~did, ~fs, pk(mkey(~skA)), mkey(~skA), mkey(~skA)), Kept(~did, ~m, pk(mkey(~skA)), ~fs) ]
+  --[ AcceptD(~m, ~did, mkey(~skA)), HeldKey(~m, ~did, mkey(~skA)), KeptAt(~did, ~m, pk(mkey(~skA))) ]->
+  [ Kept(~did, ~m, pk(mkey(~skA)), ~fs), !PageD(~m, ~did, mkey(~skA)) ]
+
+#ifdef NO_TRANSITION_SIG
+rule A32_A2b_AcceptKeptWalked:
+  [ WalkD(~wid, ~m, ~did, ~fs, pk(mkey(~skA)), mkey(~skact), mkey(~skA)), Kept(~did, ~m, pk(mkey(~skA)), ~fs) ]
+  --[ AcceptD(~m, ~did, mkey(~skact)), HeldKey(~m, ~did, mkey(~skact)), KeptAt(~did, ~m, pk(mkey(~skact))) ]->
+  [ Kept(~did, ~m, pk(mkey(~skact)), ~fs), !PageD(~m, ~did, mkey(~skact)) ]
+#else
+rule A32_A2b_AcceptKeptWalked:
+  [ WalkD(~wid, ~m, ~did, ~fs, pk(mkey(~skA)), mkey(~skact), mkey(~skA))
+  , Kept(~did, ~m, pk(mkey(~skA)), ~fs)
+  , In(sign(<'transition', ~m, pkp, pk(mkey(~skact))>, fsk(~fs, 'f1'))) ]
+  --[ AcceptD(~m, ~did, mkey(~skact)), HeldKey(~m, ~did, mkey(~skact)), KeptAt(~did, ~m, pk(mkey(~skact))) ]->
+  [ Kept(~did, ~m, pk(mkey(~skact)), ~fs), !PageD(~m, ~did, mkey(~skact)) ]
+#endif
 
 /* ======================================================================
- * Z — The attacker writes to any channel (the relay and the store). IR §6.
- * Honest parties put their messages on these channels AND publish them
- * (Out), so the attacker learns everything and may inject anything it can
- * compute: exactly the Dolev-Yao power of a plain In(), arranged so that
- * the honest source of a message is tried first.
+ * Z — The attacker writes to every channel (the relay and the store).
  * ====================================================================== */
 rule Z00_InjectSessionAnswer:
   [ In(<c, x>) ] --[ Injected() ]-> [ SessionAnswer(c, x) ]
@@ -445,52 +512,123 @@ rule Z02_InjectFactorAnswer:
   [ In(<c, x>) ] --[ Injected() ]-> [ FactorAnswer(c, x) ]
 
 rule Z03_InjectRotationRequest:
-  [ In(<m, a, b>) ] --[ Injected() ]-> [ RotationRequest(m, a, b) ]
+  [ In(<m, r, a, b, t>) ] --[ Injected() ]-> [ RotationRequest(m, r, a, b, t) ]
 
 rule Z04_InjectDeviceRecord:
-  [ In(<m, d, s, u, tg>) ] --[ Injected() ]-> [ !DeviceRecord(m, d, s, u, tg) ]
+  [ In(<m, d, s, u, a, us, tg>) ] --[ Injected() ]-> [ !DeviceRecord(m, d, s, u, a, us, tg) ]
 
 rule Z05_InjectFactorRecord:
-  [ In(<m, k, tg>) ] --[ Injected() ]-> [ !FactorRecord(m, k, tg) ]
+  [ In(<m, k, a, tg>) ] --[ Injected() ]-> [ !FactorRecord(m, k, a, tg) ]
+
+rule Z06_InjectRegisterRequest:
+  [ In(<m, r, d, s, a>) ] --[ Injected() ]-> [ RegisterRequest(m, r, d, s, a) ]
 
 /* ======================================================================
- * X1/X2 — A kept device is compromised (spec §4 rows 1–3). IR X1/X2.
- * The attacker takes its device keys and every mailbox key its pages hold
- * (every older key follows from those through the public successor seals).
+ * X1/X2 — A kept device is compromised (spec §4 rows 1–3).
  * ====================================================================== */
-rule A27_X1_CompromiseDeviceKeys:
+rule A33_X1_CompromiseDeviceKeys:
   [ !DevKeys(~m, ~did, ~dsk, ~dss) ]
   --[ Compromised(~m, ~did) ]->
   [ Out(<~dsk, ~dss>) ]
 
-rule A28_X2_CompromiseHeldKey:
+rule A34_X2_CompromiseHeldKey:
   [ !PageD(~m, ~did, mkey(~sk)) ]
   --[ Compromised(~m, ~did) ]->
   [ Out(mkey(~sk)) ]
 
 /* ======================================================================
- * (v) No decryption oracle, (vi) what Mail never learns (ir.md §7 (v), (vi)).
- * Proven first and marked [reuse]: every later proof may assume them, which
- * closes the branches where the prover would otherwise chase an honest key
- * through an unbounded chain of successor seals.
+ * Lemmas. The round 3 targets (ir.md §10.3) come right after the factor's
+ * secrecy, which is all they rest on; the round 2 targets (§7) follow,
+ * behind the key-secrecy inductions they need. Tamarin uses a [reuse]
+ * lemma only in the lemmas after it.
  * ====================================================================== */
-
-/* Expected: hold. (A leaked key gives every older key through the public
- * successor seals, so the statement is: no key leaks unless some device of
- * the mailbox was compromised.) */
-lemma mailbox_key_secret [reuse, use_induction]:
-  "All m sk #i #j.
-     KeyMade(m, sk) @ i & K(sk) @ j
-   ==> Ex did #c. Compromised(m, did) @ c"
 
 /* Expected: hold. */
 lemma factor_secret [reuse]:
   "All m fs #i.
      FactorMade(m, 'f1', fs) @ i
-   ==> not (Ex #j. K(fs) @ j) & not (Ex #j. K(fkey(fs, 'f1')) @ j)"
+   ==> not (Ex #j. K(fs) @ j) & not (Ex #j. K(fkey(fs, 'f1')) @ j) & not (Ex #j. K(fsk(fs, 'f1')) @ j)"
 
-/* Expected: hold in the base model and with BOUND_PROOFS; fail with
- * -D=ORACLE_MUTANT (a page answers an envelope as a challenge). */
+/* Expected: hold (base, and every variant but MAIL_UNCHECKED and EMAIL_ROTATES). */
+lemma successor_authored_by_factor:
+  "All m a b #i.
+     Applied(m, a, b) @ i
+   ==> Ex #j. FactorAuthorized(m, a, b) @ j & #j < #i"
+
+/* Expected: hold (base); fail with NO_TRANSITION_SIG. */
+lemma accepted_step_authored_by_factor:
+  "All m cur prev #i.
+     Walked(m, cur, prev) @ i
+   ==> Ex #j. FactorAuthorized(m, prev, cur) @ j & #j < #i"
+
+/* Expected: hold, with no restriction on compromise (round 2's chain
+ * agreement needed "no compromise", or failed: the fork). Fail with
+ * NO_TRANSITION_SIG. */
+lemma accepted_key_is_honest_stateless [reuse]:
+  "All m sk #i.
+     AcceptS(m, sk) @ i
+   ==> Ex #j. KeyMade(m, sk) @ j & #j < #i"
+
+/* Helper: every key a page holds was made honestly (enrollment, a
+ * rotation, or an accepted key). */
+lemma page_key_honest [reuse]:
+  "All m sk #i.
+     PageKey(m, sk) @ i
+   ==> Ex #j. KeyMade(m, sk) @ j & #j < #i"
+
+/* Helper: the last key a kept device recorded was made honestly. */
+lemma kept_anchor_honest [reuse, use_induction]:
+  "All did m sk #i.
+     KeptAt(did, m, pk(sk)) @ i
+   ==> Ex #j. KeyMade(m, sk) @ j & #j < #i"
+
+lemma accepted_key_is_honest_kept:
+  "All m did sk #i.
+     AcceptD(m, did, sk) @ i
+   ==> Ex #j. KeyMade(m, sk) @ j & #j < #i"
+
+/* Expected: hold (base); fail with NO_ADMISSION (the planted recipient).
+ * Whatever devices are compromised, a new key is sealed only to a
+ * recipient an honest party made, or to a device that is itself
+ * compromised (which the owner has not removed, so it is still the
+ * owner's to remove); never to the removed device (Neq). */
+lemma sealed_only_to_admitted_recipients:
+  "All m pknew pkR to #i.
+     SealedKeyTo(m, pknew, pkR, to) @ i
+   ==> (Ex #j. RecipientMade(m, pkR) @ j)
+     | (Ex #c. Compromised(m, to) @ c)"
+
+/* Expected: hold (base); fail with MAIL_UNCHECKED. */
+lemma factor_proof_bound:
+  "All m chid d #i.
+     FactorProofAccepted(m, chid, d) @ i
+   ==> (Ex #j. AnsweredFactorFor(m, chid, d) @ j & #j < #i)
+     & (All d2 #i2. FactorProofAccepted(m, chid, d2) @ i2 ==> #i2 = #i)"
+
+/* Expected: hold. */
+lemma revoked_device_opens_no_session:
+  "All m did chid pka pkd #r #o.
+     Revoked(m, did) @ r & DeviceSessionOpened(m, chid, pka, did, pkd) @ o
+   ==> #o < #r"
+
+/* Expected: hold (base); fail with KEY_ONLY_SESSION once a device's key
+ * leaks. */
+lemma session_needs_owner:
+  "All m chid pka #o.
+     DevicelessSessionOpened(m, chid, pka) @ o
+   ==> Ex #j. OwnerOpenedSession(m, chid) @ j & #j < #o"
+
+/* ======================================================================
+ * Round 2's targets (ir.md §7), restated on the round 3 rules.
+ * ====================================================================== */
+
+/* Expected: hold. */
+lemma mailbox_key_secret [reuse, use_induction]:
+  "All m sk #i #j.
+     KeyMade(m, sk) @ i & K(sk) @ j
+   ==> Ex did #c. Compromised(m, did) @ c"
+
+/* Expected: hold (base); fail with ORACLE_MUTANT. */
 lemma dek_secret_honest_key [reuse, use_induction]:
   "All m sk dek #i #s #j.
      KeyMade(m, sk) @ i
@@ -498,49 +636,63 @@ lemma dek_secret_honest_key [reuse, use_induction]:
    & K(dek) @ j
    ==> Ex did #c. Compromised(m, did) @ c"
 
-/* ======================================================================
- * Sanity: the honest flows run (ir.md §7, "Sanity"). Each sanity lemma
- * also pins the shape of the trace it asks for (one enrollment, one kept
- * device, one rotation, one application, no compromise, a bounded walk):
- * that is what the honest flow looks like, and it keeps the existence
- * search from unrolling the model's loops. The security lemmas below
- * carry no such bounds.
- * ====================================================================== */
-lemma sanity_rotation_applied_and_sealed:
-  exists-trace
-  "Ex m did pkS pkU pkold pknew dek #k #r #a #s.
-     Registered(m, did, pkS, pkU) @ k
-   & Rotated(m, did, pkold, pknew) @ r
+/* Expected: hold (round 2 expected fail: the planted recipient). */
+lemma post_removal_secrecy_compromise_before_removal:
+  "All m didrm pkold pknew dek #r #a #s.
+     Rotated(m, didrm, pkold, pknew) @ r
    & Applied(m, pkold, pknew) @ a
    & SealedHonest(m, pknew, dek) @ s
-   & #k < #r & #r < #a & #a < #s
-   & (All x1 y1 x2 y2 #e1 #e2. Enrolled(x1, y1) @ e1 & Enrolled(x2, y2) @ e2 ==> #e1 = #e2)
-   & (All d1 s1 u1 d2 s2 u2 #k1 #k2. Registered(m, d1, s1, u1) @ k1 & Registered(m, d2, s2, u2) @ k2 ==> #k1 = #k2)
-   & (All a1 b1 c1 a2 b2 c2 #r1 #r2. Rotated(m, a1, b1, c1) @ r1 & Rotated(m, a2, b2, c2) @ r2 ==> #r1 = #r2)
-   & (All x1 y1 x2 y2 #a1 #a2. Applied(m, x1, y1) @ a1 & Applied(m, x2, y2) @ a2 ==> #a1 = #a2)
-   & (All x1 y1 x2 y2 #s1 #s2. SealedAny(m, x1, y1) @ s1 & SealedAny(m, x2, y2) @ s2 ==> #s1 = #s2)
-   & (All c1 p1 c2 p2 #o1 #o2. SessionOpened(c1, p1) @ o1 & SessionOpened(c2, p2) @ o2 ==> #o1 = #o2)
-   & (All x1 x2 #u1 #u2. AcceptS(m, x1) @ u1 & AcceptS(m, x2) @ u2 ==> #u1 = #u2)
-   & not (Ex x y #w. Walked(m, x, y) @ w)
-   & not (Ex d #c. Compromised(m, d) @ c)"
+   & (All d #c. Compromised(m, d) @ c ==> d = didrm)
+   ==> not (Ex #k. K(dek) @ k)"
 
-lemma sanity_kept_device_resumes_after_rotation:
+/* Expected: hold (round 2 expected fail without bound proofs). */
+lemma post_removal_secrecy_applied_rotation_no_compromise:
+  "All m pkold pknew dek #a #s.
+     Applied(m, pkold, pknew) @ a
+   & SealedHonest(m, pknew, dek) @ s
+   & not (Ex d #c. Compromised(m, d) @ c)
+   ==> not (Ex #k. K(dek) @ k)"
+
+/* Expected: hold. One-step rollback resistance of a kept device. */
+lemma kept_device_no_rollback:
+  "All m did didrm skold sknew #r #t1 #t2.
+     Rotated(m, didrm, pk(skold), pk(sknew)) @ r
+   & AcceptD(m, did, sknew) @ t1
+   & AcceptD(m, did, skold) @ t2
+   ==> #t2 < #t1"
+
+/* ======================================================================
+ * Sanity: the honest flows run. Each pins the shape of its trace.
+ * ====================================================================== */
+lemma sanity_device_registered_and_session:
   exists-trace
-  "Ex m d1 d2 pkold sknew #r #a #u.
-     Rotated(m, d1, pkold, pk(sknew)) @ r
-   & Applied(m, pkold, pk(sknew)) @ a
-   & AcceptD(m, d2, sknew) @ u
-   & not (d1 = d2)
-   & #a < #u
+  "Ex m chid pka did pkd #i.
+     DeviceSessionOpened(m, chid, pka, did, pkd) @ i
    & (All x1 y1 x2 y2 #e1 #e2. Enrolled(x1, y1) @ e1 & Enrolled(x2, y2) @ e2 ==> #e1 = #e2)
    & (All da sa ua db sb ub #k1 #k2. Registered(m, da, sa, ua) @ k1 & Registered(m, db, sb, ub) @ k2 ==> #k1 = #k2)
+   & not (Ex a b c #r. Rotated(m, a, b, c) @ r)
+   & not (Ex d #c. Compromised(m, d) @ c)
+   & not (Ex #z. Injected() @ z)"
+
+lemma sanity_deviceless_session:
+  exists-trace
+  "Ex m chid pka #i.
+     DevicelessSessionOpened(m, chid, pka) @ i
+   & (All x1 y1 x2 y2 #e1 #e2. Enrolled(x1, y1) @ e1 & Enrolled(x2, y2) @ e2 ==> #e1 = #e2)
+   & not (Ex da sa ua #k. Registered(m, da, sa, ua) @ k)
+   & not (Ex d #c. Compromised(m, d) @ c)
+   & not (Ex #z. Injected() @ z)"
+
+lemma sanity_rotation_applied:
+  exists-trace
+  "Ex m d pkold pknew #r #a.
+     Rotated(m, d, pkold, pknew) @ r
+   & Applied(m, pkold, pknew) @ a
+   & (All x1 y1 x2 y2 #e1 #e2. Enrolled(x1, y1) @ e1 & Enrolled(x2, y2) @ e2 ==> #e1 = #e2)
+   & not (Ex da sa ua #k. Registered(m, da, sa, ua) @ k)
    & (All a1 b1 c1 a2 b2 c2 #r1 #r2. Rotated(m, a1, b1, c1) @ r1 & Rotated(m, a2, b2, c2) @ r2 ==> #r1 = #r2)
-   & (All x1 y1 x2 y2 #a1 #a2. Applied(m, x1, y1) @ a1 & Applied(m, x2, y2) @ a2 ==> #a1 = #a2)
-   & (All x1 y1 x2 y2 #w1 #w2. Walked(m, x1, y1) @ w1 & Walked(m, x2, y2) @ w2 ==> #w1 = #w2)
-   & (All x1 x2 #u1 #u2. AcceptS(m, x1) @ u1 & AcceptS(m, x2) @ u2 ==> #u1 = #u2)
-   & (All da xa db xb #u1 #u2. AcceptD(m, da, xa) @ u1 & AcceptD(m, db, xb) @ u2 ==> #u1 = #u2)
-   & not (Ex x y #s. SealedAny(m, x, y) @ s)
-   & not (Ex d #c. Compromised(m, d) @ c)"
+   & not (Ex dd #c. Compromised(m, dd) @ c)
+   & not (Ex #z. Injected() @ z)"
 
 lemma sanity_stateless_unlocks_after_rotation:
   exists-trace
@@ -551,173 +703,8 @@ lemma sanity_stateless_unlocks_after_rotation:
    & (All x1 y1 x2 y2 #e1 #e2. Enrolled(x1, y1) @ e1 & Enrolled(x2, y2) @ e2 ==> #e1 = #e2)
    & (All a1 b1 c1 a2 b2 c2 #r1 #r2. Rotated(m, a1, b1, c1) @ r1 & Rotated(m, a2, b2, c2) @ r2 ==> #r1 = #r2)
    & (All x1 y1 x2 y2 #w1 #w2. Walked(m, x1, y1) @ w1 & Walked(m, x2, y2) @ w2 ==> #w1 = #w2)
-   & (All x1 x2 #u1 #u2. AcceptS(m, x1) @ u1 & AcceptS(m, x2) @ u2 ==> #u1 = #u2)
    & not (Ex da sa ua #k. Registered(m, da, sa, ua) @ k)
    & not (Ex x y #a. Applied(m, x, y) @ a)
-   & not (Ex x y #s. SealedAny(m, x, y) @ s)
    & not (Ex dd #c. Compromised(m, dd) @ c)"
-
-lemma sanity_device_session:
-  exists-trace
-  "Ex m chid pka did pkd #i.
-     DeviceSessionOpened(m, chid, pka, did, pkd) @ i
-   & (All x1 y1 x2 y2 #e1 #e2. Enrolled(x1, y1) @ e1 & Enrolled(x2, y2) @ e2 ==> #e1 = #e2)
-   & (All da sa ua db sb ub #k1 #k2. Registered(m, da, sa, ua) @ k1 & Registered(m, db, sb, ub) @ k2 ==> #k1 = #k2)
-   & (All c1 c2 #i1 #i2. Challenged(c1) @ i1 & Challenged(c2) @ i2 ==> #i1 = #i2)
-   & not (Ex a b c #r. Rotated(m, a, b, c) @ r)
-   & not (Ex d #c. Compromised(m, d) @ c)"
-
-/* ======================================================================
- * (i) Post-removal secrecy of message keys (ir.md §7 (i)).
- * ====================================================================== */
-
-/* Expected: hold. Every compromised device was removed by an applied
- * rotation at or before the one that made pknew, and compromised only
- * after that removal. */
-lemma post_removal_secrecy_compromise_after_removal:
-  "All m didrm pkold pknew dek #r #a #s.
-     Rotated(m, didrm, pkold, pknew) @ r
-   & Applied(m, pkold, pknew) @ a
-   & SealedHonest(m, pknew, dek) @ s
-   & (All d #c. Compromised(m, d) @ c ==>
-        ( (d = didrm & #a < #c)
-        | (Ex pk1 pk2 #r2 #a2. Rotated(m, d, pk1, pk2) @ r2 & Applied(m, pk1, pk2) @ a2 & #a2 < #a & #a2 < #c) ))
-   ==> not (Ex #k. K(dek) @ k)"
-
-/* Expected: fail (a stolen, unlocked device: compromised before removal,
- * plants a recipient with a genuine tag; the rotation seals to it). */
-lemma post_removal_secrecy_compromise_before_removal:
-  "All m didrm pkold pknew dek #r #a #s.
-     Rotated(m, didrm, pkold, pknew) @ r
-   & Applied(m, pkold, pknew) @ a
-   & SealedHonest(m, pknew, dek) @ s
-   & (All d #c. Compromised(m, d) @ c ==> d = didrm)
-   ==> not (Ex #k. K(dek) @ k)"
-
-/* Expected: fail in the base model (the relay applies its own rotation with
- * the owner's unbound factor proof); hold with -D=BOUND_PROOFS. */
-lemma post_removal_secrecy_applied_rotation_no_compromise:
-  "All m pkold pknew dek #a #s.
-     Applied(m, pkold, pknew) @ a
-   & SealedHonest(m, pknew, dek) @ s
-   & not (Ex d #c. Compromised(m, d) @ c)
-   ==> not (Ex #k. K(dek) @ k)"
-
-/* Expected: fail (finding A: the store hands the sealer the retired key,
- * which the removed device held). Restricted to the mailbox's own keys. */
-lemma post_removal_secrecy_store_sealer:
-  "All m didrm pkold pknew sk dek #r #a #s #k.
-     Rotated(m, didrm, pkold, pknew) @ r
-   & Applied(m, pkold, pknew) @ a
-   & KeyMade(m, sk) @ k
-   & SealedStore(m, pk(sk), dek) @ s
-   & #a < #s
-   & (All d #c. Compromised(m, d) @ c ==> (d = didrm & #a < #c))
-   ==> not (Ex #j. K(dek) @ j)"
-
-/* ======================================================================
- * (ii) Chain agreement and rollback (ir.md §7 (ii)).
- * ====================================================================== */
-
-/* Expected: hold. */
-lemma chain_agreement_stateless_no_compromise:
-  "All m sk #i.
-     AcceptS(m, sk) @ i
-   & not (Ex d #c. Compromised(m, d) @ c)
-   ==> Ex #j. KeyMade(m, sk) @ j & #j < #i"
-
-/* Expected: hold. */
-lemma chain_agreement_kept_no_compromise:
-  "All m did sk #i.
-     AcceptD(m, did, sk) @ i
-   & not (Ex d #c. Compromised(m, d) @ c)
-   ==> Ex #j. KeyMade(m, sk) @ j & #j < #i"
-
-/* Expected: fail (the fork: a leaked old key forges a successor seal from
- * itself to an attacker key; a recovery-key unlock is anchored at K0). */
-lemma chain_agreement_stateless_after_removed_compromise:
-  "All m sk #i.
-     AcceptS(m, sk) @ i
-   & (All d #c. Compromised(m, d) @ c ==>
-        (Ex pk1 pk2 #r #a. Rotated(m, d, pk1, pk2) @ r & Applied(m, pk1, pk2) @ a & #a < #c & #a < #i))
-   ==> Ex #j. KeyMade(m, sk) @ j"
-
-/* Expected: hold. One-step rollback resistance of a kept device, with
- * every compromised device removed (applied) before its compromise. */
-lemma kept_device_no_rollback:
-  "All m did didrm skold sknew #r #t1 #t2.
-     Rotated(m, didrm, pk(skold), pk(sknew)) @ r
-   & AcceptD(m, did, sknew) @ t1
-   & AcceptD(m, did, skold) @ t2
-   & (All d #c. Compromised(m, d) @ c ==>
-        (Ex pk1 pk2 #r2 #a2. Rotated(m, d, pk1, pk2) @ r2 & Applied(m, pk1, pk2) @ a2 & #a2 < #c))
-   ==> #t2 < #t1"
-
-/* Expected: a trace exists (by design: a stateless browser has no memory). */
-lemma stateless_rollback_possible:
-  exists-trace
-  "Ex m didrm skold sknew #r #t1 #t2.
-     Rotated(m, didrm, pk(skold), pk(sknew)) @ r
-   & AcceptS(m, sknew) @ t1
-   & AcceptS(m, skold) @ t2
-   & #t1 < #t2
-   & (All x1 y1 x2 y2 #e1 #e2. Enrolled(x1, y1) @ e1 & Enrolled(x2, y2) @ e2 ==> #e1 = #e2)
-   & (All a1 b1 c1 a2 b2 c2 #r1 #r2. Rotated(m, a1, b1, c1) @ r1 & Rotated(m, a2, b2, c2) @ r2 ==> #r1 = #r2)
-   & not (Ex da sa ua #k. Registered(m, da, sa, ua) @ k)
-   & not (Ex x y #a. Applied(m, x, y) @ a)
-   & not (Ex x y #s. SealedAny(m, x, y) @ s)
-   & not (Ex d #c. Compromised(m, d) @ c)"
-
-/* ======================================================================
- * (iii) Recipient integrity (ir.md §7 (iii)).
- * ====================================================================== */
-
-/* Expected: hold. */
-lemma recipient_integrity_compromise_after_removal:
-  "All m pkold pknew pkR #i #a.
-     SealedKeyTo(m, pknew, pkR) @ i
-   & Applied(m, pkold, pknew) @ a
-   & (All d #c. Compromised(m, d) @ c ==>
-        (Ex pk1 pk2 #r2 #a2. Rotated(m, d, pk1, pk2) @ r2 & Applied(m, pk1, pk2) @ a2 & #a2 < #c))
-   ==> Ex #j. RecipientMade(m, pkR) @ j"
-
-/* Expected: fail (the planted recipient, stated on its own). */
-lemma recipient_integrity_compromise_before_removal:
-  "All m didrm pkold pknew pkR #i #r #a.
-     Rotated(m, didrm, pkold, pknew) @ r
-   & Applied(m, pkold, pknew) @ a
-   & SealedKeyTo(m, pknew, pkR) @ i
-   & (All d #c. Compromised(m, d) @ c ==> d = didrm)
-   ==> Ex #j. RecipientMade(m, pkR) @ j"
-
-/* ======================================================================
- * (iv) Injective agreement (ir.md §7 (iv)).
- * ====================================================================== */
-
-/* Expected: hold. */
-lemma factor_proof_agreement:
-  "All m chid fs #i #e.
-     FactorProofAccepted(chid, 'f1', pk(fkey(fs, 'f1'))) @ i
-   & FactorMade(m, 'f1', fs) @ e
-   ==> (Ex #j. AnsweredFactor(m, 'f1', chid) @ j & #j < #i)
-     & (All #i2. FactorProofAccepted(chid, 'f1', pk(fkey(fs, 'f1'))) @ i2 ==> #i2 = #i)"
-
-/* Expected: hold. */
-lemma session_proof_agreement:
-  "All m chid sk #i #k.
-     SessionOpened(chid, pk(sk)) @ i
-   & KeyMade(m, sk) @ k
-   & not (Ex d #c. Compromised(m, d) @ c)
-   ==> (Ex #j. AnsweredSession(m, chid) @ j & #j < #i)
-     & (All #i2. SessionOpened(chid, pk(sk)) @ i2 ==> #i2 = #i)"
-
-/* Expected: hold. */
-lemma device_session_agreement:
-  "All m chid pka did pkd pkU #i #e.
-     DeviceSessionOpened(m, chid, pka, did, pkd) @ i
-   & Registered(m, did, pkd, pkU) @ e
-   & not (Ex #c. Compromised(m, did) @ c)
-   ==> (Ex #j. DeviceSigned(m, did, chid) @ j & #j < #i)
-     & (All #i2. DeviceSessionOpened(m, chid, pka, did, pkd) @ i2 ==> #i2 = #i)"
 
 end

@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Runs the lemmas of device.spthy one process at a time, each inside its own
-# transient systemd user scope with a memory cap, pinned to four cores, at a
-# nice level, under a wall-clock limit, and with GHC's own heap cap as a
-# second fence. One log per lemma plus a results table. Nothing here needs
-# root or system packages, and the scope is stopped after every lemma so no
-# prover or Maude process outlives its run.
+# memory box (boxed), pinned to four cores, under a wall-clock limit, and with
+# GHC's own heap cap as a second fence. One log per lemma plus a results
+# table. Nothing here needs root or system packages, and the box ends with the
+# lemma, so no prover or Maude process outlives its run.
 #
 #   ./run.sh                      # the base model, every lemma
 #   ./run.sh -D=BOUND_PROOFS      # the bound-proof variant
@@ -20,10 +19,9 @@ MAUDE_DIR=${MAUDE_DIR:-$HOME/.local/opt/maude-3.5.1}
 export PATH="$MAUDE_DIR:$PATH"
 
 CORES=${CORES:-4-7}        # taskset list: at most four cores on a shared node
-NICE=${NICE:-10}
 THREADS=${THREADS:-4}      # GHC RTS threads, matched to CORES
-HEAP=${HEAP:-5G}           # GHC RTS -M: the prover aborts instead of swapping
-MEMMAX=${MEMMAX:-6G}       # cgroup cap for the whole scope (prover + Maude)
+HEAP=${HEAP:-7G}           # GHC RTS -M: the prover aborts instead of swapping
+MEMMAX=${MEMMAX:-8G}       # the box's memory cap (prover + Maude)
 TIMEOUT=${TIMEOUT:-15m}    # per lemma
 ORACLE=${ORACLE:-$PWD/oracle.py}   # goal ordering (README: why); ORACLE= to use Tamarin's default heuristic
 EXTRA=${EXTRA:-}           # further flags, e.g. --bound=20
@@ -41,22 +39,13 @@ mkdir -p "$outdir"
 table=$outdir/summary.tsv
 : > "$table"
 
-# A transient scope when the user systemd instance is reachable; plain
-# otherwise (then only taskset, nice, timeout and the GHC heap cap apply).
-# Probed once, with a unit name of its own.
-if systemd-run --user --scope --quiet -p MemoryMax="$MEMMAX" --unit="tamarin-002-probe-$$" -- true 2>/dev/null; then
-  SCOPED=yes
-else
-  SCOPED=no
-  echo "note: no systemd user scope; running without a cgroup memory cap (GHC heap cap $HEAP still applies)" >&2
-fi
+# Each lemma runs in its own memory box (~/.local/bin/boxed: a transient
+# systemd scope with MemoryMax, TasksMax and a CPU quota, at nice 10), so a
+# runaway prover is killed alone. MEMMAX is the box's memory; the GHC heap cap
+# (HEAP) stays as a second fence.
+BOXED=${BOXED:-$HOME/.local/bin/boxed}
 scoped() {
-  local unit=$1; shift
-  if [ "$SCOPED" = yes ]; then
-    systemd-run --user --scope --quiet -p MemoryMax="$MEMMAX" --unit="$unit" -- "$@"
-  else
-    "$@"
-  fi
+  BOX_MEMORY="$MEMMAX" "$BOXED" "$@"
 }
 
 # Lemma names, in file order. A lemma inside an #ifdef that is not active is
@@ -65,14 +54,12 @@ lemmas=${LEMMAS:-$(grep -oE '^lemma [A-Za-z0-9_]+' device.spthy | awk '{print $2
 
 for lemma in $lemmas; do
   log=$outdir/$lemma.log
-  unit="tamarin-002-$variant-$lemma-$$"
   start=$(date +%s)
   # shellcheck disable=SC2086
-  scoped "$unit" taskset -c "$CORES" nice -n "$NICE" timeout -k 10s "$TIMEOUT" \
+  scoped taskset -c "$CORES" timeout -k 10s "$TIMEOUT" \
     "$TAMARIN" --prove="$lemma" --derivcheck-timeout=0 "${flags[@]}" $EXTRA device.spthy +RTS -N"$THREADS" -M"$HEAP" -RTS \
     > "$log" 2>&1
   rc=$?
-  systemctl --user stop "$unit.scope" 2>/dev/null || true
   secs=$(( $(date +%s) - start ))
   line=$(grep -E "^\s*$lemma \((all-traces|exists-trace)\):" "$log" | head -1)
   if [ $rc -eq 124 ] || [ $rc -eq 137 ]; then
