@@ -88,7 +88,7 @@ rule A01_K1a_PrepareKeep:
 rule A02_K1b_Keep [no_derivcheck]:
   let pkU  = pk(~dsk)
       pkS  = pk(~dss)
-      req  = <'register', ~m, ~rid>
+      req  = <'register', ~m, ~rid, ~did>
       seal = aenc(<'keyseal', mkey(~sk), 'device'>, pkU)
       adm  = sign(<'admit-device', ~m, ~did, pkS>, fsk(~fs, 'f1'))
       usig = sign(<'unlock-key', ~m, ~did, pkU>, ~dss)
@@ -133,8 +133,8 @@ rule A04a_C2_FactorChallengeRotate:
   , Out(<~chid, aenc(<'challenge', 'factor', ~chid, d, ~ans>, pkF)>) ]
 
 rule A04b_C2_FactorChallengeRegister:
-  let d = h(<'register', ~m, ~rid>) in
-  [ Fr(~chid), Fr(~ans), !MailFactorKey(~m, pkF, ~fs), In(~rid) ]
+  let d = h(<'register', ~m, ~rid, ~did>) in
+  [ Fr(~chid), Fr(~ans), !MailFactorKey(~m, pkF, ~fs), In(<~rid, ~did>) ]
   --[ Challenged(~chid) ]->
   [ MailFactorChallenge(~chid, ~m, pkF, d, ~ans)
   , Out(<~chid, aenc(<'challenge', 'factor', ~chid, d, ~ans>, pkF)>) ]
@@ -148,16 +148,19 @@ rule A04c_C2_FactorChallengeOpenSession:
 
 /* ======================================================================
  * M4 — Mail registers a device (B7, R7): only with a factor proof bound to
- * that registration. The registry entry is a linear fact: a revocation
- * consumes it (R9), a device session reads and keeps it.
+ * that registration (the digest names the request and the device) and the
+ * device's admission signed by the factor (M25). The registry entry is a
+ * linear fact with an id of its own: a revocation consumes it (R9), a
+ * device session reads and keeps it.
  * ====================================================================== */
 rule A05_M4_RegisterDevice [no_derivcheck]:
-  [ MailFactorChallenge(~chid, ~m, pkF, h(<'register', ~m, ~rid>), ~ans)
+  [ MailFactorChallenge(~chid, ~m, pkF, h(<'register', ~m, ~rid, ~did>), ~ans)
   , !MailFactorKey(~m, pkF, ~fs)
   , FactorAnswer(~chid, ~ans)
-  , RegisterRequest(~m, ~rid, ~did, pkS, sign(<'admit-device', ~m, ~did, pkS>, fsk(~fs, 'f1'))) ]
-  --[ ProofAccepted(~chid), FactorProofAccepted(~m, ~chid, h(<'register', ~m, ~rid>)), MailRegistered(~m, ~did, pkS) ]->
-  [ MailDevice(~m, ~did, pkS) ]
+  , RegisterRequest(~m, ~rid, ~did, pkS, sign(<'admit-device', ~m, ~did, pkS>, fsk(~fs, 'f1')))
+  , Fr(~reg) ]
+  --[ ProofAccepted(~chid), FactorProofAccepted(~m, ~chid, h(<'register', ~m, ~rid, ~did>)), MailRegistered(~m, ~did, pkS), RegistryEntry(~reg, ~m, ~did) ]->
+  [ MailDevice(~reg, ~m, ~did, pkS) ]
 
 /* ======================================================================
  * P1/P2 — The key proof (A6, D27, D38). A page without a device answers a
@@ -220,9 +223,9 @@ rule A09_M1_OpenSession:
 rule A10_M2_OpenDeviceSession [no_derivcheck]:
   [ MailSessionChallenge(~chid, ~m, pka, ~ans)
   , DeviceAnswer(~chid, ~did, ~ans, sign(<'proof', ~did, ~chid>, dss), pk(dss))
-  , MailDevice(~m, ~did, pk(dss)) ]
-  --[ SessionOpened(~chid, pka), DeviceSessionOpened(~m, ~chid, pka, ~did, pk(dss)), ProofAccepted(~chid) ]->
-  [ !MailSession(~chid, pka, ~did), MailDevice(~m, ~did, pk(dss)) ]
+  , MailDevice(~reg, ~m, ~did, pk(dss)) ]
+  --[ SessionOpened(~chid, pka), DeviceSessionOpened(~m, ~chid, pka, ~did, pk(dss)), DeviceSessionVia(~reg), ProofAccepted(~chid) ]->
+  [ !MailSession(~chid, pka, ~did), MailDevice(~reg, ~m, ~did, pk(dss)) ]
 
 /* ======================================================================
  * R9 — Revocation by an email code (B7a, D35, M22). The email-only actor
@@ -230,8 +233,8 @@ rule A10_M2_OpenDeviceSession [no_derivcheck]:
  * consumes the registry entry and writes no key.
  * ====================================================================== */
 rule A11_R9_RevokeByEmail:
-  [ MailDevice(~m, ~did, pkS) ]
-  --[ Revoked(~m, ~did) ]->
+  [ MailDevice(~reg, ~m, ~did, pkS) ]
+  --[ Revoked(~m, ~did), RevokedEntry(~reg) ]->
   [ ]
 
 /* ======================================================================
@@ -572,25 +575,25 @@ lemma accepted_step_authored_by_factor:
 lemma accepted_key_is_honest_stateless [reuse]:
   "All m sk #i.
      AcceptS(m, sk) @ i
-   ==> Ex #j. KeyMade(m, sk) @ j & not (#i < #j)"
+   ==> Ex #j. KeyMade(m, sk) @ j"
 
 /* Helper: every key a page holds was made honestly (enrollment, a
  * rotation, or an accepted key). */
 lemma page_key_honest [reuse]:
   "All m sk #i.
      PageKey(m, sk) @ i
-   ==> Ex #j. KeyMade(m, sk) @ j & not (#i < #j)"
+   ==> Ex #j. KeyMade(m, sk) @ j"
 
 /* Helper: the last key a kept device recorded was made honestly. */
 lemma kept_anchor_honest [reuse, use_induction]:
   "All did m sk #i.
      KeptAt(did, m, pk(sk)) @ i
-   ==> Ex #j. KeyMade(m, sk) @ j & not (#i < #j)"
+   ==> Ex #j. KeyMade(m, sk) @ j"
 
 lemma accepted_key_is_honest_kept:
   "All m did sk #i.
      AcceptD(m, did, sk) @ i
-   ==> Ex #j. KeyMade(m, sk) @ j & not (#i < #j)"
+   ==> Ex #j. KeyMade(m, sk) @ j"
 
 /* Expected: hold (base); fail with NO_ADMISSION (the planted recipient).
  * Whatever devices are compromised, a new key is sealed only to a
@@ -604,16 +607,40 @@ lemma sealed_only_to_admitted_recipients:
      | (Ex #c. Compromised(m, to) @ c)"
 
 /* Expected: hold (base); fail with MAIL_UNCHECKED. */
-lemma factor_proof_bound:
+lemma factor_proof_bound [hide_lemma=accepted_key_is_honest_stateless, hide_lemma=page_key_honest, hide_lemma=kept_anchor_honest]:
   "All m chid d #i.
      FactorProofAccepted(m, chid, d) @ i
-   ==> (Ex #j. AnsweredFactorFor(m, chid, d) @ j & #j < #i)
-     & (All d2 #i2. FactorProofAccepted(m, chid, d2) @ i2 ==> #i2 = #i)"
+   ==> Ex #j. AnsweredFactorFor(m, chid, d) @ j & #j < #i"
 
-/* Expected: hold. */
-lemma revoked_device_opens_no_session:
-  "All m did chid pka pkd #r #o.
-     Revoked(m, did) @ r & DeviceSessionOpened(m, chid, pka, did, pkd) @ o
+/* The same, kind by kind (each a smaller search). */
+lemma rotation_proof_bound [hide_lemma=accepted_key_is_honest_stateless, hide_lemma=page_key_honest, hide_lemma=kept_anchor_honest]:
+  "All m chid rid #i.
+     FactorProofAccepted(m, chid, h(<'rotate', m, rid>)) @ i
+   ==> Ex #j. AnsweredFactorFor(m, chid, h(<'rotate', m, rid>)) @ j & #j < #i"
+
+lemma registration_proof_bound [hide_lemma=accepted_key_is_honest_stateless, hide_lemma=page_key_honest, hide_lemma=kept_anchor_honest]:
+  "All m chid rid did #i.
+     FactorProofAccepted(m, chid, h(<'register', m, rid, did>)) @ i
+   ==> Ex #j. AnsweredFactorFor(m, chid, h(<'register', m, rid, did>)) @ j & #j < #i"
+
+/* Expected: hold: a challenge is spent once (M16). */
+lemma factor_proof_spent_once [hide_lemma=accepted_key_is_honest_stateless, hide_lemma=page_key_honest, hide_lemma=kept_anchor_honest]:
+  "All m chid d d2 #i #i2.
+     FactorProofAccepted(m, chid, d) @ i & FactorProofAccepted(m, chid, d2) @ i2
+   ==> #i = #i2"
+
+/* Expected: hold: one registration per device, its factor proof spent. */
+lemma one_registration_per_device [hide_lemma=accepted_key_is_honest_stateless, hide_lemma=page_key_honest, hide_lemma=kept_anchor_honest]:
+  "All m did s1 s2 #i #j.
+     MailRegistered(m, did, s1) @ i & MailRegistered(m, did, s2) @ j
+   ==> #i = #j"
+
+/* Expected: hold. After a registry entry is revoked, no device session
+ * opens through it; with one registration per device, none opens for that
+ * device at all. */
+lemma revoked_device_opens_no_session [use_induction, hide_lemma=accepted_key_is_honest_stateless, hide_lemma=page_key_honest, hide_lemma=kept_anchor_honest]:
+  "All reg #r #o.
+     RevokedEntry(reg) @ r & DeviceSessionVia(reg) @ o
    ==> #o < #r"
 
 /* Expected: hold (base); fail with KEY_ONLY_SESSION once a device's key

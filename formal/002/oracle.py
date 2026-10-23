@@ -37,13 +37,22 @@ import sys
 
 lemma = sys.argv[1] if len(sys.argv) > 1 else ""
 existence = lemma.startswith("sanity_") or lemma == "stateless_rollback_possible"
+# Agreement and uniqueness lemmas about Mail's own records: the answer is in
+# the rule instances that consumed a linear fact, so the premises come first
+# and knowledge of fresh names last (as in an existence search).
+structural = lemma in {
+    "factor_proof_spent_once", "one_registration_per_device",
+    "revoked_device_opens_no_session",
+}
 
 private, signatures, premises, composed, other, fresh = [], [], [], [], [], []
+goals = {}
 for line in sys.stdin:
     m = re.match(r"\s*(\d+):\s*(.*)", line)
     if not m:
         continue
     index, goal = m.group(1), m.group(2).strip()
+    goals[index] = goal
     if re.match(r"!KU\(\s*(fsk|fkey|kek)\(", goal) or (re.match(r"!KU\(\s*senc\(", goal) and "kek(" in goal):
         private.append(index)
     elif "sign(" in goal and not existence:
@@ -57,8 +66,23 @@ for line in sys.stdin:
     else:
         other.append(index)
 
-if existence:
-    order = private + premises + composed + other + fresh
+if lemma in {"factor_proof_bound", "session_needs_owner", "rotation_proof_bound", "registration_proof_bound"}:
+    # Who gave the answer Mail compared: the answer's channel first, then the
+    # factor's record, then knowledge of the answer itself (only the factor's
+    # private key opens the challenge that carries it).
+    first = [i for i in premises if goals[i].startswith(("MailFactorChallenge(", "MailSessionChallenge(", "FactorAnswer(", "!MailFactorKey("))]
+    challenges = [i for i in composed if goals[i].startswith("!KU( aenc(<'challenge', 'factor'")]
+    order = first + challenges + private + fresh + [i for i in premises if i not in first] + signatures + [i for i in composed if i not in challenges] + other
+elif structural:
+    # Rule instances first (actions), then Mail's own records (a linear fact
+    # consumed twice, or after its last use, is the contradiction these proofs
+    # need), then the rest.
+    acts = [i for i in premises if "▶" not in goals[i] and not goals[i].startswith("!KU(")]
+    mail = [i for i in premises if "▶" in goals[i] and (goals[i].startswith("Mail") or goals[i].startswith("!Mail"))]
+    rest = [i for i in premises if i not in acts and i not in mail]
+    order = private + acts + mail + rest + signatures + composed + other + fresh
+elif existence:
+    order = private + premises + signatures + composed + other + fresh
 else:
     order = private + signatures + fresh + premises + composed + other
 
