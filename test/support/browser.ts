@@ -378,8 +378,8 @@ export async function upgradeRequest(mb: TestMailbox, factors: TestFactor[], tag
   return { factors: factors.map((f) => factorInput(f, tagKeyId, admissions.get(f.id)!)) };
 }
 
-/** A mailbox enrolled under spec 001: one key, a recovery wrap and a passkey wrap, sessions optional. */
-export async function legacyMailbox(): Promise<{
+/** A mailbox enrolled under spec 001: one key, a recovery wrap and a passkey wrap, sessions optional (`id`: the mailbox id, else a fresh one). */
+export async function legacyMailbox(opts: { id?: string } = {}): Promise<{
   mb: TestMailbox;
   mailboxKey: CryptoKeyPair;
   recoveryId: string;
@@ -387,7 +387,7 @@ export async function legacyMailbox(): Promise<{
   recovery: () => Promise<TestFactor>;
   passkey: () => Promise<TestFactor>;
 }> {
-  const mb = await provisionMailbox();
+  const mb = await provisionMailbox(opts.id === undefined ? {} : { id: opts.id });
   const passkey = passkeyWrap(mb.key!.keyId, { label: "Phone" });
   valueOf(await mail().addWrap(await capFor(mb), passkey));
   const view = valueOf(await mail().mailbox(await capFor(mb)));
@@ -412,8 +412,8 @@ export interface Upgraded {
 }
 
 /** F5: a legacy mailbox, a session opened with a key proof, then the upgrade (every factor, B5) with a key proof bound to it. */
-export async function upgradedMailbox(): Promise<Upgraded> {
-  const legacy = await legacyMailbox();
+export async function upgradedMailbox(opts: { id?: string } = {}): Promise<Upgraded> {
+  const legacy = await legacyMailbox(opts);
   const recovery = await legacy.recovery();
   const passkey = await legacy.passkey();
   const { mb, mailboxKey } = legacy;
