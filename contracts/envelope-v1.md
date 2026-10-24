@@ -30,10 +30,13 @@ or one containing `|`.
 
 ## The mailbox key pair
 
-- X25519. The public key is its raw 32 bytes. The private key is serialized as
-  its raw 32 bytes, clamped (RFC 9180 §7.1.2, RFC 7748), so that wraps are
-  portable between implementations; a reader clamps on import, so an
-  unclamped wrap written elsewhere still opens.
+- X25519. The public key is its raw 32 bytes. Inside a wrap, the private key
+  is the 32-byte scalar of the browser's own PKCS #8 export (D21), and that
+  scalar may or may not be clamped: Chromium sets the three low bits of its
+  first byte, Firefox leaves the bytes as drawn. Every reader clamps before
+  use (RFC 9180 §7.1.2, RFC 7748 §5), so every form opens to the same key,
+  and wraps stay portable between implementations. (Corrected 2026-10-19:
+  this said the scalar was always clamped. No byte changes.)
 - `keyId` = lowercase hex of the first 16 bytes of SHA-256(public key).
 - The **fingerprint** shown to people = `keyId` in groups of four, e.g.
   `3f9a 07c1 …`.
