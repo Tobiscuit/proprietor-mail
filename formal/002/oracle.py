@@ -36,7 +36,11 @@ import re
 import sys
 
 lemma = sys.argv[1] if len(sys.argv) > 1 else ""
-existence = lemma.startswith("sanity_") or lemma == "stateless_rollback_possible"
+# ORACLE_MODE=attack (set by run.sh for a mutant variant): the lemma is
+# expected to fail, so the search is ordered as an existence search for the
+# attack trace rather than as a proof.
+import os
+existence = lemma.startswith("sanity_") or lemma == "stateless_rollback_possible" or os.environ.get("ORACLE_MODE") == "attack"
 # Agreement and uniqueness lemmas about Mail's own records: the answer is in
 # the rule instances that consumed a linear fact, so the premises come first
 # and knowledge of fresh names last (as in an existence search).
@@ -54,6 +58,12 @@ for line in sys.stdin:
     index, goal = m.group(1), m.group(2).strip()
     goals[index] = goal
     if re.match(r"!KU\(\s*(fsk|fkey|kek)\(", goal) or (re.match(r"!KU\(\s*senc\(", goal) and "kek(" in goal):
+        private.append(index)
+    elif existence and re.match(r"!KU\(\s*~(ans|fans|fs|dek|dsk|dss)\b", goal):
+        # In an existence search, the attacker's knowledge of a secret-born
+        # fresh name (a challenge's answer, a factor secret, a message key, a
+        # device key) closes at once, or points at the one compromise that
+        # gives it: taken last, a dead branch is explored to its full depth.
         private.append(index)
     elif "sign(" in goal and not existence:
         signatures.append(index)
@@ -82,7 +92,11 @@ elif structural:
     rest = [i for i in premises if i not in acts and i not in mail]
     order = private + acts + mail + rest + signatures + composed + other + fresh
 elif existence:
-    order = private + premises + signatures + composed + other + fresh
+    # Facts that rules read and put back (Mail's pointer, a kept device's
+    # record) can be traced back through any number of readers; solving them
+    # last lets the rest of the trace pin down which writer it was.
+    loops = [i for i in premises if goals[i].startswith(("MailActive(", "Kept("))]
+    order = private + [i for i in premises if i not in loops] + signatures + composed + other + fresh + loops
 else:
     order = private + signatures + fresh + premises + composed + other
 

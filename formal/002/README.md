@@ -205,3 +205,79 @@ records honest (ir.md P4b) for any proof statement to mean anything.
 An "expected" column that matches the verdict is the point of the method:
 the IR said what should happen before the tool ran. A mismatch is either a
 modelling mistake or a real surprise, and is discussed under the table.
+
+## Round 3 (2026-10-22 to 24): the model of ir.md §10, and what Tamarin said
+
+`device.spthy` is now the round 3 theory (round 2's is commit 0e82dc2).
+Runs: Tamarin 1.12.0 and Maude 3.5.1 as above, one lemma per process, each
+in its own memory box (`boxed`, 8 GB), four cores, a 3-minute cap per lemma
+(4 minutes for some first attempts), the oracle in `oracle.py`. The
+summaries are `results/<variant>/summary.tsv`; the logs are not committed.
+
+### What changed while building it (each recorded in ir.md §10.5)
+
+- **The three functions of a factor's secret are private symbols** (`fkey`,
+  `fsk`, `kek`): with them public the prover spent its time letting the
+  attacker "apply" them to names it never learns.
+- **A request is named by a fresh id**, and a factor challenge carries the
+  digest of `<kind, mailbox, id>` (for a registration also the device id);
+  what the request says is bound by the factor's own signature (the
+  transition, the admission), which Mail checks too. A digest over the keys
+  themselves made the precomputation of sources diverge.
+- **Mail's session check on a rotation is not modelled** (it only removes
+  attacker options); with it the precomputation did not finish.
+- **The accept step re-reads** the anchor's wrap (or the device record) and
+  the transition into the active key, which the walk checked already: same
+  verdicts, no induction over the walk.
+- **The oracle** takes knowledge of private terms and goals that carry a
+  signature first, Mail's records first for its uniqueness lemmas, and, in
+  existence searches, solves secret-born names early and the read-and-put-back
+  facts (`MailActive`, `Kept`) last.
+- **Sanity and attack lemmas pin their trace's shape for every mailbox**
+  (one enrollment, nothing that is not part of the flow): pinned to one
+  mailbox only, the search wandered into others.
+
+### Verified (base model, unbounded)
+
+| Lemma | Steps, time | In plain words |
+|---|---|---|
+| `factor_secret` | 5, 11 s | The factor's secret, its decryption key and its signing key never reach the attacker. |
+| `successor_authored_by_factor` | 8, 11 s | **Mail never moves the mailbox to a new key unless the factor holder signed that exact step**, whatever devices are stolen, and with the email-code path open to the attacker. This is the property the brief asked for: an email code (or anything short of a factor) cannot author a successor key. |
+| `accepted_step_authored_by_factor` | 10, 11 s | Every step a browser takes along the key chain was signed by the factor holder. |
+| `accepted_key_is_honest_stateless`, `accepted_key_is_honest_kept` (with the helpers `page_key_honest`, `kept_anchor_honest` by induction) | 17, 6, 554, 5 steps; 11–27 s | **A browser never accepts a key the attacker made, with no restriction on compromise**: round 2's fork (a removed device's old key, a hostile server, a forged successor) is closed. Round 2 needed "no compromise" here or failed. |
+| `sealed_only_to_admitted_recipients` | 78, 19 s | A rotating browser seals the new key only to a recipient an honest party made, or to a device that is itself stolen (and is not the one being removed). **Round 2's planted recipient is closed.** |
+| `factor_proof_spent_once` | 38, 11 s | A factor challenge is accepted at most once. |
+| `session_needs_owner` | 77, 21 s | A session without a device opens only with the owner's factor answer bound to that very session challenge: **a copied mailbox key alone opens nothing** (D38). |
+| the five sanity lemmas | 10–15 steps, 12–25 s | The honest flows run: keep a device and open its session; open a session without a device; rotate; a kept device rotates; a stateless browser unlocks after a rotation. Without these the lemmas above could hold vacuously. |
+
+### The mutants: each mechanism removed, its attack found
+
+| Variant | Attack lemma | Result | In plain words |
+|---|---|---|---|
+| `NO_TRANSITION_SIG` | `attack_fork` | trace, 16 steps, 19 s | Without the factor's signature on each step, a stolen device's key and a hostile server make a stateless browser accept the attacker's key (finding 1). |
+| `NO_ADMISSION` | `attack_planted_recipient` | trace, 16 steps, 23 s | With binding tags as the only check, a stolen device's key plants a device record the owner's rotation seals the new key to (finding 2). |
+| `MAIL_UNCHECKED` | `attack_relay_rotation` | trace, 9 steps, 104 s | If Mail took an unbound factor answer and no transition, the relay could move the mailbox to its own key (finding 3). |
+| `EMAIL_ROTATES` | `attack_email_rotation` | trace, 5 steps, 18 s (with `--bound=6`; unbounded, the depth-first search went down the factor branch first) | If an email code could confirm a rotation, whoever reads the owner's email makes the key future mail is sealed to. |
+| `KEY_ONLY_SESSION` | `attack_copied_key_session` | not terminated (3 min) | Not found by the prover. The same mechanism removed in code (the Worker letting a key proof alone open a session) fails the Worker's and the end-to-end tests. |
+
+The all-traces lemmas under the mutants (e.g. `accepted_key_is_honest_stateless`
+under `NO_TRANSITION_SIG`) did not terminate as falsifications within the
+cap; the pinned attack lemmas are what found the traces.
+
+### Not terminated (base model, 3-minute cap)
+
+| Lemma | What it would have said | What we have instead |
+|---|---|---|
+| `factor_proof_bound` and its per-kind forms `rotation_proof_bound`, `registration_proof_bound` | Every factor proof Mail accepts was answered by the owner for that very request. | For rotations, `successor_authored_by_factor` (the factor's signature on the exact step); for sessions, `session_needs_owner`; for every kind, the code's tests (a proof answered for one request is refused on another: Worker and end-to-end). |
+| `one_registration_per_device`, `revoked_device_opens_no_session` | A device is registered once, and after an email-code revocation it never opens a session. | The Worker's revocation tests and the end-to-end F13 test (a revoked device's token, signature and resume are all refused). |
+| `mailbox_key_secret`, `dek_secret_honest_key`, `post_removal_secrecy_compromise_before_removal`, `kept_device_no_rollback` | Key and message-key secrecy, and secrecy of mail after a removal with a stolen device. | Round 2's induction wall over the unbounded successor chain is unchanged in kind; these need hand-written helper lemmas. |
+| `post_removal_secrecy_applied_rotation_no_compromise` | With no device compromised, mail sealed after an applied rotation stays secret (round 2's relay finding). | It verified (8 steps) while the two secrecy lemmas above were available as `[reuse]`, so that verdict is **conditional** on them; with them hidden it did not terminate in 3 minutes. The relay itself is ruled out by `successor_authored_by_factor`. |
+
+### Not machine-checked at all
+
+The account check (D37) and the lock settings (D34, K6) are browser-local
+reads of the right record; there is one factor in the model (ir.md P3); the
+compare-and-swap of `lastKeyId` (K11) is modelled as such but the race it
+prevents is a code property (tested in real browsers); Ed25519, HPKE, RFC
+8785 and AES-GCM are symbolic; removing a factor is not modelled (spec §4
+states its limit).

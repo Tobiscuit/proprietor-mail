@@ -34,10 +34,15 @@ for arg in "$@"; do
   case "$arg" in -D=*) variant=${arg#-D=} ;; esac
 done
 
+# A mutant variant removes a mechanism, so its lemmas are expected to fail:
+# the oracle then orders goals as for finding the attack (oracle.py).
+if [ "$variant" != base ] && [ -z "${ORACLE_MODE+x}" ]; then export ORACLE_MODE=attack; fi
+
 outdir=results/$variant
 mkdir -p "$outdir"
 table=$outdir/summary.tsv
-: > "$table"
+# APPEND=1 adds to the table instead of starting it again (a sweep run in parts).
+if [ -z "${APPEND:-}" ]; then : > "$table"; fi
 
 # Each lemma runs in its own memory box (~/.local/bin/boxed: a transient
 # systemd scope with MemoryMax, TasksMax and a CPU quota, at nice 10), so a

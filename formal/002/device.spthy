@@ -82,7 +82,7 @@ rule A00_E1_Enroll:
  * ====================================================================== */
 rule A01_K1a_PrepareKeep:
   [ !PageS(~m, mkey(~sk)), Fr(~did), Fr(~dsk), Fr(~dss), Fr(~rid) ]
-  -->
+  --[ KeepPrepared(~m) ]->
   [ Keeping(~did, ~m, mkey(~sk), ~dsk, ~dss, ~rid), Out(<~did, pk(~dss), ~rid>) ]
 
 rule A02_K1b_Keep [no_derivcheck]:
@@ -113,7 +113,7 @@ rule A02_K1b_Keep [no_derivcheck]:
  * ====================================================================== */
 rule A03_C1_SessionChallenge:
   [ Fr(~chid), Fr(~ans), MailActive(~m, pka) ]
-  --[ Challenged(~chid) ]->
+  --[ Challenged(~chid), SessionChallenged(~m) ]->
   [ MailActive(~m, pka)
   , MailSessionChallenge(~chid, ~m, pka, ~ans)
   , Out(<~chid, aenc(<'challenge', 'session', ~chid, ~ans>, pka)>) ]
@@ -128,21 +128,21 @@ rule A03_C1_SessionChallenge:
 rule A04a_C2_FactorChallengeRotate:
   let d = h(<'rotate', ~m, ~rid>) in
   [ Fr(~chid), Fr(~ans), !MailFactorKey(~m, pkF, ~fs), In(~rid) ]
-  --[ Challenged(~chid) ]->
+  --[ Challenged(~chid), FactorChallenged(~m) ]->
   [ MailFactorChallenge(~chid, ~m, pkF, d, ~ans)
   , Out(<~chid, aenc(<'challenge', 'factor', ~chid, d, ~ans>, pkF)>) ]
 
 rule A04b_C2_FactorChallengeRegister:
   let d = h(<'register', ~m, ~rid, ~did>) in
   [ Fr(~chid), Fr(~ans), !MailFactorKey(~m, pkF, ~fs), In(<~rid, ~did>) ]
-  --[ Challenged(~chid) ]->
+  --[ Challenged(~chid), FactorChallenged(~m) ]->
   [ MailFactorChallenge(~chid, ~m, pkF, d, ~ans)
   , Out(<~chid, aenc(<'challenge', 'factor', ~chid, d, ~ans>, pkF)>) ]
 
 rule A04c_C2_FactorChallengeOpenSession:
   let d = h(<'open-session', ~sch>) in
   [ Fr(~chid), Fr(~ans), !MailFactorKey(~m, pkF, ~fs), In(~sch) ]
-  --[ Challenged(~chid) ]->
+  --[ Challenged(~chid), FactorChallenged(~m) ]->
   [ MailFactorChallenge(~chid, ~m, pkF, d, ~ans)
   , Out(<~chid, aenc(<'challenge', 'factor', ~chid, d, ~ans>, pkF)>) ]
 
@@ -678,7 +678,7 @@ lemma post_removal_secrecy_compromise_before_removal:
    ==> not (Ex #k. K(dek) @ k)"
 
 /* Expected: hold (round 2 expected fail without bound proofs). */
-lemma post_removal_secrecy_applied_rotation_no_compromise:
+lemma post_removal_secrecy_applied_rotation_no_compromise [hide_lemma=mailbox_key_secret, hide_lemma=dek_secret_honest_key]:
   "All m pkold pknew dek #a #s.
      Applied(m, pkold, pknew) @ a
    & SealedHonest(m, pknew, dek) @ s
@@ -696,26 +696,36 @@ lemma kept_device_no_rollback:
 /* ======================================================================
  * Sanity: the honest flows run. Each pins the shape of its trace.
  * ====================================================================== */
-lemma sanity_device_registered_and_session:
+lemma sanity_device_registered_and_session [hide_lemma=factor_secret, hide_lemma=accepted_key_is_honest_stateless, hide_lemma=page_key_honest, hide_lemma=kept_anchor_honest, hide_lemma=mailbox_key_secret, hide_lemma=dek_secret_honest_key]:
   exists-trace
   "Ex m chid pka did pkd #i.
      DeviceSessionOpened(m, chid, pka, did, pkd) @ i
    & (All x1 y1 x2 y2 #e1 #e2. Enrolled(x1, y1) @ e1 & Enrolled(x2, y2) @ e2 ==> #e1 = #e2)
    & (All da sa ua db sb ub #k1 #k2. Registered(m, da, sa, ua) @ k1 & Registered(m, db, sb, ub) @ k2 ==> #k1 = #k2)
-   & not (Ex a b c #r. Rotated(m, a, b, c) @ r)
-   & not (Ex d #c. Compromised(m, d) @ c)
-   & not (Ex #z. Injected() @ z)"
+   & not (Ex mm a b c #r. Rotated(mm, a, b, c) @ r)
+   & not (Ex mm d #c. Compromised(mm, d) @ c)
+   & not (Ex #z. Injected() @ z)
+   & not (Ex mm x #u. AcceptS(mm, x) @ u)
+   & not (Ex mm d x #u. AcceptD(mm, d, x) @ u)
+   & not (Ex mm x y #w. Walked(mm, x, y) @ w)
+   & not (Ex mm c #o. OwnerOpenedSession(mm, c) @ o)
+   & not (Ex mm d #r. Revoked(mm, d) @ r)
+   & (All x y #i1 #i2. SessionChallenged(x) @ i1 & SessionChallenged(y) @ i2 ==> #i1 = #i2)
+   & (All x y #i1 #i2. FactorChallenged(x) @ i1 & FactorChallenged(y) @ i2 ==> #i1 = #i2)
+   & not (Ex mm dd #v. Resumed(mm, dd) @ v)
+   & not (Ex mm ff #v. UsedFactor(mm, ff) @ v)"
 
-lemma sanity_deviceless_session:
+lemma sanity_deviceless_session [hide_lemma=factor_secret, hide_lemma=accepted_key_is_honest_stateless, hide_lemma=page_key_honest, hide_lemma=kept_anchor_honest, hide_lemma=mailbox_key_secret, hide_lemma=dek_secret_honest_key]:
   exists-trace
   "Ex m chid pka #i.
      DevicelessSessionOpened(m, chid, pka) @ i
    & (All x1 y1 x2 y2 #e1 #e2. Enrolled(x1, y1) @ e1 & Enrolled(x2, y2) @ e2 ==> #e1 = #e2)
    & not (Ex da sa ua #k. Registered(m, da, sa, ua) @ k)
-   & not (Ex d #c. Compromised(m, d) @ c)
+   & not (Ex mm a b c #r. Rotated(mm, a, b, c) @ r)
+   & not (Ex mm d #c. Compromised(mm, d) @ c)
    & not (Ex #z. Injected() @ z)"
 
-lemma sanity_rotation_applied:
+lemma sanity_rotation_applied [hide_lemma=factor_secret, hide_lemma=accepted_key_is_honest_stateless, hide_lemma=page_key_honest, hide_lemma=kept_anchor_honest, hide_lemma=mailbox_key_secret, hide_lemma=dek_secret_honest_key]:
   exists-trace
   "Ex m d pkold pknew #r #a.
      Rotated(m, d, pkold, pknew) @ r
@@ -723,20 +733,31 @@ lemma sanity_rotation_applied:
    & (All x1 y1 x2 y2 #e1 #e2. Enrolled(x1, y1) @ e1 & Enrolled(x2, y2) @ e2 ==> #e1 = #e2)
    & not (Ex da sa ua #k. Registered(m, da, sa, ua) @ k)
    & (All a1 b1 c1 a2 b2 c2 #r1 #r2. Rotated(m, a1, b1, c1) @ r1 & Rotated(m, a2, b2, c2) @ r2 ==> #r1 = #r2)
-   & not (Ex dd #c. Compromised(m, dd) @ c)
-   & not (Ex #z. Injected() @ z)"
+   & not (Ex mm dd #c. Compromised(mm, dd) @ c)
+   & not (Ex #z. Injected() @ z)
+   & not (Ex mm x #u. AcceptS(mm, x) @ u)
+   & not (Ex mm dd x #u. AcceptD(mm, dd, x) @ u)
+   & not (Ex mm x y #w. Walked(mm, x, y) @ w)
+   & not (Ex mm c #o. AnsweredSession(mm, c) @ o)
+   & not (Ex mm dd #v. Revoked(mm, dd) @ v)"
 
-lemma sanity_kept_device_rotates:
+lemma sanity_kept_device_rotates [hide_lemma=factor_secret, hide_lemma=accepted_key_is_honest_stateless, hide_lemma=page_key_honest, hide_lemma=kept_anchor_honest, hide_lemma=mailbox_key_secret, hide_lemma=dek_secret_honest_key]:
   exists-trace
   "Ex m did d pkold pknew #r.
      Rotated(m, d, pkold, pknew) @ r
    & KeptAt(did, m, pknew) @ r
    & (All x1 y1 x2 y2 #e1 #e2. Enrolled(x1, y1) @ e1 & Enrolled(x2, y2) @ e2 ==> #e1 = #e2)
    & (All a1 b1 c1 a2 b2 c2 #r1 #r2. Rotated(m, a1, b1, c1) @ r1 & Rotated(m, a2, b2, c2) @ r2 ==> #r1 = #r2)
-   & not (Ex dd #c. Compromised(m, dd) @ c)
-   & not (Ex #z. Injected() @ z)"
+   & not (Ex mm dd #c. Compromised(mm, dd) @ c)
+   & not (Ex #z. Injected() @ z)
+   & not (Ex mm x #u. AcceptS(mm, x) @ u)
+   & (All dd x #u. AcceptD(m, dd, x) @ u ==> #u = #r)
+   & not (Ex mm x y #w. Walked(mm, x, y) @ w)
+   & not (Ex mm c #o. AnsweredSession(mm, c) @ o)
+   & not (Ex mm dd s2 #g. MailRegistered(mm, dd, s2) @ g)
+   & (All d1 s1 u1 d2 s2 u2 #k1 #k2. Registered(m, d1, s1, u1) @ k1 & Registered(m, d2, s2, u2) @ k2 ==> #k1 = #k2)"
 
-lemma sanity_stateless_unlocks_after_rotation:
+lemma sanity_stateless_unlocks_after_rotation [hide_lemma=factor_secret, hide_lemma=accepted_key_is_honest_stateless, hide_lemma=page_key_honest, hide_lemma=kept_anchor_honest, hide_lemma=mailbox_key_secret, hide_lemma=dek_secret_honest_key]:
   exists-trace
   "Ex m d pkold sknew #r #u.
      Rotated(m, d, pkold, pk(sknew)) @ r
@@ -747,6 +768,127 @@ lemma sanity_stateless_unlocks_after_rotation:
    & (All x1 y1 x2 y2 #w1 #w2. Walked(m, x1, y1) @ w1 & Walked(m, x2, y2) @ w2 ==> #w1 = #w2)
    & not (Ex da sa ua #k. Registered(m, da, sa, ua) @ k)
    & not (Ex x y #a. Applied(m, x, y) @ a)
-   & not (Ex dd #c. Compromised(m, dd) @ c)"
+   & not (Ex mm dd #c. Compromised(mm, dd) @ c)
+   & not (Ex mm c #o. AnsweredSession(mm, c) @ o)
+   & not (Ex mm dd #v. Revoked(mm, dd) @ v)
+   & not (Ex #z. Injected() @ z)
+   & not (Ex dd x #a2. AcceptD(m, dd, x) @ a2)"
+
+/* ======================================================================
+ * The attacks each mutant lets back in (ir.md §10.2). Each is an existence
+ * search for the round 2 finding's trace, pinned to its shape; in the base
+ * model the matching all-traces lemma above verifies instead.
+ * ====================================================================== */
+#ifdef NO_TRANSITION_SIG
+/* Finding 1, the fork: with a kept device's key in hand, a stateless page
+ * that unlocks with the factor accepts a key nobody honest made. */
+lemma attack_fork [hide_lemma=factor_secret, hide_lemma=accepted_key_is_honest_stateless, hide_lemma=page_key_honest, hide_lemma=kept_anchor_honest, hide_lemma=mailbox_key_secret, hide_lemma=dek_secret_honest_key]:
+  exists-trace
+  "Ex m sk #i.
+     AcceptS(m, sk) @ i
+   & not (Ex #j. KeyMade(m, sk) @ j)
+   & (All x1 y1 x2 y2 #e1 #e2. Enrolled(x1, y1) @ e1 & Enrolled(x2, y2) @ e2 ==> #e1 = #e2)
+   & (All a1 b1 c1 d1 a2 b2 c2 d2 #k1 #k2. Registered(a1, b1, c1, d1) @ k1 & Registered(a2, b2, c2, d2) @ k2 ==> #k1 = #k2)
+   & not (Ex mm a b c #r. Rotated(mm, a, b, c) @ r)
+   & not (Ex mm c #o. AnsweredSession(mm, c) @ o)
+   & not (Ex mm dd x #u. AcceptD(mm, dd, x) @ u)
+   & not (Ex #z. Injected() @ z)
+   & not (Ex mm dd x #u. AcceptD(mm, dd, x) @ u)
+   & not (Ex mm dd #v. Resumed(mm, dd) @ v)
+   & not (Ex mm dd #v. Revoked(mm, dd) @ v)
+   & (All a1 b1 a2 b2 #t1 #t2. Compromised(a1, b1) @ t1 & Compromised(a2, b2) @ t2 ==> #t1 = #t2)
+   & (All a1 b1 a2 b2 #t1 #t2. UsedFactor(a1, b1) @ t1 & UsedFactor(a2, b2) @ t2 ==> #t1 = #t2)
+   & (All a1 b1 c1 a2 b2 c2 #t1 #t2. Walked(a1, b1, c1) @ t1 & Walked(a2, b2, c2) @ t2 ==> #t1 = #t2)
+   & (All a1 a2 #t1 #t2. KeepPrepared(a1) @ t1 & KeepPrepared(a2) @ t2 ==> #t1 = #t2)"
+#endif
+
+#ifdef NO_ADMISSION
+/* Finding 2, the planted recipient: with a kept device's key in hand, the
+ * attacker lists a device record with a genuine tag; the owner's rotation
+ * seals the new key to an unlock key nobody honest made. */
+lemma attack_planted_recipient [hide_lemma=factor_secret, hide_lemma=accepted_key_is_honest_stateless, hide_lemma=page_key_honest, hide_lemma=kept_anchor_honest, hide_lemma=mailbox_key_secret, hide_lemma=dek_secret_honest_key]:
+  exists-trace
+  "Ex m pknew pkR to #i.
+     SealedKeyTo(m, pknew, pkR, to) @ i
+   & not (Ex #j. RecipientMade(m, pkR) @ j)
+   & not (Ex #c. Compromised(m, to) @ c)
+   & (All x1 y1 x2 y2 #e1 #e2. Enrolled(x1, y1) @ e1 & Enrolled(x2, y2) @ e2 ==> #e1 = #e2)
+   & (All a1 b1 c1 d1 a2 b2 c2 d2 #k1 #k2. Registered(a1, b1, c1, d1) @ k1 & Registered(a2, b2, c2, d2) @ k2 ==> #k1 = #k2)
+   & (All a1 b1 c1 d1 a2 b2 c2 d2 #r1 #r2. Rotated(a1, b1, c1, d1) @ r1 & Rotated(a2, b2, c2, d2) @ r2 ==> #r1 = #r2)
+   & not (Ex mm c #o. AnsweredSession(mm, c) @ o)
+   & not (Ex mm x #u. AcceptS(mm, x) @ u)
+   & not (Ex mm dd x #u. AcceptD(mm, dd, x) @ u)
+   & not (Ex mm x y #w. Walked(mm, x, y) @ w)
+   & not (Ex mm x #u. AcceptS(mm, x) @ u)
+   & not (Ex mm dd x #u. AcceptD(mm, dd, x) @ u)
+   & not (Ex mm ff #v. UsedFactor(mm, ff) @ v)
+   & not (Ex mm dd #v. Resumed(mm, dd) @ v)
+   & not (Ex mm dd #v. Revoked(mm, dd) @ v)
+   & (All a1 b1 a2 b2 #t1 #t2. Compromised(a1, b1) @ t1 & Compromised(a2, b2) @ t2 ==> #t1 = #t2)
+   & (All a1 a2 #t1 #t2. KeepPrepared(a1) @ t1 & KeepPrepared(a2) @ t2 ==> #t1 = #t2)
+   & (All #z1 #z2. Injected() @ z1 & Injected() @ z2 ==> #z1 = #z2)"
+#endif
+
+#ifdef MAIL_UNCHECKED
+/* Finding 3, the relay: Mail applies a rotation to a key no factor holder
+ * authorized, with the owner's unbound answer. */
+lemma attack_relay_rotation [hide_lemma=factor_secret, hide_lemma=accepted_key_is_honest_stateless, hide_lemma=page_key_honest, hide_lemma=kept_anchor_honest, hide_lemma=mailbox_key_secret, hide_lemma=dek_secret_honest_key]:
+  exists-trace
+  "Ex m a b #i.
+     Applied(m, a, b) @ i
+   & not (Ex #j. FactorAuthorized(m, a, b) @ j)
+   & (All x1 y1 x2 y2 #e1 #e2. Enrolled(x1, y1) @ e1 & Enrolled(x2, y2) @ e2 ==> #e1 = #e2)
+   & not (Ex mm d s u #k. Registered(mm, d, s, u) @ k)
+   & not (Ex mm d #c. Compromised(mm, d) @ c)
+   & not (Ex mm c #o. AnsweredSession(mm, c) @ o)
+   & not (Ex mm a b c #r. Rotated(mm, a, b, c) @ r)
+   & (All x y #i1 #i2. FactorChallenged(x) @ i1 & FactorChallenged(y) @ i2 ==> #i1 = #i2)
+   & not (Ex mm x y #w. Walked(mm, x, y) @ w)
+   & not (Ex mm x #u. AcceptS(mm, x) @ u)
+   & not (Ex mm dd x #u. AcceptD(mm, dd, x) @ u)
+   & not (Ex mm ff #v. UsedFactor(mm, ff) @ v)
+   & not (Ex mm dd #v. Resumed(mm, dd) @ v)
+   & not (Ex mm dd #v. Revoked(mm, dd) @ v)
+   & not (Ex mm #k. KeepPrepared(mm) @ k)"
+#endif
+
+#ifdef EMAIL_ROTATES
+/* D35 removed: an email code makes the key future mail is sealed to. */
+lemma attack_email_rotation [hide_lemma=factor_secret, hide_lemma=accepted_key_is_honest_stateless, hide_lemma=page_key_honest, hide_lemma=kept_anchor_honest, hide_lemma=mailbox_key_secret, hide_lemma=dek_secret_honest_key]:
+  exists-trace
+  "Ex m a b #i.
+     Applied(m, a, b) @ i
+   & not (Ex #j. FactorAuthorized(m, a, b) @ j)
+   & (All x1 y1 x2 y2 #e1 #e2. Enrolled(x1, y1) @ e1 & Enrolled(x2, y2) @ e2 ==> #e1 = #e2)
+   & not (Ex mm d s u #k. Registered(mm, d, s, u) @ k)"
+#endif
+
+#ifdef KEY_ONLY_SESSION
+/* D38 removed: a copied key opens a session nobody honest answered. */
+lemma attack_copied_key_session [hide_lemma=factor_secret, hide_lemma=accepted_key_is_honest_stateless, hide_lemma=page_key_honest, hide_lemma=kept_anchor_honest, hide_lemma=mailbox_key_secret, hide_lemma=dek_secret_honest_key]:
+  exists-trace
+  "Ex m chid pka #o.
+     DevicelessSessionOpened(m, chid, pka) @ o
+   & not (Ex #j. AnsweredSession(m, chid) @ j)
+   & (All x1 y1 x2 y2 #e1 #e2. Enrolled(x1, y1) @ e1 & Enrolled(x2, y2) @ e2 ==> #e1 = #e2)
+   & (All a1 b1 c1 d1 a2 b2 c2 d2 #k1 #k2. Registered(a1, b1, c1, d1) @ k1 & Registered(a2, b2, c2, d2) @ k2 ==> #k1 = #k2)
+   & not (Ex mm a b c #r. Rotated(mm, a, b, c) @ r)
+   & (All x y #i1 #i2. SessionChallenged(x) @ i1 & SessionChallenged(y) @ i2 ==> #i1 = #i2)
+   & not (Ex mm x #u. AcceptS(mm, x) @ u)
+   & not (Ex mm dd x #u. AcceptD(mm, dd, x) @ u)
+   & not (Ex mm x y #w. Walked(mm, x, y) @ w)
+   & not (Ex mm x #u. AcceptS(mm, x) @ u)
+   & not (Ex mm dd x #u. AcceptD(mm, dd, x) @ u)
+   & not (Ex mm ff #v. UsedFactor(mm, ff) @ v)
+   & not (Ex mm dd #v. Resumed(mm, dd) @ v)
+   & not (Ex mm dd #v. Revoked(mm, dd) @ v)
+   & (All a1 b1 a2 b2 #t1 #t2. Compromised(a1, b1) @ t1 & Compromised(a2, b2) @ t2 ==> #t1 = #t2)
+   & (All a1 a2 #t1 #t2. KeepPrepared(a1) @ t1 & KeepPrepared(a2) @ t2 ==> #t1 = #t2)
+   & (All x y #i1 #i2. SessionChallenged(x) @ i1 & SessionChallenged(y) @ i2 ==> #i1 = #i2)
+   & not (Ex mm a b #p. Applied(mm, a, b) @ p)
+   & (All x y #i1 #i2. FactorChallenged(x) @ i1 & FactorChallenged(y) @ i2 ==> #i1 = #i2)
+   & not (Ex mm p d #s. SealedAny(mm, p, d) @ s)
+   & not (Ex mm a b #q. Prepared(mm, a, b) @ q)"
+#endif
 
 end

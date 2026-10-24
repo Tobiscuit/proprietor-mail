@@ -349,3 +349,20 @@ the right record and is outside a one-account model; the compare-and-swap of
    whole network attacker" the question you want answered?
 4. 10.3: does each "hold" state what the spec promises in §4's rows
    (round 3)?
+
+### 10.5 Choices made while building the round 3 model (MEDIUM: confirm they lose nothing you care about)
+
+- The factor's three derived functions are private symbols (only a holder of
+  the secret computes them; `factor_secret` proves the secret never leaks).
+- A request is named by a fresh id its page draws; the factor challenge's
+  digest covers `<kind, mailbox, id>` (and the device id for a
+  registration); the request's content is bound by the factor's signature
+  (R2, R4) that Mail checks (R6, M25). The system's digest covers the whole
+  request; the model's split gives the same binding, by two mechanisms.
+- Mail's session check on `removeDevices` is not modelled (fewer checks,
+  more attacker options: a "hold" carries over).
+- The accept step re-reads the anchor's wrap (stateless) or the record (kept),
+  and the transition into the active key: both are what the walk checked.
+- Mail's registry entries carry their own fresh id, so the revocation lemma
+  can speak of one entry.
+- Sanity and attack lemmas pin their trace's shape for every mailbox.
