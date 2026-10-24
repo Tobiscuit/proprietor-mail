@@ -1,0 +1,25 @@
+factor_secret	verified (5 steps)	11s
+successor_authored_by_factor	verified (8 steps)	11s
+accepted_step_authored_by_factor	verified (10 steps)	11s
+accepted_key_is_honest_stateless	verified (17 steps)	11s
+page_key_honest	verified (6 steps)	11s
+kept_anchor_honest	verified (554 steps)	27s
+accepted_key_is_honest_kept	verified (5 steps)	11s
+sealed_only_to_admitted_recipients	verified (78 steps)	19s
+factor_proof_spent_once	verified (38 steps)	11s
+session_needs_owner	verified (77 steps)	21s
+sanity_device_registered_and_session	verified (10 steps)	20s
+sanity_rotation_applied	verified (11 steps)	12s
+sanity_kept_device_rotates	verified (13 steps)	15s
+sanity_stateless_unlocks_after_rotation	verified (15 steps)	12s
+sanity_deviceless_session	verified (12 steps)	25s
+factor_proof_bound	not terminated (timeout 3m)	180s
+rotation_proof_bound	not terminated (timeout 3m)	181s
+registration_proof_bound	not terminated (timeout 3m)	180s
+one_registration_per_device	not terminated (timeout 3m)	181s
+revoked_device_opens_no_session	not terminated (timeout 3m)	181s
+mailbox_key_secret	not terminated (timeout 3m)	181s
+dek_secret_honest_key	not terminated (timeout 3m)	180s
+post_removal_secrecy_compromise_before_removal	not terminated (timeout 3m)	181s
+kept_device_no_rollback	not terminated (timeout 3m)	181s
+post_removal_secrecy_applied_rotation_no_compromise	not terminated (timeout 3m)	181s
