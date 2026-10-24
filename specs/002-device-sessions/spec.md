@@ -365,6 +365,13 @@ client's:
 | `@hpke/common` 1.10.1 imports a derived P-256 scalar as PKCS #8 without its public key, which works in Chromium, Firefox, Node and workerd but **not in WebKit**: WebKit's `CryptoKeyECCocoa.cpp` requires the `publicKey` field (bug 233705), so CI's macOS WebKit job refused it (`DataError`). Hence D44 | its installed source, `kems/dhkemPrimitives/ec.js`; WebKit's source and bug tracker, read by the R3-1a builder; CI runs 39731532745 and 39732195642 |
 | Ed25519 in Web Crypto: Chrome 137, Firefox 129, Safari 17 (Safari's signatures are randomized); Workers support Ed25519 sign, verify and import (Secure Curves) | MDN browser-compat-data (`SubtleCrypto` sign/verify/importKey `ed25519`); Cloudflare's Web Crypto docs, through context7 |
 
+**Checked while building round 3 (2026-10-22 and 23):**
+
+| Fact | Source |
+|---|---|
+| Factor signing keys as Ed25519 (D44) import from their 32 bytes and sign and verify in Chromium 153, Firefox 155, Playwright's macOS WebKit and workerd 2026-08-15; the statements' vectors verify in all four | mail-crypto's browser job in CI (run 39882484015) and its workerd test |
+| A Durable Object's SQLite statement `UPDATE … RETURNING` inside the object's synchronous code spends a challenge before any await lets another call in; the Worker's concurrent tests hold its awaits open and see exactly one spend | Cloudflare's Durable Objects documentation (input gates, `transactionSync`), through context7; the Worker's take-first tests |
+
 **Reported, not verified** (both on the operator's own devices first; until
 then a passkey that does not open its wrap fails as "that didn't work", and
 the recovery key remains):

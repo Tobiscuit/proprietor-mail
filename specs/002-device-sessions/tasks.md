@@ -315,14 +315,14 @@ merge). R3-4 merges both into the integration branch (#16).
 **Owns:** `packages/mail-crypto/**` on `feat/002-device-client`,
 `contracts/device-v1.vectors.json`.
 
-- [ ] RFC 8785 for the values descriptors and requests hold, the action
+- [x] RFC 8785 for the values descriptors and requests hold, the action
   descriptor (build, strict read, digest) and the request digest (A10);
   tests run every vector of `action-descriptor-v1.vectors.json`
-- [ ] A2b factor signing keys; A11 statements (sign and verify each); the
+- [x] A2b factor signing keys; A11 statements (sign and verify each); the
   factor graph helper (trusted component, admitted devices and factors,
   trusted transitions) as pure functions over a view
-- [ ] A6: `factor` and `key` challenges open only with their action digest
-- [ ] device-v1 vectors: A9's round 3 additions
+- [x] A6: `factor` and `key` challenges open only with their action digest
+- [x] device-v1 vectors: A9's round 3 additions
 
 **Acceptance:** every descriptor vector (valid parses to its object and
 digest; every invalid one refused); a statement fails after any one field
@@ -336,21 +336,21 @@ outside the component is refused; the runtime scan passes.
 **Owns:** `packages/mail-client/**`, the API part of
 `contracts/mail-client-v1.md`'s round 3 amendment.
 
-- [ ] K10: the store keyed by mailbox and account (version 2), `accountId`
+- [x] K10: the store keyed by mailbox and account (version 2), `accountId`
   everywhere a record is read or written; `Forbidden` wipes nothing
-- [ ] K11: `lastKeyId` compare-and-swap in one transaction; resume again on a
+- [x] K11: `lastKeyId` compare-and-swap in one transaction; resume again on a
   miss
-- [ ] K2″ and K3′ wherever K2′ and K3 ran; `trustRoot` in the record
-- [ ] K4/K12: `FreshFactor.answer` takes the request it confirms; the
+- [x] K2″ and K3′ wherever K2′ and K3 ran; `trustRoot` in the record
+- [x] K4/K12: `FreshFactor.answer` takes the request it confirms; the
   descriptor built and compared; signed transitions, admissions and unlock
   keys in every flow (keep, rekey, enrollment, upgrade, add a passkey,
   replace the recovery key)
-- [ ] D38: a deviceless session proof carries a factor proof
-- [ ] D40, K13: `removeDevices` (several; none while a rotation is due;
+- [x] D38: a deviceless session proof carries a factor proof
+- [x] D40, K13: `removeDevices` (several; none while a rotation is due;
   every flagged device included); `revokeRequest`; `rotationDue`
-- [ ] D34: lock checks unchanged in meaning ("signed-out" on a changed id and
+- [x] D34: lock checks unchanged in meaning ("signed-out" on a changed id and
   on null after non-null), with tests for both
-- [ ] PROTECTION's text follows spec §5 as amended ("passkey")
+- [x] PROTECTION's text follows spec §5 as amended ("passkey")
 
 **Acceptance:** another account's record is never read, opened or deleted
 (resume, unlock, `DeviceRevoked`, `Forbidden`); two pages: the slower one's
@@ -372,18 +372,18 @@ descriptor; write `lastKeyId` unconditionally. Each must fail a test.
 `src/**`, `test/**`, `packages/mail-crypto/src/proofs.ts` and its test, the
 root `package.json` and lockfile.
 
-- [ ] 0003 as §10.1; the view's new fields; `removed_factors`
-- [ ] `challenge` with actions and the four purposes; descriptors issued and
+- [x] 0003 as §10.1; the view's new fields; `removed_factors`
+- [x] `challenge` with actions and the four purposes; descriptors issued and
   stored by digest; `sealChallenge` with the digest (A6)
-- [ ] M15′: sessions need a device signature or a factor proof
-- [ ] M17′: every factor and key proof checked against its call's own request
-- [ ] M21′: another account's device is `Forbidden`, nothing written
-- [ ] M22, B7a: `revokeDevices` with the capability's `confirmation`;
+- [x] M15′: sessions need a device signature or a factor proof
+- [x] M17′: every factor and key proof checked against its call's own request
+- [x] M21′: another account's device is `Forbidden`, nothing written
+- [x] M22, B7a: `revokeDevices` with the capability's `confirmation`;
   `rotation_due`; audit with `codeId`
-- [ ] M18′, M23: `removeDevices` (0 to 20, 0 only while due; transition
+- [x] M18′, M23: `removeDevices` (0 to 20, 0 only while due; transition
   signed by the proof's factor; clears the due rotation)
-- [ ] M24, M25: removed factors kept; every signature checked before writing
-- [ ] capability: the `confirmation` claim read strictly, only for
+- [x] M24, M25: removed factors kept; every signature checked before writing
+- [x] capability: the `confirmation` claim read strictly, only for
   `revokeDevices`
 
 **Acceptance:** each attestation case of the descriptor vectors; two
@@ -407,11 +407,11 @@ a factor other than the proof's. Each must fail a test.
 spec 008 branch; and `feat/mail-shell-types` (`lib/mail.ts`'s types). Never
 the shell's sign-in code.
 
-- [ ] D34: `InboxShell.signInId` from `currentSignInId()`, `accountId` from
+- [x] D34: `InboxShell.signInId` from `currentSignInId()`, `accountId` from
   `currentSession().accountId`
-- [ ] the new actions, `revokeWithCode` (the code checked and the capability
+- [x] the new actions, `revokeWithCode` (the code checked and the capability
   minted in one server action), the screens of F13 and F14
-- [ ] the vendored packages from the integration commit
+- [x] the vendored packages from the integration commit
 
 **Acceptance:** the dashboard's suites (`npm run typecheck`, `npm test`,
 `npx vitest run --project screens test/screens/inbox-flow.test.ts`), with:
@@ -421,11 +421,46 @@ fake code service; F14.
 
 ### R3-4 — integration  *(architect)*
 
-- [ ] merge R3-1 and R3-2 into `integration/002-device-sessions`; the
+- [x] merge R3-1 and R3-2 into `integration/002-device-sessions`; the
   end-to-end test grows F13, F14, the account check, a relayed proof, and a
   fork attempt, with the real crypto on both sides
 
 ### R3-5 — the formal model  *(architect)*
 
-- [ ] `formal/002/ir.md` first (round 3's design, its expected verdicts),
+- [x] `formal/002/ir.md` first (round 3's design, its expected verdicts),
   then `device.spthy`; the bounded sweep, boxed; README's results
+
+## Round 3 audited (architect, 2026-10-22 to 24)
+
+Every count below was re-run by the architect, boxed, on the head named.
+
+- **R3-1a/b, mail-crypto and mail-client** (#15, head a8198f6): root
+  typecheck clean; 70 files, 1150 passed, 8 skipped; CI green in Chromium,
+  Firefox and macOS WebKit. D44 (Ed25519) replaced A2b's P-256 key after
+  the macOS WebKit job refused a P-256 private key without its public point.
+  Mutations that fail tests: dropping the descriptor reader's
+  canonical-bytes check (5), never locking "when I sign out" on a missing
+  sign-in id (1), and the builder's own (account check, transition check,
+  admission, descriptor comparison, unconditional `lastKeyId` write).
+- **R3-2, the Mail Worker** (#10, head 53910d3, carrying #15): 81 files,
+  1304 passed, 8 skipped. Take first: every challenge, factor proof, key
+  proof and email attestation is spent by one `UPDATE … RETURNING` before
+  anything is compared; the 20-challenge cap reserves its row before any
+  await; concurrent tests for each. The 300-second age check survived my
+  first mutation (the vectors' "301 seconds ago" also broke the issued-at
+  rule): the attestation vectors now give each case its own clock
+  (509a07f), and dropping the age, ahead or before-issue check each fails
+  its own case.
+- **R3-4, end to end** (#16, head 61f97b5): 82 files, 1313 passed,
+  8 skipped; the real client against the real Worker for F12, F1, F2, F5,
+  F6, F10, F13, F14, the planted device, D36 (a relayed proof), D37 (two
+  accounts on one browser), D38 (a copied key opens no session) and D39 (a
+  fork from a removed device's key is refused).
+- **R3-3, the dashboard's inbox** (seo-engine #13, head 10ddc2f, stacked
+  on spec 008's #17; #14 at e9e315b): typecheck clean; unit and render 454
+  passed; the Chromium inbox flow 17 passed. Dropping the attestation from
+  the revoke call's capability first survived the unit suite (only the
+  Chromium F13 test caught it); a unit test through the real `call()` path
+  now catches it (2 failures).
+- **R3-5, the formal model** (#18, head 49cc97f): see
+  `formal/002/README.md`, "Round 3".
