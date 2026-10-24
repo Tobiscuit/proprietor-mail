@@ -91,7 +91,17 @@ export function encodeBase64url(bytes: Uint8Array): string {
 }
 
 const CROCKFORD_ID = (prefix: string) => new RegExp(`^${prefix}_[0-9abcdefghjkmnpqrstvwxyz]{26}$`);
-const IDS = { msg: CROCKFORD_ID("msg"), drf: CROCKFORD_ID("drf"), wrp: CROCKFORD_ID("wrp"), mbx: CROCKFORD_ID("mbx") };
+const IDS = {
+  msg: CROCKFORD_ID("msg"),
+  drf: CROCKFORD_ID("drf"),
+  wrp: CROCKFORD_ID("wrp"),
+  mbx: CROCKFORD_ID("mbx"),
+  // contracts/device-v1.md A1: a kept device (made by the browser) and a challenge (made by Mail). A device id
+  // follows envelope v1's rule exactly, its first symbol 0-7 (16 bytes in 26 symbols), as
+  // action-descriptor-v1 reads it: a device Mail kept must be one a descriptor can name (round 3).
+  dev: /^dev_[0-7][0-9abcdefghjkmnpqrstvwxyz]{25}$/,
+  chl: CROCKFORD_ID("chl"),
+};
 
 export function id(value: unknown, what: string, prefix: keyof typeof IDS): string {
   if (typeof value !== "string" || !IDS[prefix].test(value)) throw new InvalidRequest(`${what} must be a ${prefix}_ id`);

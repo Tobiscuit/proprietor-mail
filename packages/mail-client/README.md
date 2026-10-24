@@ -17,8 +17,8 @@ D2, D10).
 | --- | --- |
 | No network | Nothing here fetches. A test scans the source and every runtime dependency's shipped JavaScript for `fetch`, sockets, beacons, workers and dynamic imports. |
 | Runs under the dashboard's policy | No `eval`, `Function`, string timers, WebAssembly or DOM sink except the frame's `srcdoc`, set through the one Trusted Types policy. The same scan guards this. The browser tests serve a page with the dashboard's exact policy and Trusted Types **enforced**. |
-| Nothing persists | No storage API is used; the scan refuses `localStorage`, `sessionStorage`, IndexedDB, the Cache API and cookies. |
-| Keys stay non-extractable and decrypt-only | The private key is opened from its wrap by Web Crypto's `unwrapKey` as a non-extractable key (D21, K1). Wrapping it again (`addPasskey`, `replaceRecoveryKey`) opens a *wrappable* copy from a wrap for that one operation, with a fresh prompt or the recovery key, and drops it after. |
+| Nothing persists but a kept device (rule 3 as amended by spec 002) | One IndexedDB record per mailbox with exactly K5's fields, in `src/device-store.ts`, the only module the scan lets name `indexedDB`. Every write is checked against K5 there: another field, or a key that is not a non-extractable P-256 key of its kind, is refused. `localStorage`, `sessionStorage`, the Cache API and cookies stay forbidden everywhere. |
+| Keys stay non-extractable and decrypt-only (K1′) | Every key a session holds is opened by `unwrapKey` as a non-extractable key (D21). A *wrappable* copy of the active key exists only inside a FreshFactor, for 2 minutes after a factor was used, for the one step that seals or wraps it again (keeping a device, removing one, a new passkey, a new recovery key). |
 | Errors are typed | Every error is a `MailClientError` subclass with a stable `name`; messages carry no content, address or key. |
 
 ## Enrollment and unlock
@@ -31,15 +31,29 @@ D2, D10).
   recovery-key-only setup. The recovery key is shown once; `request()`
   refuses until `confirmRecovery()` matched the characters at four random
   positions of the 55 symbols.
-- `unlockWithPasskey` is one `get()` over the active key's passkey wraps,
-  each with its own PRF input; the credential used selects the wrap.
-  `unlockWithRecoveryKey` tries the recovery wraps.
-- **At every unlock the unwrapped key's public half is compared with the
-  mailbox's advertised public key** (`checkAdvertisedKey` in
-  `src/session.ts`); a mismatch is `KeySubstitutionDetected` and nothing
-  proceeds (G7, K2).
+- Each wrap also carries its factor's key (device-v1 A2, from the same
+  secret) and its tag under the new key (A5), so a new mailbox requires
+  sessions from the start (B5). With `{ keep }`, the enrolling browser is a
+  kept device: `request()` carries it, `commit()` keeps it once Mail has it.
+- `unlockWithPasskey` is one `get()` over the mailbox's passkey wraps, each
+  with its own PRF input; the credential used selects the wrap.
+  `unlockWithRecoveryKey` tries the recovery wraps. Using a factor opens its
+  wrap and derives its factor key from the same secret, which is zeroed then.
+- **The key ring is trusted only along a chain** (`src/keyring.ts`, K2′): the
+  active key comes from the factor's own wrap or from its seal, and the
+  successor seals must lead back to the factor's wrap key (and, on a kept
+  device, to the key it last accepted: no rollback). The opened key's public
+  half must be the advertised one (`checkAdvertisedKey`, G7, K2), and every
+  tag in the ring must verify under the active key (K3). Any failure is
+  `KeySubstitutionDetected` and nothing proceeds. The session holds every key
+  the chain reaches, so old mail opens after a rotation (G40).
+- After a factor, `unlocked.freshFactor` holds it for 2 minutes (`answer()`
+  gives the factor proof for a sensitive call); `reauthenticate()` makes
+  another. `sessionProof(challenge)` answers Mail's session challenge, signed
+  by the device on a kept device.
 - The unlocked mailbox locks after `idleLockMs` (15 minutes) without
-  `touch()`, every method counts as activity, and `lock()` is immediate.
+  `touch()`, or after a kept device's own setting; every method counts as
+  activity, and `lock()` is immediate.
 
 WebAuthn sits behind the `credentials` port (`PasskeyOptions.credentials`),
 so everything above is tested in Node with a double whose PRF is an HMAC; the
@@ -48,6 +62,29 @@ with `hasPrf` and, elsewhere, through the double injected into the page.
 
 The RP ID is whatever the dashboard passes as `rpId`: its exact host (D5).
 Nothing here names a host.
+
+## Kept devices (spec 002)
+
+- `canKeepDevices(indexedDbDeviceStore())`, before the question "This device
+  is mine": it writes, reads back, uses and deletes a probe, and is false
+  (never an exception) where a CryptoKey cannot be kept; such a browser is a
+  shared computer (D31).
+- `resumeDevice(view, { store, signInId })` on every load: the lock settings
+  first (a lock that fell due deletes the unlock key before anything else,
+  K6), then K7 (a device the view no longer lists is wiped: `removed`), then
+  the device's seal, K2′ from the key it last accepted, and K3. It answers
+  `unlocked` (no prompt), `locked` with a reason, `removed`, or `none`.
+- K3 and K9 flag instead of stopping: a device or factor whose tag fails,
+  or a factor whose listed factor key is not the one it derives, is in
+  `mailbox.flagged`, is never sealed to, and is removed by the owner; while
+  one is there, `removeDevice` of that flagged device is the only rotation
+  (`FlaggedRecipient` otherwise). K2 and K2′ still stop everything.
+- `keepThisDevice`, `rekeyThisDevice`, `removeDevice` (the whole rotation,
+  which opens its own seals before it answers, K8) and `upgradeRequest`
+  (every factor of the mailbox at once) answer the request for Mail and a
+  `commit()` for after Mail accepted it; nothing in the browser changes
+  before. `lock()` answers the request that clears the unlock key at Mail;
+  `forget()` is K7 after `DeviceRevoked`.
 
 ## Reading
 
@@ -142,22 +179,36 @@ reported as refused (`style-src-elem`/`style-src-attr` "inline",
 
 ## The promise, as data
 
-`PROTECTION.optionA(operator)` and `PROTECTION.metadata` are the spec's
-Option A text and the §4 table; `test/protection.test.ts` reads them back
-from `specs/001-inbox-module/spec.md`.
+`PROTECTION.optionA(operator)` and `PROTECTION.metadata` are spec 001's
+Option A text and §4 table; `PROTECTION.devices(operator)` and the three
+metadata rows after them are spec 002 §5's. `test/protection.test.ts` reads
+them back from both specs.
 
 ## Tests
 
-- `npm test -w @proprietor/mail-client`: Node, 86 tests, no browser.
+- `npm test -w @proprietor/mail-client`: Node, 201 tests, no browser. The
+  spec 002 tests run against a fake Mail Worker (`test/fake-mail.ts`) that is
+  strict about device-v1 Part B's shapes, and against key-ring changes made
+  from mail-crypto directly (`test/keyring-support.ts`).
 - `npm run test:browsers -w @proprietor/mail-client`: Playwright drives
   Chromium, Firefox and WebKit against a page served with the dashboard's
   policy and Trusted Types enforced (`test/browser/server.ts` has the exact
   header). Needs `npx playwright install --with-deps`. `MAIL_CLIENT_BROWSERS`
   narrows the list; a browser that cannot launch fails, it never skips.
 - Mutation checks for the audit: removing `checkAdvertisedKey`'s throw fails
-  the G7 tests in `test/unlock.test.ts` and `test/browser`; removing the
-  sandbox check in `showInFrame` fails the refusal test; removing the nonce
-  check in `renderBody` fails the "refuses a missing nonce" test.
+  the G7 tests in `test/unlock.test.ts`, `test/sessions.test.ts` and
+  `test/browser`; removing the sandbox check in `showInFrame` fails the
+  refusal test; removing the nonce check in `renderBody` fails the "refuses a
+  missing nonce" test. Spec 002's (all run): dropping `trustChain`'s walk
+  fails 15 tests (`test/sessions.test.ts`, `test/devices.test.ts`), and
+  dropping only its anchor check fails the two that only it can pass (the
+  rollback, and a ring made only of the server's key); a `checkTags` that
+  flags nothing fails 16; letting `resumeDevice` skip the lock settings fails
+  5; a store that keeps another field, or anything at all, fails 3 each; a
+  `resumeDevice` that does not wipe, or a `forget()` that keeps the record,
+  fails 3. Round 2's: no `FlaggedRecipient` refusal in `removeDevice` fails 4;
+  no K8 check fails 3; a K9 comparison that always matches fails 4; letting
+  the upgrade leave a factor out fails 1.
 
 ## Vendoring
 

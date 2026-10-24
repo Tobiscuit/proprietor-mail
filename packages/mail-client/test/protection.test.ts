@@ -1,15 +1,18 @@
-// PROTECTION (contracts/mail-client-v1.md "The promise, as data"): the texts the dashboard shows are
-// the spec's, read from specs/001-inbox-module/spec.md, so no screen ever claims more than the spec.
+// PROTECTION (contracts/mail-client-v1.md "The promise, as data", as amended by spec 002): the texts
+// the dashboard shows are the specs', read from specs/001-inbox-module/spec.md and
+// specs/002-device-sessions/spec.md, so no screen ever claims more than the specs.
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 import { PROTECTION } from "../src/index";
 
-const spec = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../../specs/001-inbox-module/spec.md"), "utf8");
+const specs = resolve(dirname(fileURLToPath(import.meta.url)), "../../../specs");
+const spec001 = readFileSync(resolve(specs, "001-inbox-module/spec.md"), "utf8");
+const spec002 = readFileSync(resolve(specs, "002-device-sessions/spec.md"), "utf8");
 
 /** The blockquote under a bold heading, joined with spaces. */
-function blockquoteAfter(heading: string): string {
+function blockquoteAfter(spec: string, heading: string): string {
   const start = spec.indexOf(heading);
   expect(start, heading).toBeGreaterThan(-1);
   const lines: string[] = [];
@@ -20,8 +23,8 @@ function blockquoteAfter(heading: string): string {
   return lines.join(" ");
 }
 
-/** The rows of the table under a section heading, until a blank line. */
-function tableAfter(heading: string): string[][] {
+/** The rows of the table under a heading, until the table ends. */
+function tableAfter(spec: string, heading: string): string[][] {
   const start = spec.indexOf(heading);
   expect(start, heading).toBeGreaterThan(-1);
   const rows: string[][] = [];
@@ -35,9 +38,12 @@ function tableAfter(heading: string): string[][] {
   return rows.slice(2); // the header and the separator
 }
 
-describe("PROTECTION", () => {
+const rows001 = tableAfter(spec001, "## 4. What the platform can see, even under Option A");
+const rows002 = tableAfter(spec002, "What the platform can see (001 §4) gains these rows:");
+
+describe("PROTECTION: spec 001", () => {
   test("optionA is the spec's Option A text, with {operator} filled in", () => {
-    const text = blockquoteAfter("**Option A — encrypted with your key (structural).**");
+    const text = blockquoteAfter(spec001, "**Option A — encrypted with your key (structural).**");
     expect(text).toContain("{operator}");
     expect(PROTECTION.optionA("{operator}")).toBe(text);
     expect(PROTECTION.optionA("Acme")).toBe(text.replaceAll("{operator}", "Acme"));
@@ -46,13 +52,44 @@ describe("PROTECTION", () => {
     expect(PROTECTION.optionA("Acme")).not.toContain("public record");
   });
 
-  test("metadata is the spec's §4 table, row for row", () => {
-    const rows = tableAfter("## 4. What the platform can see, even under Option A");
-    expect(rows.length).toBeGreaterThanOrEqual(7);
-    expect(PROTECTION.metadata.map((m) => [m.what, m.where, m.why])).toEqual(rows);
+  test("metadata starts with the spec's §4 table, row for row", () => {
+    expect(rows001.length).toBeGreaterThanOrEqual(7);
+    expect(PROTECTION.metadata.slice(0, rows001.length).map((m) => [m.what, m.where, m.why])).toEqual(rows001);
   });
 
   test("Option B's word never appears: the texts never say the operator can't read mail in transit", () => {
     expect(PROTECTION.optionA("Acme")).not.toMatch(/can't read your mail/);
+    expect(PROTECTION.devices("Acme")).not.toMatch(/can't read your mail/);
+  });
+});
+
+describe("PROTECTION: spec 002 §5, the promise amended", () => {
+  test("devices is the spec's \"Devices you keep unlocked.\" text, with {operator} filled in", () => {
+    const text = blockquoteAfter(spec002, "**Devices you keep unlocked.**");
+    expect(text).toContain("{operator}");
+    // D43: "passkey" means the phone's or laptop's own; the factors are named "passkey" and "recovery key" only.
+    expect(text).toContain("A device you keep unlocked opens your mail without your passkey");
+    expect(text).toContain("your passkey and your recovery key");
+    expect(PROTECTION.devices("{operator}")).toBe(text);
+    expect(PROTECTION.devices("Acme")).toBe(text.replaceAll("{operator}", "Acme"));
+    expect(PROTECTION.devices("Acme")).not.toContain("{operator}");
+  });
+
+  test("metadata goes on with the rows spec 002 §5 adds, row for row, and nothing else", () => {
+    expect(rows002.length).toBe(3);
+    expect(PROTECTION.metadata.slice(rows001.length).map((m) => [m.what, m.where, m.why])).toEqual(rows002);
+    expect(PROTECTION.metadata.length).toBe(rows001.length + rows002.length);
+  });
+
+  test("D43: the owner-facing words name the factors \"passkey\" and \"recovery key\" and mention no hardware", () => {
+    const words = [PROTECTION.devices("Acme"), ...PROTECTION.metadata.slice(rows001.length).map((m) => `${m.what} ${m.where} ${m.why}`)].join(" ");
+    expect(words).not.toMatch(/security key|hardware|YubiKey|USB|NFC/i);
+    expect(PROTECTION.devices("Acme")).toMatch(/passkey/);
+  });
+
+  test("R11, D33: spec 002's words never assume a phone, a face scan or a fingerprint", () => {
+    // (Spec 001's own §4 row "So the phone can buzz" predates R11; it is compared with that spec as it is.)
+    const words = [PROTECTION.devices("Acme"), ...PROTECTION.metadata.slice(rows001.length).map((m) => `${m.what} ${m.where} ${m.why}`)].join(" ");
+    expect(words).not.toMatch(/\b(?:phone|Face ID|fingerprint)\b/i);
   });
 });

@@ -36,6 +36,13 @@ export class CredentialsDouble {
 
   constructor(public options: DoubleOptions = {}) {}
 
+  /** The PRF output this double's authenticator gives for a credential and an input (for tests that act as its holder). */
+  async evaluate(credentialId: string, input: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
+    const stored = this.stored.find((s) => b64url(s.rawId) === credentialId);
+    if (!stored) throw new Error("no such credential");
+    return new Uint8Array(await this.prf(stored, new Uint8Array(input)));
+  }
+
   /** base64url of the last created credential's rawId: what a wrap's `credentialId` must be. */
   lastCredentialId(): string {
     return b64url(this.stored.at(-1)!.rawId);
