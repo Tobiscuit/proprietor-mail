@@ -1,9 +1,12 @@
 // Runtime constraints (contracts/mail-client-v1.md, rules 1 to 3): under the dashboard's policy
 // (nonce + 'strict-dynamic', Trusted Types enforced, no 'unsafe-eval', connect-src 'self') with no
-// network and nothing persisted. Checked on src/ and on the JavaScript every runtime dependency
-// actually ships (read from node_modules, not from a README), the way mail-crypto's test does.
-// The one DOM sink this package may touch is the frame's srcdoc, in src/render.ts, through the
-// Trusted Types policy; DOMPurify parses into a detached document and is allowed its sinks.
+// network, and nothing persisted but a kept device. Checked on src/ and on the JavaScript every
+// runtime dependency actually ships (read from node_modules, not from a README), the way
+// mail-crypto's test does. The one DOM sink this package may touch is the frame's srcdoc, in
+// src/render.ts, through the Trusted Types policy; DOMPurify parses into a detached document and is
+// allowed its sinks. Rule 3 as amended by spec 002: the one storage API is IndexedDB, in
+// src/device-store.ts alone (the kept-device store, K5); no other module may name it, and no module,
+// that one included, may use localStorage, sessionStorage, the Cache API, Web SQL or cookies.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -70,6 +73,14 @@ const ALLOWED: Allowance[] = [
     rule: "DOM or injection sink",
     line: /element\.outerHTML/,
     reason: "a READ of outerHTML: serialising the sanitised, detached document DOMPurify returned; no markup is written",
+  },
+  {
+    file: /^src\/device-store\.ts$/,
+    rule: "persistence",
+    line: /^const idb = \(globalThis as \{ indexedDB\?: IDBFactory \}\)\.indexedDB;$/,
+    reason:
+      "rule 3 as amended by spec 002 (K5): the kept-device store reads the global indexedDB, once, and is the only " +
+      "module that may; every write is checked against K5 there",
   },
   {
     file: /^dompurify\//,
@@ -171,6 +182,16 @@ describe("CSP: the scanner itself", () => {
     for (const line of planted) expect(scan("planted.js", line, CSP_RULES), line).not.toEqual([]);
     expect(scan("fine.js", 'import { x } from "./y.js"; setTimeout(() => lock(), ms); const req = require("./z.js");', CSP_RULES)).toEqual([]);
   });
+
+  test("the IndexedDB allowance covers the device store's one line and nothing else", () => {
+    const allowed = (file: string, line: string) => unexplained(scan(file, line, CSP_RULES), new Set()).length === 0;
+    expect(allowed("src/device-store.ts", "const idb = (globalThis as { indexedDB?: IDBFactory }).indexedDB;")).toBe(true);
+    // The same line anywhere else, any other use in the store, and every other storage API in the store: flagged.
+    expect(allowed("src/session.ts", "const idb = (globalThis as { indexedDB?: IDBFactory }).indexedDB;")).toBe(false);
+    for (const line of ["indexedDB.open('x')", "localStorage.setItem('k', v)", "sessionStorage.getItem('k')", "caches.open('x')", "document.cookie = 'a=b'", "openDatabase('x')"]) {
+      expect(allowed("src/device-store.ts", line), line).toBe(false);
+    }
+  });
 });
 
 describe("CSP: no eval, Function, string timers, WebAssembly, network, persistence or DOM sinks", () => {
@@ -180,7 +201,10 @@ describe("CSP: no eval, Function, string timers, WebAssembly, network, persisten
     const used = new Set<Allowance>();
     const findings = files.flatMap((f) => scan(relative(packageDir, f), readFileSync(f, "utf8"), CSP_RULES));
     expect(unexplained(findings, used)).toEqual([]);
-    expect(used.size, "src/render.ts assigns srcdoc through the policy and reads outerHTML").toBe(2);
+    // Every allowance for src/ is used: render.ts assigns srcdoc through the policy and reads
+    // outerHTML; device-store.ts reads the global indexedDB.
+    expect([...used].map((a) => a.reason).sort()).toEqual(ALLOWED.filter((a) => a.file.test("src/render.ts") || a.file.test("src/device-store.ts")).map((a) => a.reason).sort());
+    expect(findings.filter((f) => f.rule === "persistence").map((f) => f.file)).toEqual(["src/device-store.ts"]);
   });
 
   test("in every runtime dependency's shipped JavaScript", () => {
@@ -202,7 +226,7 @@ describe("CSP: no eval, Function, string timers, WebAssembly, network, persisten
       }
     }
     expect(unexplained(findings, used)).toEqual([]);
-    expect(ALLOWED.filter((a) => !used.has(a) && !a.file.test("src/render.ts")).map((a) => a.reason)).toEqual([]); // no stale allowances
+    expect(ALLOWED.filter((a) => !used.has(a) && !a.file.test("src/render.ts") && !a.file.test("src/device-store.ts")).map((a) => a.reason)).toEqual([]); // no stale allowances
   });
 
   test("dependencies are pinned to exact versions", () => {

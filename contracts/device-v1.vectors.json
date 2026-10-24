@@ -1,0 +1,583 @@
+{
+  "contract": "contracts/device-v1.md",
+  "about": "Test vectors for device-v1 Part A, written by packages/mail-crypto (npm run write-device-vectors -w @proprietor/mail-crypto) and checked by its test/device-vectors.test.ts. Every key and secret is SHA-256 of the public label next to it: test values only, never used for real mail. Mailbox keys are clamped X25519 scalars; P-256 scalars d are SHA-256 of their label read as a big-endian integer. Byte strings are lowercase hex, except the stored forms (sealed, tag, signature, nonce, keyEnvelope, wrapped, descriptor) and the recipients' keys in tags, which are base64url without padding (RFC 4648 §5). The challenges and the device proof were made by a sealer and a signer written from the contract; Mail's are src/proofs.ts. Round 3: the factor and key challenges carry their action descriptor (contracts/action-descriptor-v1.md, as Mail issues it), the request it digests and its digest, and their associated data ends with that digest (A6). Each factor's `signing` holds seedS, its Ed25519 private key, and vS, its public key (A2b, D44). `statements` holds one of each A11 statement (keys base64url) with its message, its signatures (the signer's public key in hex: 32 bytes and Ed25519 for a factor, a 65-byte point and ECDSA P-256 for a device) and, under `changed`, values that each refuse every signature when they replace that one field. Ed25519 signatures may be randomized (Safari's are): verify them, never compare them. `graph` is the factor graph the statements make.",
+  "mailboxId": "mbx_3cjts17beb77gttnf3ekk86pcm",
+  "mailboxKey": {
+    "label": "proprietor-mail/device-v1 test vectors: mailbox private key (never use for real mail)",
+    "sk": "8835027d4a21affb2646fa8babaa73f429b42d9bd5d85c22d37d83dacc15e45e",
+    "pk": "f9fddcd81b9baf092b3312e54483cfaa5a3a8f42ebc1b00ee7e9bcd7d30e3a75",
+    "keyId": "e5fe50bf2549a47c48b04b397af5f21c"
+  },
+  "successorKey": {
+    "label": "proprietor-mail/device-v1 test vectors: successor mailbox private key (never use for real mail)",
+    "sk": "707486d4c1eb6cf95989fbd55f3554b53acc3ce3c4705c6831db1cba953e3868",
+    "pk": "4e9a17a6b94f8a5cdbed0dddca612fd7bc549eb8b4a3e8d550db3f98267e2a79",
+    "keyId": "4626b27771722f9c280e0d6835eb4f7a"
+  },
+  "factors": [
+    {
+      "name": "passkey",
+      "kind": "passkey-prf",
+      "factorId": "wrp_39kgptgz5a6smvnxnp34a9eenx",
+      "secretLabel": "proprietor-mail/device-v1 test vectors: passkey PRF output (never use for real mail)",
+      "secret": "91f61800b7f131c28a5b3e9b3ca48497b88bbe306dba9cac8f5543ff75171f40",
+      "ikm": "47313e35fc0d597e38967716cbe2d0d55acb2e3df2d6ad750197ccbd48d09156",
+      "skF": "65436222355e70bd52ff7b99848abe83eae7252b4054f61266dd46e332cf1f59",
+      "pkF": "3d21a57c88ad459f96fce2bedea2b120e62e28c2af52fc2f70186789fd9bf07e",
+      "signing": {
+        "seedS": "48ef2e1b6bfe0dd694603741949ac3c0522688fabe3c834e4fa26ebcf09f8897",
+        "vS": "fd37951bc02b55a6d29bcf1bbce9986f5a434fb4146eb117fd7cc3eda0b90a9b"
+      }
+    },
+    {
+      "name": "recovery",
+      "kind": "recovery",
+      "factorId": "wrp_3ec8j0sa5vc00khxe68z723yww",
+      "secretLabel": "proprietor-mail/device-v1 test vectors: recovery secret (never use for real mail)",
+      "secret": "5b4d29db6325f560bec8164f61555ac2d8c2cdb4da5cf28ab3958902b404ad83",
+      "recoveryDisplay": "1DMTA-EVCCJ-ZAR5Y-S0B4Y-RANBB-1DHGP-DPKD5-SWMAP-EARJ0-NM0JP-R6S5J",
+      "ikm": "96adc5cc4d3c46c434a3a4c19c3531e5d6717e2412352d74d1cfb890cdcf9bfc",
+      "skF": "bbd06aed9f37289e71e937280e7cf5fdc57b3c0c9fd86677187040874ca4c020",
+      "pkF": "70a0f343c4a44d90bec2a693d352222e54d18feb0283e395548834288866ec32",
+      "signing": {
+        "seedS": "4f002484dd3a58c279d05d2189ae8bf38a5df7536c83d045f1ddc5d5afad3fd7",
+        "vS": "7b97c5546202a5bcf0994564817d5f76585dd2d9f68d8286abacc5c8331f6695"
+      }
+    },
+    {
+      "name": "outsider",
+      "kind": "recovery",
+      "factorId": "wrp_5ym2e7kqwsng2zhrshj411zk47",
+      "secretLabel": "proprietor-mail/device-v1 test vectors: a factor outside the graph (never use for real mail)",
+      "secret": "fd89ac1d22d8fd732e0508253507896677d0eaa8dab95d795697f5bb24eba809",
+      "recoveryDisplay": "3YRKB-0X4BC-FTWSE-0M42A-D87H5-K7FM7-AN3DB-JQBSA-TBZBE-S4XEM-0JMQN",
+      "ikm": "b86341bb40758decf257e4d9e9ac8a57452a9cbe76ad11aa7de978ec82a64b8d",
+      "skF": "8307a469fb4f6be9d122c2b43723a1f1b324edbfec57aa8defe9f45a2fb40e44",
+      "pkF": "b13fa92eeb3edd536d3461b907a85a67a706269e849a025d03d013ceef93ee50",
+      "signing": {
+        "seedS": "daa283f533ca984e2e714aeb8d1ccb5191733594b047e53bbfde39de3c0fe4e9",
+        "vS": "a9db7edde5a93593c3bc5b6cc6eadf1cf767698c76bbfd67998cc9967633e0d9"
+      }
+    }
+  ],
+  "device": {
+    "deviceId": "dev_1sc40nkrnjaka7qmzd4tss5tcc",
+    "label": "Kitchen laptop",
+    "signing": {
+      "label": "proprietor-mail/device-v1 test vectors: device signing key (never use for real mail)",
+      "d": "56120d12786470085d5ac889ea59d1b8ff9128912b6beb3f57988dfda7f62607",
+      "publicKey": "047eba972441a1378e962cfaea211d693c954521e570ee0bff2222bca4d1922d1cb2558cf8f13b94d38fc05d802759271cf28b5c8578fed9964de0e799c8cc83bf"
+    },
+    "unlock": {
+      "label": "proprietor-mail/device-v1 test vectors: device unlock key (never use for real mail)",
+      "d": "1d9527e04a68aea94bab25260ad0b649bb730bfb9aca29ec4199a500438c38ad",
+      "publicKey": "047f4d7aff7dddf4fa4f404bf3cf9189de54496c4e96396bf29bd51473c0077a46fa0142e57764a9471cb5ce8f999e6e487a6c6485768759ad48c9825a352e7c80"
+    }
+  },
+  "seals": [
+    {
+      "name": "to a device",
+      "toKind": "device",
+      "toId": "dev_1sc40nkrnjaka7qmzd4tss5tcc",
+      "sealedKeyId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "recipient": "device.unlock",
+      "sealed": "AQQTjmn2qo7eIvPO_9x64f-QKp4E6dHc63id1ygN9imGn0S4REMEYu2M-y1QfdOoBwdwxDRjiBZRrKZtmflGTx3zHYpidYGIbki1ZIp0Op6CFs29xdprwqKnvFMjL1UlShru_BZjfUQ3XHUpW0Oh0My7lBbRgJzbIWPt34P-vjME9bEagkcRPnol8dpMUw"
+    },
+    {
+      "name": "to a factor",
+      "toKind": "factor",
+      "toId": "wrp_3ec8j0sa5vc00khxe68z723yww",
+      "sealedKeyId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "recipient": "factors.recovery",
+      "sealed": "AbiRxnCxmiD1-uQGTESMIFXNvOqkt1ytWenjrBcG2h0rd6S-xvkHHD3jX-FqHJ1Ysrpmn0g70a9WVtR0KDjCh-VljWesdp1xOLLbhuuIMd4Rc8ch-69FXTiLcsNmHsAjAnHZPx8pvd9z4qanaQ"
+    },
+    {
+      "name": "successor seal",
+      "toKind": "successor",
+      "toId": "4626b27771722f9c280e0d6835eb4f7a",
+      "sealedKeyId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "recipient": "successorKey",
+      "sealed": "ARJzXK0mRzo8qAPVVi2rmp615pMLn_9FntFAaI7Gc0MO5-ebu53px72LOG6EL0U2ToHZuEOiyf_aeEyNeE8ItxcgJ1W67qBb9Y0PU7EGSPRTQNPfWh1d_BzabNA4bsXIzsk-v2V9LPUyKddihg"
+    }
+  ],
+  "tags": [
+    {
+      "name": "device",
+      "keyId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "recipient": {
+        "kind": "device",
+        "deviceId": "dev_1sc40nkrnjaka7qmzd4tss5tcc",
+        "label": "Kitchen laptop",
+        "signingKey": "BH66lyRBoTeOliz66iEdaTyVRSHlcO4L_yIivKTRki0cslWM-PE7lNOPwF2AJ1knHPKLXIV4_tmWTeDnmcjMg78",
+        "unlockKey": "BH9Nev993fT6T0BL88-Rid5USWxOljlr8pvVFHPAB3pG-gFC5XdkqUcctc6PmZ5uSHpsZIV2h1mtSMmCWjUufIA"
+      },
+      "message": "proprietor-mail/v1/recipient|mbx_3cjts17beb77gttnf3ekk86pcm|e5fe50bf2549a47c48b04b397af5f21c|device|dev_1sc40nkrnjaka7qmzd4tss5tcc|S2l0Y2hlbiBsYXB0b3A|BH66lyRBoTeOliz66iEdaTyVRSHlcO4L_yIivKTRki0cslWM-PE7lNOPwF2AJ1knHPKLXIV4_tmWTeDnmcjMg78|BH9Nev993fT6T0BL88-Rid5USWxOljlr8pvVFHPAB3pG-gFC5XdkqUcctc6PmZ5uSHpsZIV2h1mtSMmCWjUufIA",
+      "tag": "ANPhc2BL1BPyUDOIaU_ocXbFF13vymdBgHAmEmm02X4"
+    },
+    {
+      "name": "factor",
+      "keyId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "recipient": {
+        "kind": "factor",
+        "factorId": "wrp_39kgptgz5a6smvnxnp34a9eenx",
+        "factorKind": "passkey-prf",
+        "label": "Phone",
+        "factorKey": "PSGlfIitRZ-W_OK-3qKxIOYuKMKvUvwvcBhnif2b8H4",
+        "credentialId": "bebILN_sVIrmW7_QMy-4mg"
+      },
+      "message": "proprietor-mail/v1/recipient|mbx_3cjts17beb77gttnf3ekk86pcm|e5fe50bf2549a47c48b04b397af5f21c|factor|wrp_39kgptgz5a6smvnxnp34a9eenx|passkey-prf|UGhvbmU|PSGlfIitRZ-W_OK-3qKxIOYuKMKvUvwvcBhnif2b8H4|bebILN_sVIrmW7_QMy-4mg",
+      "tag": "g2JV47407eMKli0KCXShavxNELSLB3gxeCfieDEkd7A"
+    }
+  ],
+  "challenges": [
+    {
+      "name": "session",
+      "purpose": "session",
+      "challengeId": "chl_2s6cnksswv0j07wnnyka26d55y",
+      "targetId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "sealed": "7cAVDPui7XkJ9PU8XcPScwIXpBnQ3BpEcIoP_ndAiG-yeJZJPwGIxuehxKYh8A35HOnJeVQ2eOyQqhDAbAJ_nZFKoZ1L0pA2J0J13gV8FAw",
+      "answer": "1d104455538cf325ec81f864e75ff095162a6e94e8e2cfa99cb688fb26cfa959"
+    },
+    {
+      "name": "factor",
+      "purpose": "factor",
+      "challengeId": "chl_4kh86hmrapxr36nc111wchtf26",
+      "targetId": "wrp_39kgptgz5a6smvnxnp34a9eenx",
+      "request": {
+        "challengeId": "chl_2s6cnksswv0j07wnnyka26d55y"
+      },
+      "requestDigest": "3PZr8LCct8cuf9YER3fyjE3uqPOWaRapwlixSVjc71g",
+      "descriptor": "eyJpc3N1ZWRBdCI6MTc5MjYyNzIwMCwia2luZCI6Im9wZW4tc2Vzc2lvbiIsIm1haWxib3hJZCI6Im1ieF8zY2p0czE3YmViNzdndHRuZjNla2s4NnBjbSIsIm5vbmNlIjoidTlXQjJ4YnFXX1hxcFZDSDU4eThHVWc3RDdESTVkWWZpZVRBRThVOTh2YyIsInJlcXVlc3QiOiIzUFpyOExDY3Q4Y3VmOVlFUjNmeWpFM3VxUE9XYVJhcHdsaXhTVmpjNzFnIiwidGFyZ2V0cyI6W10sInZlcnNpb24iOjF9",
+      "actionDigest": "pZrNrBlA6oaehewiabpKz0ObSdNJQlf4ak20BfVpj3c",
+      "sealed": "3g1jPrvJoJCsPnu_BEYY_4DmsDhyEmnvr_N8zEZ1622dQRoBMmPtnXw1Ivk7Z3AAjqfJjmZzfEaV6ZHVOaiqHFeh-V9e01PjFKl5g_8jlfQ",
+      "answer": "3256f538d5c2d92752a1dbabff8e5738b4c4053a8353509f6480d86ec6dd7c44"
+    },
+    {
+      "name": "key",
+      "purpose": "key",
+      "challengeId": "chl_4w2k37k3bcyzvzcct83c931wx0",
+      "targetId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "request": {
+        "factors": [
+          {
+            "id": "wrp_39kgptgz5a6smvnxnp34a9eenx",
+            "factorKey": "PSGlfIitRZ-W_OK-3qKxIOYuKMKvUvwvcBhnif2b8H4",
+            "tagKeyId": "e5fe50bf2549a47c48b04b397af5f21c"
+          }
+        ]
+      },
+      "requestDigest": "7NA9AGKEw00DoWT-EhOhnm8Tx45vc3LpCC2xHeqEJpw",
+      "descriptor": "eyJpc3N1ZWRBdCI6MTc5MjYyNzIwMCwia2luZCI6InVwZ3JhZGUiLCJtYWlsYm94SWQiOiJtYnhfM2NqdHMxN2JlYjc3Z3R0bmYzZWtrODZwY20iLCJub25jZSI6IkFRTWgwNEd1cW1SODhNakMzMksyb2ZIOHFVUVVUNVNaRXNhTnV4eHlRejQiLCJyZXF1ZXN0IjoiN05BOUFHS0V3MDBEb1dULUVoT2hubThUeDQ1dmMzTHBDQzJ4SGVxRUpwdyIsInRhcmdldHMiOltdLCJ2ZXJzaW9uIjoxfQ",
+      "actionDigest": "jYbfjFMM_-EbRi2UBn_Aqupt-kWGeQdOsbl968HGXak",
+      "sealed": "LCXcwFdQfDGD7GHgH8zSDgU79wbUCRqgap5BGj2qFQCmO-mUMAwQcEldVFSmk9HF-FqT4Wz1Td0lqDZUR5ZVsQ31AhUQFT3-XndsangXIdQ",
+      "answer": "1a479292b79fcd063d6c6f811a1a98b4af02ca506995333e52a411cce18abcc6"
+    }
+  ],
+  "deviceProof": {
+    "deviceId": "dev_1sc40nkrnjaka7qmzd4tss5tcc",
+    "challengeId": "chl_2s6cnksswv0j07wnnyka26d55y",
+    "nonce": "o5HV1WEzpYD7gtYI1HvS_XhEcT_va5ZugNGTDg60By4",
+    "message": "proprietor-mail/v1/device-proof|mbx_3cjts17beb77gttnf3ekk86pcm|dev_1sc40nkrnjaka7qmzd4tss5tcc|chl_2s6cnksswv0j07wnnyka26d55y|o5HV1WEzpYD7gtYI1HvS_XhEcT_va5ZugNGTDg60By4",
+    "publicKey": "047eba972441a1378e962cfaea211d693c954521e570ee0bff2222bca4d1922d1cb2558cf8f13b94d38fc05d802759271cf28b5c8578fed9964de0e799c8cc83bf",
+    "signature": "s9a2GJ8Kg1v1loROLI16aSK6U7q1Fu4Sk5IhZVSw_-y7wJNN2m7YBcn7S0O04oTHHak9bn0sJScdos0Vx0o9JQ"
+  },
+  "negative": [
+    {
+      "name": "a device seal opened with another device id",
+      "open": "seal",
+      "sealed": "AQQTjmn2qo7eIvPO_9x64f-QKp4E6dHc63id1ygN9imGn0S4REMEYu2M-y1QfdOoBwdwxDRjiBZRrKZtmflGTx3zHYpidYGIbki1ZIp0Op6CFs29xdprwqKnvFMjL1UlShru_BZjfUQ3XHUpW0Oh0My7lBbRgJzbIWPt34P-vjME9bEagkcRPnol8dpMUw",
+      "toKind": "device",
+      "toId": "dev_2gvgxqmsgkqhwhw07f2ks62wes",
+      "sealedKeyId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "recipient": "device.unlock",
+      "expect": "DecryptionFailed"
+    },
+    {
+      "name": "a factor seal opened with another factor id",
+      "open": "seal",
+      "sealed": "AbiRxnCxmiD1-uQGTESMIFXNvOqkt1ytWenjrBcG2h0rd6S-xvkHHD3jX-FqHJ1Ysrpmn0g70a9WVtR0KDjCh-VljWesdp1xOLLbhuuIMd4Rc8ch-69FXTiLcsNmHsAjAnHZPx8pvd9z4qanaQ",
+      "toKind": "factor",
+      "toId": "wrp_39kgptgz5a6smvnxnp34a9eenx",
+      "sealedKeyId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "recipient": "factors.recovery",
+      "expect": "DecryptionFailed"
+    },
+    {
+      "name": "a successor seal opened with toKind factor",
+      "open": "seal",
+      "sealed": "ARJzXK0mRzo8qAPVVi2rmp615pMLn_9FntFAaI7Gc0MO5-ebu53px72LOG6EL0U2ToHZuEOiyf_aeEyNeE8ItxcgJ1W67qBb9Y0PU7EGSPRTQNPfWh1d_BzabNA4bsXIzsk-v2V9LPUyKddihg",
+      "toKind": "factor",
+      "toId": "4626b27771722f9c280e0d6835eb4f7a",
+      "sealedKeyId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "recipient": "successorKey",
+      "expect": "DecryptionFailed"
+    },
+    {
+      "name": "a factor seal opened with toKind successor",
+      "open": "seal",
+      "sealed": "AbiRxnCxmiD1-uQGTESMIFXNvOqkt1ytWenjrBcG2h0rd6S-xvkHHD3jX-FqHJ1Ysrpmn0g70a9WVtR0KDjCh-VljWesdp1xOLLbhuuIMd4Rc8ch-69FXTiLcsNmHsAjAnHZPx8pvd9z4qanaQ",
+      "toKind": "successor",
+      "toId": "wrp_3ec8j0sa5vc00khxe68z723yww",
+      "sealedKeyId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "recipient": "factors.recovery",
+      "expect": "DecryptionFailed"
+    },
+    {
+      "name": "a challenge opened as a key seal",
+      "open": "seal",
+      "sealed": "7cAVDPui7XkJ9PU8XcPScwIXpBnQ3BpEcIoP_ndAiG-yeJZJPwGIxuehxKYh8A35HOnJeVQ2eOyQqhDAbAJ_nZFKoZ1L0pA2J0J13gV8FAw",
+      "toKind": "successor",
+      "toId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "sealedKeyId": "4626b27771722f9c280e0d6835eb4f7a",
+      "recipient": "mailboxKey",
+      "expect": "DecryptionFailed"
+    },
+    {
+      "name": "a key seal opened as a challenge",
+      "open": "challenge",
+      "sealed": "ARJzXK0mRzo8qAPVVi2rmp615pMLn_9FntFAaI7Gc0MO5-ebu53px72LOG6EL0U2ToHZuEOiyf_aeEyNeE8ItxcgJ1W67qBb9Y0PU7EGSPRTQNPfWh1d_BzabNA4bsXIzsk-v2V9LPUyKddihg",
+      "purpose": "session",
+      "challengeId": "chl_2s6cnksswv0j07wnnyka26d55y",
+      "targetId": "4626b27771722f9c280e0d6835eb4f7a",
+      "recipient": "successorKey",
+      "expect": "DecryptionFailed"
+    },
+    {
+      "name": "a message key envelope (envelope v1) presented as a challenge",
+      "open": "challenge",
+      "sealed": "G3og7JEQkDk1Z7B18Yj3dEkk6T8rF7UTewBN1j77MBDe0gfNqJeK8XAvNPdNBG1-MLL0uFHUuodJ9Nldaaba8UFp4XYlgXNdCeI3IpK6qI8",
+      "purpose": "session",
+      "challengeId": "msg_079zg84yh1yf77rjy00ezhppfx",
+      "targetId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "recipient": "mailboxKey",
+      "expect": "DecryptionFailed"
+    },
+    {
+      "name": "a wrap (envelope v1) presented as a challenge",
+      "open": "challenge",
+      "sealed": "AXLDE5QONssTgc6BKPqgFScDizjhAJfp2gC16LXuRA1eIsLNezPdSKRMZcM4rsHfHT6gRwa3JJKLPKUqH1BkdIUqK5LUWSr6EV7fc8M",
+      "purpose": "session",
+      "challengeId": "chl_2s6cnksswv0j07wnnyka26d55y",
+      "targetId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "recipient": "mailboxKey",
+      "expect": "DecryptionFailed"
+    },
+    {
+      "name": "a factor challenge presented as a session challenge",
+      "open": "challenge",
+      "sealed": "3g1jPrvJoJCsPnu_BEYY_4DmsDhyEmnvr_N8zEZ1622dQRoBMmPtnXw1Ivk7Z3AAjqfJjmZzfEaV6ZHVOaiqHFeh-V9e01PjFKl5g_8jlfQ",
+      "purpose": "session",
+      "challengeId": "chl_4kh86hmrapxr36nc111wchtf26",
+      "targetId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "recipient": "mailboxKey",
+      "expect": "DecryptionFailed"
+    },
+    {
+      "name": "a factor challenge opened with another action's digest",
+      "open": "challenge",
+      "sealed": "3g1jPrvJoJCsPnu_BEYY_4DmsDhyEmnvr_N8zEZ1622dQRoBMmPtnXw1Ivk7Z3AAjqfJjmZzfEaV6ZHVOaiqHFeh-V9e01PjFKl5g_8jlfQ",
+      "purpose": "factor",
+      "challengeId": "chl_4kh86hmrapxr36nc111wchtf26",
+      "targetId": "wrp_39kgptgz5a6smvnxnp34a9eenx",
+      "actionDigest": "PvhiQOgVBDm5rySzh6kp3115UpRz2CGzQ-Qrkju-fzk",
+      "recipient": "factors.passkey",
+      "expect": "DecryptionFailed"
+    },
+    {
+      "name": "a key challenge opened with another action's digest",
+      "open": "challenge",
+      "sealed": "LCXcwFdQfDGD7GHgH8zSDgU79wbUCRqgap5BGj2qFQCmO-mUMAwQcEldVFSmk9HF-FqT4Wz1Td0lqDZUR5ZVsQ31AhUQFT3-XndsangXIdQ",
+      "purpose": "key",
+      "challengeId": "chl_4w2k37k3bcyzvzcct83c931wx0",
+      "targetId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "actionDigest": "8y_UPdjT_ITdbB4d1f5hBiMTHKiKj0bpClhwEKV8zO4",
+      "recipient": "mailboxKey",
+      "expect": "DecryptionFailed"
+    },
+    {
+      "name": "a key challenge opened as a session challenge",
+      "open": "challenge",
+      "sealed": "LCXcwFdQfDGD7GHgH8zSDgU79wbUCRqgap5BGj2qFQCmO-mUMAwQcEldVFSmk9HF-FqT4Wz1Td0lqDZUR5ZVsQ31AhUQFT3-XndsangXIdQ",
+      "purpose": "session",
+      "challengeId": "chl_4w2k37k3bcyzvzcct83c931wx0",
+      "targetId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "recipient": "mailboxKey",
+      "expect": "DecryptionFailed"
+    },
+    {
+      "name": "a tag over a changed label",
+      "open": "tag",
+      "of": "device",
+      "label": "Kitchen laptop (2)",
+      "tag": "ANPhc2BL1BPyUDOIaU_ocXbFF13vymdBgHAmEmm02X4",
+      "expect": "invalid"
+    },
+    {
+      "name": "a device proof over another nonce",
+      "open": "deviceProof",
+      "nonce": "Giu6mEmWNzyuxVO5BMnHbW08Fs4UUW7jNjOQiv9-A7Q",
+      "signature": "s9a2GJ8Kg1v1loROLI16aSK6U7q1Fu4Sk5IhZVSw_-y7wJNN2m7YBcn7S0O04oTHHak9bn0sJScdos0Vx0o9JQ",
+      "expect": "invalid"
+    }
+  ],
+  "statements": [
+    {
+      "name": "admit-device",
+      "statement": {
+        "kind": "admit-device",
+        "mailboxId": "mbx_3cjts17beb77gttnf3ekk86pcm",
+        "deviceId": "dev_1sc40nkrnjaka7qmzd4tss5tcc",
+        "label": "Kitchen laptop",
+        "signingKey": "BH66lyRBoTeOliz66iEdaTyVRSHlcO4L_yIivKTRki0cslWM-PE7lNOPwF2AJ1knHPKLXIV4_tmWTeDnmcjMg78",
+        "admitterId": "wrp_39kgptgz5a6smvnxnp34a9eenx"
+      },
+      "message": "proprietor-mail/v1/admit-device|mbx_3cjts17beb77gttnf3ekk86pcm|dev_1sc40nkrnjaka7qmzd4tss5tcc|S2l0Y2hlbiBsYXB0b3A|BH66lyRBoTeOliz66iEdaTyVRSHlcO4L_yIivKTRki0cslWM-PE7lNOPwF2AJ1knHPKLXIV4_tmWTeDnmcjMg78|wrp_39kgptgz5a6smvnxnp34a9eenx",
+      "signatures": [
+        {
+          "role": "signature",
+          "signer": "factors.passkey",
+          "publicKey": "fd37951bc02b55a6d29bcf1bbce9986f5a434fb4146eb117fd7cc3eda0b90a9b",
+          "signature": "sJo98YZJnpe37NKuLvayFg1VxDed1uNG92pbDQfwxiKlB-JcnkXWnVydaKdujFjEhYVCBkDCsyJG3-UtBLdmAg"
+        }
+      ],
+      "changed": [
+        {
+          "field": "mailboxId",
+          "value": "mbx_0tpqsytw7cfb3wz6pv00j8td6z"
+        },
+        {
+          "field": "deviceId",
+          "value": "dev_6rje584gsts6w64nh0kgrb7633"
+        },
+        {
+          "field": "label",
+          "value": "Kitchen laptop (2)"
+        },
+        {
+          "field": "signingKey",
+          "value": "BNTQ5dzsRB_qkFfaP-xxz7fkEVakXSC8fCE-J7RHhD9y6EuxZXKPr1L2h_wUj0kPVMHZKFS_2ZY6AVW5oGYCHeA"
+        },
+        {
+          "field": "admitterId",
+          "value": "wrp_3ec8j0sa5vc00khxe68z723yww"
+        }
+      ]
+    },
+    {
+      "name": "unlock-key",
+      "statement": {
+        "kind": "unlock-key",
+        "mailboxId": "mbx_3cjts17beb77gttnf3ekk86pcm",
+        "deviceId": "dev_1sc40nkrnjaka7qmzd4tss5tcc",
+        "unlockKey": "BH9Nev993fT6T0BL88-Rid5USWxOljlr8pvVFHPAB3pG-gFC5XdkqUcctc6PmZ5uSHpsZIV2h1mtSMmCWjUufIA"
+      },
+      "message": "proprietor-mail/v1/unlock-key|mbx_3cjts17beb77gttnf3ekk86pcm|dev_1sc40nkrnjaka7qmzd4tss5tcc|BH9Nev993fT6T0BL88-Rid5USWxOljlr8pvVFHPAB3pG-gFC5XdkqUcctc6PmZ5uSHpsZIV2h1mtSMmCWjUufIA",
+      "signatures": [
+        {
+          "role": "unlockSignature",
+          "signer": "device.signing",
+          "publicKey": "047eba972441a1378e962cfaea211d693c954521e570ee0bff2222bca4d1922d1cb2558cf8f13b94d38fc05d802759271cf28b5c8578fed9964de0e799c8cc83bf",
+          "signature": "8isJK9rXcgvMJCOuO01dajVBOoSTY_RpfHvKo-3sC5LhxhHDDh2q55_7t0ZGfoYSvVLyRDt7iHSIo34PUh1uyQ"
+        }
+      ],
+      "changed": [
+        {
+          "field": "mailboxId",
+          "value": "mbx_08308m1xbynvx1m4cfzdnj7wan"
+        },
+        {
+          "field": "deviceId",
+          "value": "dev_7cdc717d00kwve00kwcswbdgr3"
+        },
+        {
+          "field": "unlockKey",
+          "value": "BNTQ5dzsRB_qkFfaP-xxz7fkEVakXSC8fCE-J7RHhD9y6EuxZXKPr1L2h_wUj0kPVMHZKFS_2ZY6AVW5oGYCHeA"
+        }
+      ]
+    },
+    {
+      "name": "admit-factor",
+      "statement": {
+        "kind": "admit-factor",
+        "mailboxId": "mbx_3cjts17beb77gttnf3ekk86pcm",
+        "factorId": "wrp_3ec8j0sa5vc00khxe68z723yww",
+        "factorKind": "recovery",
+        "label": "Recovery key",
+        "factorKey": "cKDzQ8SkTZC-wqaT01IiLlTRj-sCg-OVVIg0KIhm7DI",
+        "signingKey": "e5fFVGICpbzwmUVkgX1fdlhd0tn2jYKGq6zFyDMfZpU",
+        "credentialId": null,
+        "admitterId": "wrp_39kgptgz5a6smvnxnp34a9eenx",
+        "admitterSigningKey": "_TeVG8ArVabSm88bvOmYb1pDT7QUbrEX_XzD7aC5Cps"
+      },
+      "message": "proprietor-mail/v1/admit-factor|mbx_3cjts17beb77gttnf3ekk86pcm|wrp_3ec8j0sa5vc00khxe68z723yww|recovery|UmVjb3Zlcnkga2V5|cKDzQ8SkTZC-wqaT01IiLlTRj-sCg-OVVIg0KIhm7DI|e5fFVGICpbzwmUVkgX1fdlhd0tn2jYKGq6zFyDMfZpU|-|wrp_39kgptgz5a6smvnxnp34a9eenx|_TeVG8ArVabSm88bvOmYb1pDT7QUbrEX_XzD7aC5Cps",
+      "signatures": [
+        {
+          "role": "signature",
+          "signer": "factors.passkey",
+          "publicKey": "fd37951bc02b55a6d29bcf1bbce9986f5a434fb4146eb117fd7cc3eda0b90a9b",
+          "signature": "LdPPw5AXOsUpReb-eK3J8BwWL70XmXMIP-fYRyN93MHk7NCsMRpxh7Sqqo4v1zEl_NUmMfsWv4x-Nb06aIBuAw"
+        },
+        {
+          "role": "selfSignature",
+          "signer": "factors.recovery",
+          "publicKey": "7b97c5546202a5bcf0994564817d5f76585dd2d9f68d8286abacc5c8331f6695",
+          "signature": "UC5YiFFQttJLJjCR376hgCOuxPqPkJDPHV9bt5SVkfSvpfY-9Fs4zH66DWzi2hQ0EH6Gi1PTHsAjyXvG7C67AA"
+        }
+      ],
+      "changed": [
+        {
+          "field": "mailboxId",
+          "value": "mbx_6f6d2ap0yyzz4c1ekxkhx1rg2g"
+        },
+        {
+          "field": "factorId",
+          "value": "wrp_2fcv5ngwvw9k87tkrt1t0hbf22"
+        },
+        {
+          "field": "factorKind",
+          "value": "passkey-prf"
+        },
+        {
+          "field": "label",
+          "value": "Recovery key (2)"
+        },
+        {
+          "field": "factorKey",
+          "value": "sT-pLus-3VNtNGG5B6haZ6cGJp6EmgJdA9ATzu-T7lA"
+        },
+        {
+          "field": "signingKey",
+          "value": "qdt-3eWpNZPDvFtsxurfHPdnaYx2u_1nmYzJlnYz4Nk"
+        },
+        {
+          "field": "credentialId",
+          "value": "bebILN_sVIrmW7_QMy-4mg"
+        },
+        {
+          "field": "admitterId",
+          "value": "wrp_5ym2e7kqwsng2zhrshj411zk47"
+        },
+        {
+          "field": "admitterSigningKey",
+          "value": "qdt-3eWpNZPDvFtsxurfHPdnaYx2u_1nmYzJlnYz4Nk"
+        }
+      ]
+    },
+    {
+      "name": "transition",
+      "statement": {
+        "kind": "transition",
+        "mailboxId": "mbx_3cjts17beb77gttnf3ekk86pcm",
+        "fromKeyId": "e5fe50bf2549a47c48b04b397af5f21c",
+        "toKeyId": "4626b27771722f9c280e0d6835eb4f7a",
+        "toPublicKey": "TpoXprlPilzb7Q3dymEv17xUnri0o-jVUNs_mCZ-Knk",
+        "signerId": "wrp_39kgptgz5a6smvnxnp34a9eenx"
+      },
+      "message": "proprietor-mail/v1/transition|mbx_3cjts17beb77gttnf3ekk86pcm|e5fe50bf2549a47c48b04b397af5f21c|4626b27771722f9c280e0d6835eb4f7a|TpoXprlPilzb7Q3dymEv17xUnri0o-jVUNs_mCZ-Knk|wrp_39kgptgz5a6smvnxnp34a9eenx",
+      "signatures": [
+        {
+          "role": "signature",
+          "signer": "factors.passkey",
+          "publicKey": "fd37951bc02b55a6d29bcf1bbce9986f5a434fb4146eb117fd7cc3eda0b90a9b",
+          "signature": "lIPG8hH4aoSWQbo6ZlAYcA0XcsMiJDlc9-COd4wlz3AjiVOvfObrB2uqMjSYyy4uyAl8hVrjrnr3yd2E4pevBQ"
+        }
+      ],
+      "changed": [
+        {
+          "field": "mailboxId",
+          "value": "mbx_2x0s92wny0xxz3an2hd09kw7gh"
+        },
+        {
+          "field": "fromKeyId",
+          "value": "4626b27771722f9c280e0d6835eb4f7a"
+        },
+        {
+          "field": "toKeyId",
+          "value": "e5fe50bf2549a47c48b04b397af5f21c"
+        },
+        {
+          "field": "toPublicKey",
+          "value": "-f3c2BubrwkrMxLlRIPPqlo6j0LrwbAO5-m819MOOnU"
+        },
+        {
+          "field": "signerId",
+          "value": "wrp_3ec8j0sa5vc00khxe68z723yww"
+        }
+      ]
+    }
+  ],
+  "graph": {
+    "note": "The factor graph of A11 for this mailbox: the passkey and the recovery key enrolled together (sorted by id, each admitted by the next, the last by the first), and the outsider, which admits itself and is joined to nothing. From the passkey's signing key the trusted factors are the passkey and the recovery key. The device is admitted by the passkey and signed its own unlock key. The transition is the one in statements; transitionOutsideGraph is the same step signed by the outsider: its signature is genuine, and it is refused because the outsider is not in the trusted component.",
+    "view": {
+      "id": "mbx_3cjts17beb77gttnf3ekk86pcm",
+      "wraps": [
+        {
+          "id": "wrp_39kgptgz5a6smvnxnp34a9eenx",
+          "kind": "passkey-prf",
+          "label": "Phone",
+          "credentialId": "bebILN_sVIrmW7_QMy-4mg",
+          "factorKey": "PSGlfIitRZ-W_OK-3qKxIOYuKMKvUvwvcBhnif2b8H4",
+          "signingKey": "_TeVG8ArVabSm88bvOmYb1pDT7QUbrEX_XzD7aC5Cps",
+          "admission": {
+            "by": "wrp_3ec8j0sa5vc00khxe68z723yww",
+            "signature": "553mtGpKOEQSq1D-M_-p3E4Pn3RxdpSwomtE3sxZ_DgtqLWL7LM5H-VTihMg8LipiXO-aRbsZ64wxgVWwWWYDg",
+            "selfSignature": "mEjmUUxoTFPXe2QXITrHfRGczklwY2Ue_WUNKkMm-HwAKTPQHenzx9MKeXx446hLY2981ZK3LWCcFaOV-MwYCA"
+          }
+        },
+        {
+          "id": "wrp_3ec8j0sa5vc00khxe68z723yww",
+          "kind": "recovery",
+          "label": "Recovery key",
+          "credentialId": null,
+          "factorKey": "cKDzQ8SkTZC-wqaT01IiLlTRj-sCg-OVVIg0KIhm7DI",
+          "signingKey": "e5fFVGICpbzwmUVkgX1fdlhd0tn2jYKGq6zFyDMfZpU",
+          "admission": {
+            "by": "wrp_39kgptgz5a6smvnxnp34a9eenx",
+            "signature": "LdPPw5AXOsUpReb-eK3J8BwWL70XmXMIP-fYRyN93MHk7NCsMRpxh7Sqqo4v1zEl_NUmMfsWv4x-Nb06aIBuAw",
+            "selfSignature": "UC5YiFFQttJLJjCR376hgCOuxPqPkJDPHV9bt5SVkfSvpfY-9Fs4zH66DWzi2hQ0EH6Gi1PTHsAjyXvG7C67AA"
+          }
+        },
+        {
+          "id": "wrp_5ym2e7kqwsng2zhrshj411zk47",
+          "kind": "recovery",
+          "label": "Recovery key",
+          "credentialId": null,
+          "factorKey": "sT-pLus-3VNtNGG5B6haZ6cGJp6EmgJdA9ATzu-T7lA",
+          "signingKey": "qdt-3eWpNZPDvFtsxurfHPdnaYx2u_1nmYzJlnYz4Nk",
+          "admission": {
+            "by": "wrp_5ym2e7kqwsng2zhrshj411zk47",
+            "signature": "0d0WkZiJWwfD9WWXqtEgVda1cVO-kYFKADhXopLqvujHzCWzia04WPMm_dZjopJExGMJPQZpy8jsz7dxlUuYAA",
+            "selfSignature": "0d0WkZiJWwfD9WWXqtEgVda1cVO-kYFKADhXopLqvujHzCWzia04WPMm_dZjopJExGMJPQZpy8jsz7dxlUuYAA"
+          }
+        }
+      ],
+      "removedFactors": []
+    },
+    "start": "factors.passkey",
+    "trusted": [
+      "wrp_39kgptgz5a6smvnxnp34a9eenx",
+      "wrp_3ec8j0sa5vc00khxe68z723yww"
+    ],
+    "device": {
+      "id": "dev_1sc40nkrnjaka7qmzd4tss5tcc",
+      "label": "Kitchen laptop",
+      "signingKey": "BH66lyRBoTeOliz66iEdaTyVRSHlcO4L_yIivKTRki0cslWM-PE7lNOPwF2AJ1knHPKLXIV4_tmWTeDnmcjMg78",
+      "unlockKey": "BH9Nev993fT6T0BL88-Rid5USWxOljlr8pvVFHPAB3pG-gFC5XdkqUcctc6PmZ5uSHpsZIV2h1mtSMmCWjUufIA",
+      "unlockSignature": "8isJK9rXcgvMJCOuO01dajVBOoSTY_RpfHvKo-3sC5LhxhHDDh2q55_7t0ZGfoYSvVLyRDt7iHSIo34PUh1uyQ",
+      "admission": {
+        "by": "wrp_39kgptgz5a6smvnxnp34a9eenx",
+        "signature": "sJo98YZJnpe37NKuLvayFg1VxDed1uNG92pbDQfwxiKlB-JcnkXWnVydaKdujFjEhYVCBkDCsyJG3-UtBLdmAg"
+      }
+    },
+    "transitionOutsideGraph": {
+      "fromKeyId": "e5fe50bf2549a47c48b04b397af5f21c",
+      "toKeyId": "4626b27771722f9c280e0d6835eb4f7a",
+      "toPublicKey": "TpoXprlPilzb7Q3dymEv17xUnri0o-jVUNs_mCZ-Knk",
+      "signedBy": "wrp_5ym2e7kqwsng2zhrshj411zk47",
+      "signer": "factors.outsider",
+      "message": "proprietor-mail/v1/transition|mbx_3cjts17beb77gttnf3ekk86pcm|e5fe50bf2549a47c48b04b397af5f21c|4626b27771722f9c280e0d6835eb4f7a|TpoXprlPilzb7Q3dymEv17xUnri0o-jVUNs_mCZ-Knk|wrp_5ym2e7kqwsng2zhrshj411zk47",
+      "signature": "UAWeddFKW7rM-v6a06fXVINLVUDU1TSjlinikc8AZUG9SkzwmjTwzYd-xukYqPzIZbM_MO-OWsW7AciE3wK2Dg",
+      "expect": "untrusted"
+    }
+  }
+}

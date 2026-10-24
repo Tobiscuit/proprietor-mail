@@ -5,8 +5,25 @@
 import type { Address } from "@proprietor/mail-crypto";
 import type { ComposeInput, MailBody, MailboxView, OpenedMessage } from "./types";
 
-/** RFC 5322's practical shape: no whitespace or specials around one `@`, a dot in the domain. */
-export const ADDRESS = /^[^\s@<>"(),;:[\]\\]+@[^\s@<>"(),;:[\]\\]+\.[^\s@<>"(),;:[\]\\]+$/;
+/** One part of an address: no whitespace, `@`, `<`, `>`, `"`, `(`, `)`, `,`, `;`, `:`, `[`, `]` or `\`. */
+const ADDRESS_PART = /^[^\s@<>"(),;:[\]\\]+$/;
+
+/**
+ * RFC 5322's practical shape: no whitespace or specials around one `@`, and a
+ * dot inside the domain (neither its first nor its last character). The same
+ * set as the single pattern S6a used, checked in linear time: that pattern
+ * backtracked polynomially (CodeQL js/polynomial-redos), and decodeSendForm
+ * runs it on the server over strings a form supplies.
+ */
+export function isAddress(value: string): boolean {
+  if (typeof value !== "string") return false;
+  const at = value.indexOf("@");
+  if (at < 1 || at !== value.lastIndexOf("@")) return false;
+  const domain = value.slice(at + 1);
+  if (!ADDRESS_PART.test(value.slice(0, at)) || !ADDRESS_PART.test(domain)) return false;
+  const dot = domain.indexOf(".", 1);
+  return dot !== -1 && dot < domain.length - 1;
+}
 /** The last 20 references are kept, as the envelope keeps them in a header. */
 const MAX_REFERENCES = 20;
 
@@ -143,7 +160,13 @@ function tokens(input: string): string[] {
   return out.map((t) => t.trim()).filter((t) => t.length > 0);
 }
 
-const NAMED = /^(?:"((?:[^"\\]|\\.)*)"|([^<]*?))\s*<([^<>]*)>$/;
+/**
+ * `"quoted name" <address>` or `name <address>`. The unquoted name is taken
+ * whole and trimmed after, so no whitespace can belong to two parts of the
+ * pattern (S6a's lazy name followed by \s* backtracked polynomially on runs of
+ * spaces); the names it reads are the same.
+ */
+const NAMED = /^(?:"((?:[^"\\]|\\.)*)"\s*|([^<]*))<([^<>]*)>$/;
 
 export function parseAddressList(input: string): { addresses: Address[]; invalid: string[] } {
   const addresses: Address[] = [];
@@ -152,7 +175,7 @@ export function parseAddressList(input: string): { addresses: Address[]; invalid
     const named = NAMED.exec(token);
     const name = named ? (named[1] !== undefined ? named[1].replace(/\\(.)/g, "$1") : named[2]!.trim()) : "";
     const address = named ? named[3]!.trim() : token;
-    if (ADDRESS.test(address)) addresses.push({ name, address });
+    if (isAddress(address)) addresses.push({ name, address });
     else invalid.push(token);
   }
   return { addresses, invalid };
